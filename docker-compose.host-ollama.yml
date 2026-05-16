@@ -1,0 +1,20 @@
+services:
+  sage:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: personal-agent-sage:latest
+    container_name: sage
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      OLLAMA_BASE_URL: ${SAGE_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      WEBHOOK_PORT: 8000
+    ports:
+      - "${WEBHOOK_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
