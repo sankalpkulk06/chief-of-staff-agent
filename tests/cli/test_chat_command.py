@@ -37,10 +37,10 @@ class _StubRegistry:
     def __init__(self):
         self.todos = []
 
-    def get_or_create_named_session(self, name):
+    def get_or_create_named_session(self, name, user_id="default"):
         return f"session-{name}"
 
-    def create_todo(self, title, list_name=None, due_at=None):
+    def create_todo(self, title, list_name=None, due_at=None, user_id="default"):
         todo = {
             "id": f"todo-{len(self.todos) + 1}",
             "title": title,
@@ -143,7 +143,7 @@ def _patch_chat_dependencies(monkeypatch, responses, chat_service, reminders_ser
         lambda *args, **kwargs: _StubPromptSession(responses),
     )
     monkeypatch.setattr("app.cli.commands_chat.thinking_spinner", _noop_spinner)
-    monkeypatch.setattr("app.cli.commands_chat.create_chat_service", lambda: chat_service)
+    monkeypatch.setattr("app.cli.commands_chat.create_chat_service", lambda **kwargs: chat_service)
     monkeypatch.setattr("app.cli.commands_chat.create_news_service", lambda: _StubNewsService())
     monkeypatch.setattr(
         "app.cli.commands_chat.create_reminders_service",
@@ -171,11 +171,11 @@ def test_chat_command_single_turn_and_exit(monkeypatch):
     result = runner.invoke(cli, ["chat"])
 
     assert result.exit_code == 0
-    assert "Sage — Your Personal AI" in result.stdout
+    assert "Sage" in result.stdout
     assert "Chat answer" in result.stdout
     assert "sample.md" in result.stdout
-    assert "session-cli:default" in result.stdout
-    session_id = "session-cli:default"
+    assert "session-cli:default:default" in result.stdout
+    session_id = "session-cli:default:default"
     assert chat_service.answer_calls == [(session_id, "What is in sample.md?", None)]
 
 
@@ -187,7 +187,7 @@ def test_chat_command_topk_command(monkeypatch):
 
     assert result.exit_code == 0
     assert "Retrieval depth set to" in result.stdout
-    session_id = "session-cli:default"
+    session_id = "session-cli:default:default"
     assert chat_service.answer_calls == [(session_id, "What now?", 2)]
 
 

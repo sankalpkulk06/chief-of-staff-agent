@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import chromadb
 from pydantic import BaseModel
@@ -55,12 +55,15 @@ class ChromaStore:
             metadatas=metadatas,
         )
 
-    def query_similar(self, query_embedding: Sequence[float], n_results: int = 5) -> List[ChromaVectorRecord]:
-        result = self._collection.query(
+    def query_similar(self, query_embedding: Sequence[float], n_results: int = 5, where: Optional[Dict] = None) -> List[ChromaVectorRecord]:
+        kwargs = dict(
             query_embeddings=[list(query_embedding)],
             n_results=n_results,
             include=["documents", "metadatas", "distances"],
         )
+        if where:
+            kwargs["where"] = where
+        result = self._collection.query(**kwargs)
         ids = result.get("ids", [[]])[0]
         documents = result.get("documents", [[]])[0]
         metadatas = result.get("metadatas", [[]])[0]

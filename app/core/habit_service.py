@@ -49,8 +49,9 @@ def _parse_reminder_time(raw: str) -> str:
 
 
 class HabitService:
-    def __init__(self, registry: SQLiteRegistry):
+    def __init__(self, registry: SQLiteRegistry, user_id: str = "default"):
         self._db = registry._connection
+        self._user_id = user_id
 
     # ------------------------------------------------------------------
     # Queries
@@ -58,8 +59,8 @@ class HabitService:
 
     def _get_habit_by_name(self, name: str) -> Optional[Habit]:
         row = self._db.execute(
-            "SELECT id, name, reminder_time, active FROM habits WHERE name = ? COLLATE NOCASE AND active = 1",
-            (name,),
+            "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND name = ? COLLATE NOCASE AND active = 1",
+            (self._user_id, name),
         ).fetchone()
         if row is None:
             return None
@@ -67,8 +68,8 @@ class HabitService:
 
     def get_habit_by_id(self, habit_id: str) -> Optional[Habit]:
         row = self._db.execute(
-            "SELECT id, name, reminder_time, active FROM habits WHERE id = ? AND active = 1",
-            (habit_id,),
+            "SELECT id, name, reminder_time, active FROM habits WHERE id = ? AND user_id = ? AND active = 1",
+            (habit_id, self._user_id),
         ).fetchone()
         if row is None:
             return None
@@ -76,7 +77,8 @@ class HabitService:
 
     def _get_all_active(self) -> list[Habit]:
         rows = self._db.execute(
-            "SELECT id, name, reminder_time, active FROM habits WHERE active = 1 ORDER BY created_at ASC"
+            "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND active = 1 ORDER BY created_at ASC",
+            (self._user_id,),
         ).fetchall()
         return [Habit(id=r["id"], name=r["name"], reminder_time=r["reminder_time"], active=True) for r in rows]
 
@@ -91,8 +93,8 @@ class HabitService:
         habit_id = str(uuid.uuid4())
         rt = _parse_reminder_time(reminder_time) if reminder_time != "21:00" else reminder_time
         self._db.execute(
-            "INSERT INTO habits (id, name, reminder_time) VALUES (?, ?, ?)",
-            (habit_id, name, rt),
+            "INSERT INTO habits (id, user_id, name, reminder_time) VALUES (?, ?, ?, ?)",
+            (habit_id, self._user_id, name, rt),
         )
         self._db.commit()
         return Habit(id=habit_id, name=name, reminder_time=rt, active=True)
@@ -204,12 +206,12 @@ class HabitService:
         rows = self._db.execute(
             """
             SELECT h.id FROM habits h
-            WHERE h.active = 1
+            WHERE h.user_id = ? AND h.active = 1
               AND h.id NOT IN (
                 SELECT habit_id FROM habit_logs WHERE DATE(logged_at) = ?
               )
             """,
-            (today,),
+            (self._user_id, today),
         ).fetchall()
         ids = {r["id"] for r in rows}
         return [h for h in self._get_all_active() if h.id in ids]

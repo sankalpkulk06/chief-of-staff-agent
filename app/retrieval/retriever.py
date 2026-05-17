@@ -44,10 +44,11 @@ class Retriever:
         self._metadata_registry = metadata_registry
         self._default_top_k = default_top_k
 
-    def retrieve(self, question: str, top_k: Optional[int] = None) -> RetrievalResult:
+    def retrieve(self, question: str, top_k: Optional[int] = None, user_id: Optional[str] = None) -> RetrievalResult:
         effective_top_k = top_k or self._default_top_k
         query_embedding = self._embeddings_provider.embed_query(question)
-        vector_records = self._vector_store.query_similar(query_embedding=query_embedding, n_results=effective_top_k)
+        where = {"user_id": user_id} if user_id else None
+        vector_records = self._vector_store.query_similar(query_embedding=query_embedding, n_results=effective_top_k, where=where)
 
         chunks: List[RetrievedChunk] = []
         for record in vector_records:

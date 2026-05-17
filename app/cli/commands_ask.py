@@ -46,11 +46,11 @@ def create_qa_service() -> QAService:
     return QAService(retriever=retriever, chat_provider=chat_provider)
 
 
-def create_fact_service() -> FactService:
+def create_fact_service(user_id: str = "default") -> FactService:
     settings = get_settings()
     paths = settings.resolve_paths()
     registry = SQLiteRegistry(paths.sqlite_db_path)
-    return FactService(registry=registry)
+    return FactService(registry=registry, user_id=user_id)
 
 
 def create_news_service() -> NewsService:
@@ -106,6 +106,7 @@ def create_analytics_service() -> AnalyticsService:
 
 def create_chat_service(
     schedule_todo_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+    user_id: str = "default",
 ) -> ChatService:
     settings = get_settings()
     paths = settings.resolve_paths()
@@ -123,13 +124,12 @@ def create_chat_service(
         model=settings.ollama_chat_model,
     )
     registry = SQLiteRegistry(paths.sqlite_db_path)
-    fact_service = create_fact_service()
+    fact_service = create_fact_service(user_id=user_id)
     news_service = create_news_service()
     reminders_service = create_reminders_service()
     web_search_service = create_web_search_service()
-    habit_service = HabitService(registry)
+    habit_service = HabitService(registry, user_id=user_id)
     url_ingestion_service = create_url_ingestion_service(registry, chat_provider) if settings.url_ingestion_enabled else None
-    # EmailService silently skipped if credentials aren't present yet
     try:
         email_service = EmailService(credentials_dir=paths.credentials_dir, account_type="personal")
     except Exception:
@@ -149,6 +149,7 @@ def create_chat_service(
         twilio_daily_message_limit=settings.twilio_daily_message_limit,
         assistant_name=settings.assistant_name,
         enable_tools=True,
+        user_id=user_id,
     )
 
 

@@ -1,3 +1,4 @@
+import getpass
 import re
 import uuid
 from datetime import datetime
@@ -25,6 +26,7 @@ from app.services.email_service import EmailService
 from app.services.reminders_service import RemindersServiceError
 from app.providers.ollama_chat import OllamaChatProvider
 from app.providers.ollama_embeddings import OllamaProviderError
+from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
 _EMAIL_TRIGGERS = {
@@ -303,18 +305,84 @@ def _print_help() -> None:
     console.print()
 
 
+def _prompt_auth(registry: SQLiteRegistry, console: Console) -> dict:
+    """Show login/signup menu and return the authenticated user dict."""
+    import sys
+    if not sys.stdin.isatty():
+        # Non-interactive (tests, pipes): use anonymous default user
+        return {"user_id": "default", "username": "default"}
+
+    console.print()
+    console.print("[bold cyan]Welcome to Sage[/bold cyan]")
+    console.print("[dim]━━━━━━━━━━━━━━━━━━━━━━[/dim]")
+
+    while True:
+        console.print("\n[bold]\[1][/bold] Login  [bold]\[2][/bold] Sign up  [bold]\[3][/bold] Exit\n")
+        try:
+            choice = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise typer.Exit()
+
+        if choice == "3":
+            raise typer.Exit()
+
+        elif choice == "1":
+            # --- Login ---
+            while True:
+                username = input("Username: ").strip()
+                password = getpass.getpass("Password: ")
+                user = registry.verify_password(username, password)
+                if user:
+                    console.print(f"\n[green]Logged in as {username}.[/green]")
+                    return user
+                console.print("[red]Incorrect username or password. Try again.[/red]")
+
+        elif choice == "2":
+            # --- Sign up ---
+            while True:
+                username = input("Username: ").strip()
+                if len(username) < 3:
+                    console.print("[red]Username must be at least 3 characters.[/red]")
+                    continue
+                if registry.get_user_by_username(username):
+                    console.print("[red]Username already taken. Choose another.[/red]")
+                    continue
+                password = getpass.getpass("Password: ")
+                if len(password) < 6:
+                    console.print("[red]Password must be at least 6 characters.[/red]")
+                    continue
+                confirm = getpass.getpass("Confirm password: ")
+                if password != confirm:
+                    console.print("[red]Passwords do not match.[/red]")
+                    continue
+                user = registry.create_user(username, password)
+                console.print(f"\n[green]Account created. Welcome, {username}![/green]")
+                return user
+        else:
+            console.print("[yellow]Please enter 1, 2, or 3.[/yellow]")
+
+
 def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) -> None:
     """Run an interactive chat session with conversation history."""
-    service = create_chat_service()
+    settings = get_settings()
+    paths = settings.resolve_paths()
+
+    # Bootstrap registry just for auth (before full service creation)
+    bootstrap_registry = SQLiteRegistry(paths.sqlite_db_path)
+    user = _prompt_auth(bootstrap_registry, console)
+    user_id: str = user["user_id"]
+    username: str = user["username"]
+    bootstrap_registry.close()
+
+    service = create_chat_service(user_id=user_id)
     fact_service = service.get_fact_service()
     web_search_service = service.get_web_search_service()
     news_service = create_news_service()
     reminders_service = create_reminders_service()
-    habit_service = service.get_habit_service() or HabitService(service.get_registry())
+    habit_service = service.get_habit_service() or HabitService(service.get_registry(), user_id=user_id)
     registry = service.get_registry()
 
     # Create chat provider for news summary generation
-    settings = get_settings()
     chat_provider = OllamaChatProvider(
         base_url=settings.ollama_base_url,
         model=settings.ollama_chat_model,
@@ -323,12 +391,12 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
     session_top_k = top_k
 
     if session_id is None:
-        session_id = service.get_registry().get_or_create_named_session("cli:default")
+        session_id = registry.get_or_create_named_session(f"cli:{user_id}:default", user_id=user_id)
     else:
         service.create_session(session_id=session_id)
 
     console.print()
-    console.print("[bold cyan]╭─ Sage — Your Personal AI ─╮[/bold cyan]")
+    console.print(f"[bold cyan]╭─ Sage — {username}'s AI ─╮[/bold cyan]")
     console.print(f"[dim]│ Session: {session_id[:8]}...[/dim]")
     console.print(f"[dim]│ Resume: sage --resume {session_id}[/dim]")
     console.print("[bold cyan]╰──────────────────────────╯[/bold cyan]")

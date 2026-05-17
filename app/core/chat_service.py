@@ -90,6 +90,7 @@ class ChatService:
         max_prompt_chunks: int = 5,
         assistant_name: str = "Sage",
         enable_tools: bool = True,
+        user_id: str = "default",
     ):
         self._retriever = retriever
         self._chat_provider = chat_provider
@@ -106,8 +107,8 @@ class ChatService:
         self._max_prompt_chunks = max_prompt_chunks
         self._assistant_name = assistant_name
         self._enable_tools = enable_tools
+        self._user_id = user_id
 
-        # Tool registry and executor for open source model
         self._agent_runner = AgentRunner(
             chat_provider=chat_provider,
             retriever=retriever,
@@ -256,6 +257,7 @@ class ChatService:
             history=history,
             response_style=self._resolve_response_style(response_style),
             top_k=top_k,
+            user_id=self._user_id,
         )
 
         # Collect citations from agent results for the QAResult
@@ -830,6 +832,9 @@ class ChatService:
     def get_registry(self) -> SQLiteRegistry:
         """Get the registry for external use."""
         return self._registry
+
+    def get_user_id(self) -> str:
+        return self._user_id
 
     def get_habit_service(self) -> Optional[HabitService]:
         """Get the habit service for external use."""

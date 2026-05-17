@@ -100,6 +100,7 @@ class AgentRunner:
         history: List[dict[str, Any]],
         response_style: Optional[str] = None,
         top_k: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> RunResult:
         t0 = time.monotonic()
 
@@ -129,11 +130,11 @@ class AgentRunner:
                     previous_results=agent_results,
                     response_style=response_style,
                 )
-            elif step.agent == "rag_agent" and top_k is not None:
-                # Allow caller to override top_k (e.g. from session setting)
+            elif step.agent == "rag_agent":
                 original_top_k = self._rag._top_k
-                self._rag._top_k = top_k
-                result = agent.execute(step.task, question, history, agent_results)
+                if top_k is not None:
+                    self._rag._top_k = top_k
+                result = agent.execute(step.task, question, history, agent_results, user_id=user_id)
                 self._rag._top_k = original_top_k
             else:
                 result = agent.execute(step.task, question, history, agent_results)

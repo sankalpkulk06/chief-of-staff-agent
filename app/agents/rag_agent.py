@@ -1,6 +1,7 @@
 """RAG agent — searches the user's personal documents and answers from them."""
 from typing import Any, List, Optional
 
+
 from app.agents.base import AgentResult
 from app.providers.ollama_chat import OllamaChatProvider
 from app.retrieval.retriever import Retriever
@@ -27,9 +28,10 @@ class RAGAgent:
         original_question: str,
         history: List[dict[str, Any]],
         previous_results: Optional[List[AgentResult]] = None,
+        user_id: Optional[str] = None,
     ) -> AgentResult:
         try:
-            retrieval = self._retriever.retrieve(question=task, top_k=self._top_k)
+            retrieval = self._retriever.retrieve(question=task, top_k=self._top_k, user_id=user_id)
 
             if not retrieval.chunks:
                 return AgentResult(

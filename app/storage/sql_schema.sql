@@ -1,7 +1,15 @@
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS users (
+    user_id       TEXT PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS documents (
     document_id TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT 'default',
     source_path TEXT NOT NULL,
     file_name TEXT NOT NULL,
     file_type TEXT NOT NULL,
@@ -35,11 +43,13 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS idx_documents_checksum ON documents (checksum_sha256);
 CREATE INDEX IF NOT EXISTS idx_documents_source_path ON documents (source_path);
+CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents (user_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks (document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_document_index ON chunks (document_id, chunk_index);
 
 CREATE TABLE IF NOT EXISTS chat_sessions (
     session_id TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL DEFAULT 'default',
     title TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -55,9 +65,11 @@ CREATE TABLE IF NOT EXISTS chat_turns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_turns_session ON chat_turns (session_id, turn_index);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions (user_id);
 
 CREATE TABLE IF NOT EXISTS learned_facts (
     fact_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'default',
     content TEXT NOT NULL,
     category TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'user',
@@ -69,6 +81,7 @@ CREATE TABLE IF NOT EXISTS learned_facts (
 
 CREATE INDEX IF NOT EXISTS idx_learned_facts_category ON learned_facts (category);
 CREATE INDEX IF NOT EXISTS idx_learned_facts_created ON learned_facts (created_at);
+CREATE INDEX IF NOT EXISTS idx_learned_facts_user ON learned_facts (user_id);
 
 CREATE TABLE IF NOT EXISTS whatsapp_sessions (
     phone_number  TEXT PRIMARY KEY,
@@ -92,6 +105,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_usage_alerts (
 
 CREATE TABLE IF NOT EXISTS habits (
     id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL DEFAULT 'default',
     name            TEXT NOT NULL COLLATE NOCASE,
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     reminder_time   TEXT DEFAULT '21:00',
@@ -108,9 +122,11 @@ CREATE TABLE IF NOT EXISTS habit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_habit_logs_habit_id ON habit_logs(habit_id);
 CREATE INDEX IF NOT EXISTS idx_habit_logs_logged_at ON habit_logs(logged_at);
+CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_id);
 
 CREATE TABLE IF NOT EXISTS todos (
     id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL DEFAULT 'default',
     title           TEXT NOT NULL,
     list_name       TEXT,
     due_at          DATETIME,
@@ -121,6 +137,7 @@ CREATE TABLE IF NOT EXISTS todos (
 
 CREATE INDEX IF NOT EXISTS idx_todos_due_at ON todos(due_at);
 CREATE INDEX IF NOT EXISTS idx_todos_pending ON todos(completed_at, notified_at, due_at);
+CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
 
 CREATE TABLE IF NOT EXISTS nudge_context (
     phone_number    TEXT PRIMARY KEY,
@@ -130,6 +147,7 @@ CREATE TABLE IF NOT EXISTS nudge_context (
 
 CREATE TABLE IF NOT EXISTS named_sessions (
     name       TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL DEFAULT 'default',
     session_id TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

@@ -36,7 +36,7 @@ class IngestCoordinator:
         self._vector_store = vector_store
         self._supported_extensions = supported_extensions or [".md", ".pdf", ".txt"]
 
-    def ingest(self, input_path: Path) -> IngestSummary:
+    def ingest(self, input_path: Path, user_id: str = "default") -> IngestSummary:
         files = self._discover_files(input_path)
         summary = IngestSummary(files_discovered=len(files))
         if not files:
@@ -52,13 +52,14 @@ class IngestCoordinator:
                     summary.warnings.append(f"Skipped unchanged file: {file_path}")
                     continue
 
-                self._registry.upsert_document(ingest_result.document_id, ingest_result.document)
+                self._registry.upsert_document(ingest_result.document_id, ingest_result.document, user_id=user_id)
                 if ingest_result.chunk_count == 0:
                     summary.files_processed += 1
                     summary.warnings.extend(ingest_result.warnings or [f"No chunks produced for: {file_path}"])
                     continue
 
                 for chunk in ingest_result.chunks:
+                    chunk.metadata["user_id"] = user_id
                     self._registry.upsert_chunk(chunk)
 
                 embeddings = self._embeddings_provider.embed_texts([chunk.text for chunk in ingest_result.chunks])
@@ -78,6 +79,7 @@ class IngestCoordinator:
         title: str,
         source_url: str,
         extra_metadata: Optional[dict] = None,
+        user_id: str = "default",
     ) -> Tuple[str, int]:
         """Chunk, embed, and persist scraped text from a URL.
 
@@ -110,7 +112,7 @@ class IngestCoordinator:
             },
         )
 
-        self._registry.upsert_document(document_id, parsed)
+        self._registry.upsert_document(document_id, parsed, user_id=user_id)
         self._registry.set_document_source(document_id, source_type="url", source_url=source_url)
 
         chunks = self._ingest_service._chunker.chunk_document(parsed, document_id=document_id)
@@ -123,6 +125,7 @@ class IngestCoordinator:
                 "source_url": source_url,
                 "title": title,
                 "ingested_at": parsed.metadata.get("ingested_at", ""),
+                "user_id": user_id,
             })
             self._registry.upsert_chunk(chunk)
 
