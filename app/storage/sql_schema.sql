@@ -159,3 +159,15 @@ CREATE TABLE IF NOT EXISTS user_settings (
     updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, setting_key)
 );
+
+CREATE TABLE IF NOT EXISTS security_events (
+    event_id   TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL DEFAULT 'default',
+    event_type TEXT NOT NULL,
+    severity   TEXT NOT NULL,
+    snippet    TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_user_id ON security_events (user_id);
+CREATE INDEX IF NOT EXISTS idx_security_events_event_type ON security_events (event_type);

@@ -15,6 +15,7 @@ from app.providers.ollama_chat import OllamaChatProvider
 from app.retrieval.retriever import Retriever, RetrievalResult
 from app.storage.sqlite_registry import SQLiteRegistry
 from app.agents.runner import AgentRunner
+from app.agents.security_agent import SecurityAgent
 
 _EMAIL_TRIGGERS = {
     "check my email", "check email", "any emails", "any email",
@@ -92,6 +93,7 @@ class ChatService:
         enable_tools: bool = True,
         user_id: str = "default",
         rag_fallback_distance_threshold: float = 0.5,
+        security_agent: Optional[SecurityAgent] = None,
     ):
         self._retriever = retriever
         self._chat_provider = chat_provider
@@ -110,6 +112,7 @@ class ChatService:
         self._enable_tools = enable_tools
         self._user_id = user_id
         self._rag_fallback_distance_threshold = rag_fallback_distance_threshold
+        self._security_agent = security_agent
 
         self._agent_runner = AgentRunner(
             chat_provider=chat_provider,
@@ -125,6 +128,7 @@ class ChatService:
             assistant_name=assistant_name,
             rag_top_k=max_prompt_chunks,
             rag_fallback_threshold=rag_fallback_distance_threshold,
+            security_agent=security_agent,
         )
 
         # In-memory cache of news articles per session for follow-up questions

@@ -64,6 +64,9 @@ class Settings(BaseModel):
     sage_passphrase: str = ""
     sage_username: str = ""
 
+    security_enabled: bool = True
+    max_input_length: int = Field(default=2000, gt=0)
+
     @model_validator(mode="after")
     def validate_chunking(self) -> "Settings":
         if self.chunk_overlap >= self.chunk_size:

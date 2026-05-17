@@ -27,3 +27,11 @@ class OrchestratorPlan:
     """The orchestrator's decomposition of a user query into agent steps."""
     steps: list[AgentStep]
     reasoning: str = ""
+
+
+@dataclass
+class SecurityResult:
+    """Output from the SecurityAgent's input or output check."""
+    blocked: bool
+    reason: Optional[str] = None     # "prompt_injection" | "length_exceeded"
+    flags: list = field(default_factory=list)  # e.g. ["pii_detected"]

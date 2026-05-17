@@ -8,6 +8,7 @@ from app.agents.conversational_agent import ConversationalAgent
 from app.agents.orchestrator import OrchestratorAgent
 from app.agents.rag_agent import RAGAgent
 from app.agents.research_agent import ResearchAgent
+from app.agents.security_agent import SecurityAgent
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.providers.ollama_chat import OllamaChatProvider
@@ -26,11 +27,13 @@ class RunResult:
         plan: OrchestratorPlan,
         agent_results: List[AgentResult],
         latency_ms: int,
+        security_flags: Optional[list] = None,
     ):
         self.output = output
         self.plan = plan
         self.agent_results = agent_results
         self.latency_ms = latency_ms
+        self.security_flags: list = security_flags or []
 
     @property
     def citations(self) -> list:
@@ -80,6 +83,7 @@ class AgentRunner:
         assistant_name: str = "Sage",
         rag_top_k: int = 5,
         rag_fallback_threshold: float = 0.5,
+        security_agent: Optional[SecurityAgent] = None,
     ):
         self._default_chat_provider = chat_provider
         self._agent_chat_providers = agent_chat_providers or {}
@@ -94,6 +98,7 @@ class AgentRunner:
         self._assistant_name = assistant_name
         self._rag_top_k = rag_top_k
         self._rag_fallback_threshold = rag_fallback_threshold
+        self._security_agent = security_agent
 
         self._rebuild_agents()
 
@@ -147,6 +152,27 @@ class AgentRunner:
     ) -> RunResult:
         t0 = time.monotonic()
 
+        # Security: input check — runs before orchestrator so injections never reach LLM
+        if self._security_agent is not None:
+            sec = self._security_agent.check_input(question, user_id=user_id or "default")
+            if sec.blocked:
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                rejection = (
+                    "Your message was blocked because it exceeded the maximum length."
+                    if sec.reason == "length_exceeded"
+                    else "Your message was blocked due to a security policy violation."
+                )
+                return RunResult(
+                    output=rejection,
+                    plan=OrchestratorPlan(steps=[]),
+                    agent_results=[],
+                    latency_ms=latency_ms,
+                    security_flags=["blocked", sec.reason],
+                )
+            _security_flags: list = sec.flags
+        else:
+            _security_flags = []
+
         # 1. Plan
         plan = self._orchestrator.plan(question, history)
 
@@ -191,12 +217,19 @@ class AgentRunner:
         # 3. Synthesize
         final_output = self._orchestrator.synthesize(question, agent_results, history)
 
+        # Security: output scrub — redact secrets before the reply reaches the caller
+        if self._security_agent is not None:
+            final_output = self._security_agent.check_output(
+                final_output, user_id=user_id or "default"
+            )
+
         latency_ms = int((time.monotonic() - t0) * 1000)
         return RunResult(
             output=final_output,
             plan=plan,
             agent_results=agent_results,
             latency_ms=latency_ms,
+            security_flags=_security_flags,
         )
 
     def _resolve_agent(self, agent_name: str):

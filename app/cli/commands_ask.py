@@ -21,6 +21,7 @@ from app.providers.ollama_chat import OllamaChatProvider
 from app.providers.ollama_embeddings import OllamaEmbeddingsProvider, OllamaProviderError
 from app.retrieval.retriever import Retriever
 from app.storage.chroma_store import ChromaStore
+from app.agents.security_agent import SecurityAgent
 from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
@@ -177,6 +178,12 @@ def create_chat_service(
         enable_tools=True,
         user_id=user_id,
         rag_fallback_distance_threshold=settings.rag_fallback_distance_threshold,
+        security_agent=SecurityAgent(
+            registry=registry,
+            chat_provider=chat_provider,
+            max_input_length=settings.max_input_length,
+            enabled=settings.security_enabled,
+        ),
     )
 
 
