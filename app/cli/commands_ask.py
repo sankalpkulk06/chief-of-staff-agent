@@ -22,6 +22,7 @@ from app.providers.ollama_embeddings import OllamaEmbeddingsProvider, OllamaProv
 from app.retrieval.retriever import Retriever
 from app.storage.chroma_store import ChromaStore
 from app.agents.security_agent import SecurityAgent
+from app.agents.security_policy import SecurityPolicy
 from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
@@ -181,8 +182,7 @@ def create_chat_service(
         security_agent=SecurityAgent(
             registry=registry,
             chat_provider=chat_provider,
-            max_input_length=settings.max_input_length,
-            enabled=settings.security_enabled,
+            policy=SecurityPolicy.from_settings(settings),
         ),
     )
 

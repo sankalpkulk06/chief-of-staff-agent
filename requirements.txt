@@ -22,3 +22,4 @@ ddgs
 twilio>=9.0
 apscheduler
 beautifulsoup4>=4.12
+tenacity>=8.2

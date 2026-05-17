@@ -33,5 +33,6 @@ class OrchestratorPlan:
 class SecurityResult:
     """Output from the SecurityAgent's input or output check."""
     blocked: bool
-    reason: Optional[str] = None     # "prompt_injection" | "length_exceeded"
+    reason: Optional[str] = None     # "prompt_injection" | "length_exceeded" | "rate_limit_exceeded"
     flags: list = field(default_factory=list)  # e.g. ["pii_detected"]
+    sanitized_input: Optional[str] = None  # non-None if HTML was stripped; caller uses this instead of original
