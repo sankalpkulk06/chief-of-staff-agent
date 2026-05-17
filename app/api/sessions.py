@@ -40,9 +40,17 @@ class SourceOut(BaseModel):
     source_type: str
 
 
+class StepOut(BaseModel):
+    agent: str
+    task: str
+    success: bool
+    error: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     reply: str
     sources: List[SourceOut] = []
+    steps: List[StepOut] = []
     latency_ms: int
 
 
@@ -202,8 +210,19 @@ async def chat(
         for s in result.sources
     ]
 
+    steps = [
+        StepOut(
+            agent=s["agent"],
+            task=s["task"],
+            success=s["success"],
+            error=s.get("error"),
+        )
+        for s in result.steps
+    ]
+
     return ChatResponse(
         reply=result.answer,
         sources=sources,
+        steps=steps,
         latency_ms=latency_ms,
     )
