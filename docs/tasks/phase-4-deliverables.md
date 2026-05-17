@@ -13,8 +13,8 @@ Polish, documentation, and submission artifacts required by the assignment.
 **1. Multi-Agent Architecture**
 - Diagram + description of the 5 agents: Orchestrator, RAG Agent, Research Agent, Action Agent, Security Agent
 - Each agent's responsibilities and tool access boundaries
-- Communication pattern: LangGraph StateGraph — sequential with optional parallel branches
-- State is passed as immutable `AgentState` TypedDict through the graph
+- Communication pattern: Agno Workflow/Team — sequential by default with optional parallel branches
+- State is passed through a bounded Sage run context and persisted through Sage/Agno session storage
 
 **2. Security, Safety, and Guardrails**
 - Input validation: prompt injection detection, PII flagging, max-length enforcement
@@ -23,11 +23,11 @@ Polish, documentation, and submission artifacts required by the assignment.
 - Agent isolation: each agent's allowed tool set is defined in `SecurityPolicy`; violations are blocked and logged
 
 **3. Implementation Approach**
-- Python 3.11, LangGraph, FastAPI, LangChain-Core
+- Python 3.11, Agno, FastAPI
 - Model-agnostic: Gemini (primary), Groq (fallback), Ollama (local dev)
 - Cloud: Supabase (Postgres), Qdrant (vectors), Google Cloud Run (hosting)
 - Error handling: tenacity retries, agent-level error states, orchestrator fallbacks
-- Testing: unit tests per agent, integration test of full graph
+- Testing: unit tests per agent, integration test of full Agno workflow/team
 
 **4. Use of AI / LLMs and Collaboration**
 - Orchestrator uses LLM for task decomposition and final synthesis
@@ -54,7 +54,7 @@ Polish, documentation, and submission artifacts required by the assignment.
       │
       ▼
   ┌─────────────────────────────────────────────────────┐
-  │                   LangGraph StateGraph               │
+  │                   Agno Workflow / Team               │
   │                                                     │
   │  [SecurityAgent] ──OK──▶ [OrchestratorAgent]       │
   │       │                        │                   │
@@ -83,7 +83,7 @@ Polish, documentation, and submission artifacts required by the assignment.
   - Setup instructions for cloud (env vars needed)
   - Setup instructions for local dev (Ollama fallback still works)
   - Sample prompts that demonstrate multi-agent routing
-- [ ] Add badges: Python version, LangGraph, deployed status
+- [ ] Add badges: Python version, Agno, deployed status
 
 ---
 

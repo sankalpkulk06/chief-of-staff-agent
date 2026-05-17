@@ -1,9 +1,9 @@
 # Phase 1 — Multi-Agent Orchestrator
 
-Convert Sage from a single monolithic ChatService into a LangGraph-based multi-agent system
+Convert Sage from a single monolithic ChatService into an Agno-based multi-agent system
 with model-agnostic LLM providers (Gemini, Groq, Ollama). This is the core of the Wipro assignment.
 
-**Framework:** LangGraph (stateful agent graphs, model-agnostic, Python-native)
+**Framework:** Agno (Python-native agents, teams, workflows, tools, memory, guardrails, and production serving)
 
 ---
 
@@ -19,7 +19,7 @@ go through the interface.
   - `EmbeddingsProvider.embed(texts) -> list[list[float]]`
 - [ ] Create `app/providers/gemini_provider.py` — wraps `google-generativeai` SDK
   - Support `GEMINI_API_KEY` from env
-  - Map LangChain/generic message format to Gemini's format
+  - Map Agno/generic message format to Gemini's format
   - Support tool calling via Gemini function calling API
 - [ ] Create `app/providers/groq_provider.py` — wraps `groq` SDK (OpenAI-compatible)
   - Support `GROQ_API_KEY` from env
@@ -35,7 +35,7 @@ go through the interface.
   - `groq_api_key: str = ""`
   - `groq_chat_model: str = "llama-3.3-70b-versatile"`
   - `embeddings_provider: str = "ollama"` (keep local by default; swap to Gemini if needed)
-- [ ] Add `google-generativeai>=0.8` and `groq>=0.9` to `requirements.txt`
+- [ ] Add `agno`, `google-generativeai>=0.8`, and `groq>=0.9` to `requirements.txt`
 - [ ] Update all code that imports `OllamaChatProvider` directly to use the factory
 
 ---
@@ -54,7 +54,7 @@ go through the interface.
 
 **Tasks:**
 - [ ] Create `app/agents/` package with `__init__.py`
-- [ ] Define `AgentMessage` dataclass in `app/agents/base.py`:
+- [ ] Define `AgentMessage` dataclass in `app/agents/base.py` for Sage-specific run metadata:
   ```python
   @dataclass
   class AgentMessage:
@@ -64,8 +64,8 @@ go through the interface.
       tool_calls: list    # structured tool invocations
       metadata: dict      # latency, tokens, source citations
   ```
-- [ ] Define `BaseAgent` abstract class with `invoke(state: AgentState) -> AgentState`
-- [ ] Define `AgentState` TypedDict for LangGraph shared state:
+- [ ] Create Agno agent factory helpers in `app/agents/base.py` so each Sage agent is configured consistently
+- [ ] Define `SageRunContext` / `AgentRunState` TypedDict for data passed through Agno workflows:
   - `messages: list[AgentMessage]`
   - `user_input: str`
   - `session_id: str`
@@ -106,6 +106,7 @@ go through the interface.
 
 **Tasks:**
 - [ ] Create `app/agents/orchestrator.py`
+- [ ] Implement the planner as an Agno `Agent` with structured output for step plans
 - [ ] Orchestrator system prompt defines:
   - Its role as coordinator (not executor)
   - The list of available sub-agents and what each can do
@@ -116,7 +117,7 @@ go through the interface.
   { "steps": [{"agent": "rag_agent", "task": "find docs about X"}, ...] }
   ```
 - [ ] Implement sequential execution (step by step, result feeds next)
-- [ ] Implement parallel execution (steps with no dependency run concurrently via `asyncio.gather`)
+- [ ] Implement parallel execution through Agno team/workflow coordination for independent steps
 - [ ] Orchestrator assembles final reply from all sub-agent outputs
 - [ ] Maintain backwards compatibility: simple conversational queries skip sub-agents entirely (fast path)
 
@@ -126,6 +127,7 @@ go through the interface.
 
 **Tasks:**
 - [ ] Create `app/agents/rag_agent.py`
+- [ ] Wrap the behavior as an Agno `Agent` with RAG/search tools
 - [ ] Wraps existing `Retriever`, `ChromaStore`, `PromptBuilder`, and `UrlIngestionService`
 - [ ] Tools available to this agent: `search_documents`, `ingest_url`
 - [ ] Returns structured result: `{ "answer": str, "citations": list, "chunks_used": int }`
@@ -138,6 +140,7 @@ go through the interface.
 
 **Tasks:**
 - [ ] Create `app/agents/action_agent.py`
+- [ ] Wrap the behavior as an Agno `Agent` with tightly scoped side-effecting tools
 - [ ] Wraps existing `HabitService`, `FactService`, `RemindersService`, `todo_parser`
 - [ ] Allowed tools: `add_todo`, `add_apple_reminder`, `add_habit`, `log_habit`, `get_habits`, `remember_fact`, `list_facts`
 - [ ] All tool calls are logged before execution (audit trail in SQLite)
@@ -150,6 +153,7 @@ go through the interface.
 
 **Tasks:**
 - [ ] Create `app/agents/research_agent.py`
+- [ ] Wrap the behavior as an Agno `Agent` with read-only research tools
 - [ ] Wraps `WebSearchService`, `NewsService`, `EmailService`
 - [ ] Allowed tools: `web_search`, `fetch_news`, `triage_email`
 - [ ] Read-only: cannot modify any state
@@ -158,27 +162,27 @@ go through the interface.
 
 ---
 
-## 1.8 Wire Everything Together with LangGraph
+## 1.8 Wire Everything Together with Agno
 
 **Tasks:**
-- [ ] Add `langgraph>=0.2` and `langchain-core>=0.3` to `requirements.txt`
-- [ ] Create `app/agents/graph.py` — defines the LangGraph `StateGraph`:
+- [ ] Add `agno` and the needed Agno extras (`ollama`, `groq`, `google`, `sqlite`, `chromadb`, `qdrant`, `tavily` as needed) to `requirements.txt`
+- [ ] Create `app/agents/workflow.py` — defines the Agno `Workflow` / `Team`:
   ```
-  START
+  User input
     └─▶ SecurityAgent (input validation)
-          ├─ BLOCKED ──▶ END (return rejection message)
+          ├─ BLOCKED ──▶ return rejection message
           └─ OK ──────▶ OrchestratorAgent
                               ├─▶ RAGAgent (conditional)
                               ├─▶ ResearchAgent (conditional)
                               ├─▶ ActionAgent (conditional)
                               └─▶ SecurityAgent (output validation)
-                                        └─▶ END
+                                        └─▶ final reply
   ```
-- [ ] Implement conditional edges based on `state["active_agent"]`
-- [ ] Each node in the graph corresponds to one agent's `invoke()` call
-- [ ] Compile graph with `graph.compile(checkpointer=...)` for state persistence
+- [ ] Implement conditional routing based on the orchestrator's structured plan
+- [ ] Each Agno agent wraps one bounded specialist capability and its allowed tools
+- [ ] Configure Agno storage/session persistence where it complements Sage's existing SQLite session tables
 - [ ] Create `app/agents/runner.py` — exposes `run_agent_pipeline(user_input, session_id) -> AgentResult`
-  This is the new single entry point that replaces `ChatService._handle_turn()`
+  This is the new single entry point that replaces the direct ChatService LLM loop
 
 ---
 
@@ -186,7 +190,7 @@ go through the interface.
 
 **Tasks:**
 - [ ] Update `app/core/chat_service.py` to call `runner.run_agent_pipeline()` instead of its internal loop
-  - Keep `ChatService` as the session/persistence manager; delegate all LLM work to the agent graph
+  - Keep `ChatService` as the session/persistence manager; delegate all LLM work to the Agno workflow/team
 - [ ] Ensure REST API (`app/api/sessions.py` chat endpoint) still works — no changes to API surface
 - [ ] Ensure CLI chat still works
 - [ ] Ensure WhatsApp webhook still works
@@ -199,7 +203,7 @@ go through the interface.
 **Tasks:**
 - [ ] Add retry decorator (`tenacity` library) to all LLM provider calls: 3 retries, exponential backoff
 - [ ] Add `tenacity>=8.2` to `requirements.txt`
-- [ ] Each agent catches its own errors and returns a structured error state (never raises to graph)
+- [ ] Each agent catches its own errors and returns a structured error state
 - [ ] Orchestrator implements fallback: if RAG Agent fails, try Research Agent
 - [ ] Timeout: each agent node has a 30-second timeout; orchestrator signals graceful degradation
 - [ ] Add `LLM_TIMEOUT_SECONDS=30` to settings
@@ -212,5 +216,5 @@ go through the interface.
 - [ ] Add `tests/agents/` directory
 - [ ] Unit test Security Agent: known injection strings should be blocked
 - [ ] Unit test provider factory: mock API calls, verify correct provider is returned
-- [ ] Integration test: full graph run with mocked LLM responses
+- [ ] Integration test: full Agno workflow/team run with mocked LLM responses
 - [ ] Verify existing tests still pass after ChatService refactor

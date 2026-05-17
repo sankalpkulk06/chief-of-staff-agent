@@ -7,7 +7,7 @@
 
 | Phase | File | Goal |
 |-------|------|------|
-| 1 | [phase-1-multi-agent-orchestrator.md](phase-1-multi-agent-orchestrator.md) | Convert to LangGraph multi-agent system, model-agnostic providers |
+| 1 | [phase-1-multi-agent-orchestrator.md](phase-1-multi-agent-orchestrator.md) | Convert to Agno multi-agent system, model-agnostic providers |
 | 2 | [phase-2-cloud-migration.md](phase-2-cloud-migration.md) | Move SQLite → Supabase (Postgres), keep ChromaDB cloud-ready |
 | 3 | [phase-3-deployment.md](phase-3-deployment.md) | Deploy to GCP Cloud Run, live public endpoint |
 | 4 | [phase-4-deliverables.md](phase-4-deliverables.md) | Report, architecture diagram, README, sample prompts |
