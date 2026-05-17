@@ -18,6 +18,16 @@ class Settings(BaseModel):
     ollama_chat_model: str = "llama3.2:3b"
     ollama_embedding_model: str = "nomic-embed-text"
 
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_chat_model: str = "llama-3.3-70b-versatile"
+
+    orchestrator_chat_model: str = ""
+    rag_chat_model: str = ""
+    research_chat_model: str = ""
+    action_chat_model: str = ""
+    conversational_chat_model: str = ""
+
     chunk_size: int = Field(default=800, gt=0)
     chunk_overlap: int = Field(default=120, ge=0)
     retrieval_top_k: int = Field(default=5, gt=0)

@@ -11,6 +11,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from rich.console import Console
+from rich.table import Table
 
 from app.cli.commands_ask import (
     create_analytics_service,
@@ -24,6 +25,7 @@ from app.core.todo_parser import parse_due_date
 from app.services.email_service import EmailService
 from app.providers.ollama_chat import OllamaChatProvider
 from app.providers.ollama_embeddings import OllamaProviderError
+from app.providers.factory import create_chat_provider, ModelSpec
 from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
@@ -315,6 +317,56 @@ def _handle_configure(args: str, user_id: str, registry, settings, paths) -> str
     return f"Unknown configure option '{sub}'. Use: email, status."
 
 
+_AGENT_LABELS = {
+    "orchestrator": ("OrchestratorAgent", "Plans which agents to call, synthesizes the final reply"),
+    "rag_agent": ("RAGAgent", "Semantic search over ingested documents"),
+    "research_agent": ("ResearchAgent", "Live web search + news fetching"),
+    "action_agent": ("ActionAgent", "Creates todos, logs habits, saves/recalls facts"),
+    "conversational": ("ConversationalAgent", "General chat, greetings, acknowledgements"),
+}
+
+
+def _print_agent_models(service) -> None:
+    specs = service.get_agent_model_specs()
+    table = Table(show_header=True, header_style="bold", title="Agent Model Routing")
+    table.add_column("Agent", style="bold")
+    table.add_column("Role")
+    table.add_column("Model", style="cyan")
+    for key in ("orchestrator", "rag_agent", "research_agent", "action_agent", "conversational"):
+        label, role = _AGENT_LABELS[key]
+        table.add_row(label, role, specs.get(key, ""))
+    console.print()
+    console.print(table)
+    console.print()
+
+
+def _handle_model_command(args: str, service, settings) -> None:
+    parts = args.strip().split()
+    if not parts or parts[0].lower() in ("list", "show"):
+        _print_agent_models(service)
+        console.print("[dim]Set one with: /model set orchestrator groq:llama-3.3-70b-versatile[/dim]\n")
+        return
+
+    if parts[0].lower() != "set" or len(parts) < 3:
+        console.print("\n[yellow]Usage:[/yellow] /model set <agent> <provider>:<model>\n")
+        console.print("[dim]Agents: orchestrator, rag, research, action, conversational[/dim]")
+        console.print("[dim]Providers: ollama, groq[/dim]\n")
+        return
+
+    agent_name = parts[1]
+    raw_spec = " ".join(parts[2:]).strip()
+    try:
+        spec = ModelSpec.parse(raw_spec)
+        provider = create_chat_provider(settings, spec)
+        normalized = service.set_agent_chat_provider(agent_name, provider, spec.label())
+    except Exception as exc:
+        console.print(f"\n[red]✗[/red] Could not set model: {exc}\n")
+        return
+
+    label, _ = _AGENT_LABELS[normalized]
+    console.print(f"\n[green]✓[/green] {label} now uses [bold]{spec.label()}[/bold]\n")
+
+
 def _print_help() -> None:
     console.print("\n[bold cyan]━━━━━━━━━━ Available Commands ━━━━━━━━━━[/bold cyan]")
     console.print()
@@ -322,6 +374,8 @@ def _print_help() -> None:
         ("/help", "Show this help message"),
         ("/configure email", "Connect your Gmail account (per-user OAuth)"),
         ("/configure status", "Show your account's configuration"),
+        ("/models", "Show model assigned to each agent"),
+        ("/model set <agent> <provider>:<model>", "Choose a model for one agent"),
         ("/topk <n>", "Set retrieval depth (default: 5)"),
         ("/session", "Show current session ID"),
         ("/sessions", "List recent chat sessions"),
@@ -480,6 +534,13 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             args = question[len("/configure"):].strip()
             result = _handle_configure(args, user_id, registry, settings, paths)
             console.print(f"\n{result}\n")
+            continue
+        if lowered == "/models":
+            _handle_model_command("", service, settings)
+            continue
+        if lowered in ("/model", "/model list", "/model show") or lowered.startswith("/model "):
+            args = question[len("/model"):].strip()
+            _handle_model_command(args, service, settings)
             continue
         if lowered == "/session":
             console.print(f"\n[dim]Session ID:[/dim] [bold]{session_id}[/bold]\n")

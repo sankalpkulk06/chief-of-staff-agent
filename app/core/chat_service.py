@@ -77,6 +77,8 @@ class ChatService:
         retriever: Retriever,
         chat_provider: OllamaChatProvider,
         registry: SQLiteRegistry,
+        agent_chat_providers: Optional[dict[str, Any]] = None,
+        agent_model_specs: Optional[dict[str, str]] = None,
         fact_service: Optional[FactService] = None,
         news_service: Optional[NewsService] = None,
         web_search_service: Optional[WebSearchService] = None,
@@ -92,6 +94,7 @@ class ChatService:
     ):
         self._retriever = retriever
         self._chat_provider = chat_provider
+        self._agent_model_specs = agent_model_specs or {}
         self._registry = registry
         self._fact_service = fact_service
         self._news_service = news_service
@@ -108,6 +111,8 @@ class ChatService:
 
         self._agent_runner = AgentRunner(
             chat_provider=chat_provider,
+            agent_chat_providers=agent_chat_providers,
+            agent_model_specs=self._agent_model_specs,
             retriever=retriever,
             registry=registry,
             fact_service=fact_service,
@@ -801,3 +806,40 @@ class ChatService:
     def get_habit_service(self) -> Optional[HabitService]:
         """Get the habit service for external use."""
         return self._habit_service
+
+    @staticmethod
+    def normalize_agent_name(agent_name: str) -> str:
+        normalized = agent_name.strip().lower().replace("-", "_")
+        aliases = {
+            "orchestrator": "orchestrator",
+            "orchestrator_agent": "orchestrator",
+            "orchestratoragent": "orchestrator",
+            "planner": "orchestrator",
+            "rag": "rag_agent",
+            "ragagent": "rag_agent",
+            "rag_agent": "rag_agent",
+            "research": "research_agent",
+            "researchagent": "research_agent",
+            "research_agent": "research_agent",
+            "action": "action_agent",
+            "actionagent": "action_agent",
+            "action_agent": "action_agent",
+            "conversation": "conversational",
+            "conversational_agent": "conversational",
+            "conversationalagent": "conversational",
+            "conversational": "conversational",
+        }
+        if normalized in aliases:
+            return aliases[normalized]
+        raise ValueError(
+            "Unknown agent. Use: orchestrator, rag, research, action, conversational."
+        )
+
+    def set_agent_chat_provider(self, agent_name: str, provider: Any, model_spec: str) -> str:
+        normalized = self.normalize_agent_name(agent_name)
+        self._agent_model_specs[normalized] = model_spec
+        self._agent_runner.set_agent_provider(normalized, provider, model_spec)
+        return normalized
+
+    def get_agent_model_specs(self) -> dict[str, str]:
+        return self._agent_runner.get_agent_model_specs()

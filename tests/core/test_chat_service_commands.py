@@ -89,6 +89,15 @@ def _news_service(registry):
     )
 
 
+def test_model_agent_name_normalization_accepts_display_and_short_names():
+    assert ChatService.normalize_agent_name("orchestrator") == "orchestrator"
+    assert ChatService.normalize_agent_name("OrchestratorAgent") == "orchestrator"
+    assert ChatService.normalize_agent_name("rag") == "rag_agent"
+    assert ChatService.normalize_agent_name("research") == "research_agent"
+    assert ChatService.normalize_agent_name("action") == "action_agent"
+    assert ChatService.normalize_agent_name("conversational") == "conversational"
+
+
 def test_habits_command_reads_shared_habit_data(registry):
     service = _service(registry)
     service.create_session("session")
@@ -210,5 +219,4 @@ def test_sources_intent_works_without_slash(registry):
     assert "Your saved sources" in result.answer
     assert "Saved Article" in result.answer
     assert "example.com" in result.answer
-
 

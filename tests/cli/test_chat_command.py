@@ -74,6 +74,14 @@ class _StubChatService:
         self._result = result
         self.answer_calls = []
         self.created_sessions = []
+        self.model_sets = []
+        self.model_specs = {
+            "orchestrator": "ollama:llama3.2:3b",
+            "rag_agent": "ollama:llama3.2:3b",
+            "research_agent": "ollama:llama3.2:3b",
+            "action_agent": "ollama:llama3.2:3b",
+            "conversational": "ollama:llama3.2:3b",
+        }
         self.registry = _StubRegistry()
 
     def create_session(self, session_id, title=""):
@@ -97,6 +105,14 @@ class _StubChatService:
     def answer_in_session(self, session_id, question, top_k=None):
         self.answer_calls.append((session_id, question, top_k))
         return self._result
+
+    def get_agent_model_specs(self):
+        return self.model_specs
+
+    def set_agent_chat_provider(self, agent_name, provider, model_spec):
+        self.model_sets.append((agent_name, provider, model_spec))
+        self.model_specs["orchestrator"] = model_spec
+        return "orchestrator"
 
 
 class _StubNewsService:
@@ -185,6 +201,60 @@ def test_chat_command_topk_command(monkeypatch):
     assert "Retrieval depth set to" in result.stdout
     session_id = "session-cli:default:default"
     assert chat_service.answer_calls == [(session_id, "What now?", 2)]
+
+
+def test_chat_command_models_command(monkeypatch):
+    chat_service = _StubChatService(_qa_result("A"))
+    _patch_chat_dependencies(monkeypatch, ["/models", "quit"], chat_service)
+
+    result = runner.invoke(cli, ["chat"])
+
+    assert result.exit_code == 0
+    assert "Agent Model Routing" in result.stdout
+    assert "OrchestratorAgent" in result.stdout
+    assert "ollama:llama3.2:3b" in result.stdout
+    assert chat_service.answer_calls == []
+
+
+def test_chat_command_model_set_command(monkeypatch):
+    class _Provider:
+        pass
+
+    chat_service = _StubChatService(_qa_result("A"))
+    _patch_chat_dependencies(
+        monkeypatch,
+        ["/model set orchestrator groq:llama-3.3-70b-versatile", "quit"],
+        chat_service,
+    )
+    monkeypatch.setattr("app.cli.commands_chat.create_chat_provider", lambda settings, spec: _Provider())
+
+    result = runner.invoke(cli, ["chat"])
+
+    assert result.exit_code == 0
+    assert "OrchestratorAgent now uses" in result.stdout
+    assert chat_service.model_sets[0][0] == "orchestrator"
+    assert chat_service.model_sets[0][2] == "groq:llama-3.3-70b-versatile"
+    assert chat_service.answer_calls == []
+
+
+def test_chat_command_model_set_accepts_orchestrator_agent_label(monkeypatch):
+    class _Provider:
+        pass
+
+    chat_service = _StubChatService(_qa_result("A"))
+    _patch_chat_dependencies(
+        monkeypatch,
+        ["/model set OrchestratorAgent groq:llama-3.3-70b-versatile", "quit"],
+        chat_service,
+    )
+    monkeypatch.setattr("app.cli.commands_chat.create_chat_provider", lambda settings, spec: _Provider())
+
+    result = runner.invoke(cli, ["chat"])
+
+    assert result.exit_code == 0
+    assert "OrchestratorAgent now uses" in result.stdout
+    assert chat_service.model_sets[0][0] == "OrchestratorAgent"
+    assert chat_service.model_sets[0][2] == "groq:llama-3.3-70b-versatile"
 
 
 def test_chat_command_todo_adds_reminder_without_hitting_llm(monkeypatch):

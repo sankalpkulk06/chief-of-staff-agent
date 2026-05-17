@@ -23,6 +23,8 @@ def test_settings_load_from_dotenv_and_env_override(tmp_path, monkeypatch):
     assert settings.morning_briefing_time == "08:00"
     assert settings.habit_nudge_time == "21:00"
     assert settings.twilio_daily_message_limit == 50
+    assert settings.groq_api_key == ""
+    assert settings.groq_chat_model == "llama-3.3-70b-versatile"
 
 
 def test_settings_loads_reminders_list_override(tmp_path):
@@ -55,6 +57,22 @@ def test_settings_loads_scheduler_overrides(tmp_path):
     assert settings.habit_nudge_time == "20:45"
     assert settings.your_whatsapp_number == "whatsapp:+14155551234"
     assert settings.twilio_daily_message_limit == 75
+
+
+def test_settings_loads_agent_model_overrides(tmp_path):
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        "GROQ_API_KEY=gsk_test\n"
+        "ORCHESTRATOR_CHAT_MODEL=groq:llama-3.3-70b-versatile\n"
+        "ACTION_CHAT_MODEL=groq:llama-3.3-70b-versatile\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings.from_env(project_root=tmp_path)
+
+    assert settings.groq_api_key == "gsk_test"
+    assert settings.orchestrator_chat_model == "groq:llama-3.3-70b-versatile"
+    assert settings.action_chat_model == "groq:llama-3.3-70b-versatile"
 
 
 def test_settings_resolve_local_paths(tmp_path):

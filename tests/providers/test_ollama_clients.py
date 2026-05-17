@@ -2,6 +2,7 @@ import requests
 import pytest
 
 from app.providers.ollama_chat import OllamaChatProvider
+from app.providers.groq_chat import GroqChatProvider
 from app.providers.ollama_embeddings import OllamaEmbeddingsProvider, OllamaProviderError
 
 
@@ -23,6 +24,16 @@ class _FakeSession:
 
     def post(self, url, json, timeout):
         self.calls.append({"url": url, "json": json, "timeout": timeout})
+        if self._error is not None:
+            raise self._error
+        if not self._responses:
+            raise AssertionError("No fake responses left")
+        return self._responses.pop(0)
+
+
+class _FakeGroqSession(_FakeSession):
+    def post(self, url, json, headers, timeout):
+        self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
         if self._error is not None:
             raise self._error
         if not self._responses:
@@ -93,3 +104,22 @@ def test_ollama_chat_bad_status_handled():
 
     assert "status 500" in str(exc_info.value)
 
+
+def test_groq_chat_provider_chat():
+    session = _FakeGroqSession(
+        responses=[
+            _FakeResponse(200, {"choices": [{"message": {"content": " planned answer "}}]}),
+        ]
+    )
+    provider = GroqChatProvider(
+        api_key="gsk_test",
+        model="llama-3.3-70b-versatile",
+        session=session,
+    )
+
+    answer = provider.chat([{"role": "user", "content": "plan"}])
+
+    assert answer == "planned answer"
+    assert session.calls[0]["url"].endswith("/chat/completions")
+    assert session.calls[0]["json"]["model"] == "llama-3.3-70b-versatile"
+    assert session.calls[0]["headers"]["Authorization"] == "Bearer gsk_test"

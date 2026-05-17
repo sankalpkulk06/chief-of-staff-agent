@@ -129,6 +129,14 @@ LLM_PROVIDER=groq
 GROQ_API_KEY=gsk_...
 GROQ_CHAT_MODEL=llama-3.3-70b-versatile
 
+# Optional per-agent chat models
+# Format: provider:model, where provider is ollama or groq
+ORCHESTRATOR_CHAT_MODEL=groq:llama-3.3-70b-versatile
+ACTION_CHAT_MODEL=groq:llama-3.3-70b-versatile
+RAG_CHAT_MODEL=ollama:llama3.2:3b
+RESEARCH_CHAT_MODEL=groq:llama-3.3-70b-versatile
+CONVERSATIONAL_CHAT_MODEL=ollama:llama3.2:3b
+
 # Or use Gemini
 # LLM_PROVIDER=gemini
 # GEMINI_API_KEY=AIza...
@@ -162,6 +170,8 @@ Sign up, then start chatting.
 | `/help` | Show all commands |
 | `/configure email` | Connect your Gmail (per-user OAuth) |
 | `/configure status` | Show your account's configuration |
+| `/models` | Show which model each agent is using |
+| `/model set <agent> <provider>:<model>` | Change one agent's model for this chat process |
 | `/remember-personal <fact>` | Save a personal fact |
 | `/remember-work <fact>` | Save a work fact |
 | `/facts [personal\|work]` | List stored facts |

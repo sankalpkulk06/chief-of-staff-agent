@@ -16,6 +16,7 @@ from app.services.news_service import NewsService
 from app.services.url_ingestion_service import URLIngestionService
 from app.services.web_search_service import WebSearchService
 from app.export.markdown_exporter import export_qa_to_markdown
+from app.providers.factory import create_chat_provider
 from app.providers.ollama_chat import OllamaChatProvider
 from app.providers.ollama_embeddings import OllamaEmbeddingsProvider, OllamaProviderError
 from app.retrieval.retriever import Retriever
@@ -24,6 +25,26 @@ from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
 console = Console()
+
+
+def _default_chat_model_spec(settings) -> str:
+    return f"ollama:{settings.ollama_chat_model}"
+
+
+def _agent_model_specs(settings) -> dict[str, str]:
+    default = _default_chat_model_spec(settings)
+    return {
+        "orchestrator": settings.orchestrator_chat_model or default,
+        "rag_agent": settings.rag_chat_model or default,
+        "research_agent": settings.research_chat_model or default,
+        "action_agent": settings.action_chat_model or default,
+        "conversational": settings.conversational_chat_model or default,
+    }
+
+
+def create_agent_chat_providers(settings) -> tuple[dict[str, object], dict[str, str]]:
+    specs = _agent_model_specs(settings)
+    return {agent: create_chat_provider(settings, spec) for agent, spec in specs.items()}, specs
 
 
 def create_qa_service() -> QAService:
@@ -117,6 +138,7 @@ def create_chat_service(
         base_url=settings.ollama_base_url,
         model=settings.ollama_chat_model,
     )
+    agent_chat_providers, agent_model_specs = create_agent_chat_providers(settings)
     registry = SQLiteRegistry(paths.sqlite_db_path)
     fact_service = create_fact_service(user_id=user_id)
     news_service = create_news_service()
@@ -139,6 +161,8 @@ def create_chat_service(
         retriever=retriever,
         chat_provider=chat_provider,
         registry=registry,
+        agent_chat_providers=agent_chat_providers,
+        agent_model_specs=agent_model_specs,
         fact_service=fact_service,
         news_service=news_service,
         web_search_service=web_search_service,

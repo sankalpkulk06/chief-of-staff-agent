@@ -68,6 +68,8 @@ class AgentRunner:
     def __init__(
         self,
         chat_provider: OllamaChatProvider,
+        agent_chat_providers: Optional[Dict[str, Any]] = None,
+        agent_model_specs: Optional[Dict[str, str]] = None,
         retriever: Optional[Retriever] = None,
         registry: Optional[SQLiteRegistry] = None,
         fact_service: Optional[FactService] = None,
@@ -78,18 +80,60 @@ class AgentRunner:
         assistant_name: str = "Sage",
         rag_top_k: int = 5,
     ):
-        self._orchestrator = OrchestratorAgent(chat_provider, assistant_name=assistant_name)
+        self._default_chat_provider = chat_provider
+        self._agent_chat_providers = agent_chat_providers or {}
+        self._agent_model_specs = agent_model_specs or {}
+        self._retriever = retriever
+        self._registry = registry
+        self._fact_service = fact_service
+        self._news_service = news_service
+        self._web_search_service = web_search_service
+        self._habit_service = habit_service
+        self._schedule_todo_callback = schedule_todo_callback
+        self._assistant_name = assistant_name
+        self._rag_top_k = rag_top_k
 
-        self._rag = RAGAgent(retriever, chat_provider, top_k=rag_top_k) if retriever else None
-        self._research = ResearchAgent(chat_provider, web_search_service, news_service)
-        self._action = ActionAgent(
-            chat_provider,
-            registry=registry,
-            fact_service=fact_service,
-            habit_service=habit_service,
-            schedule_todo_callback=schedule_todo_callback,
+        self._rebuild_agents()
+
+    def _provider_for(self, agent_name: str):
+        return self._agent_chat_providers.get(agent_name, self._default_chat_provider)
+
+    def _rebuild_agents(self) -> None:
+        self._orchestrator = OrchestratorAgent(
+            self._provider_for("orchestrator"),
+            assistant_name=self._assistant_name,
         )
-        self._conversational = ConversationalAgent(chat_provider, assistant_name, fact_service)
+
+        self._rag = (
+            RAGAgent(self._retriever, self._provider_for("rag_agent"), top_k=self._rag_top_k)
+            if self._retriever
+            else None
+        )
+        self._research = ResearchAgent(
+            self._provider_for("research_agent"),
+            self._web_search_service,
+            self._news_service,
+        )
+        self._action = ActionAgent(
+            self._provider_for("action_agent"),
+            registry=self._registry,
+            fact_service=self._fact_service,
+            habit_service=self._habit_service,
+            schedule_todo_callback=self._schedule_todo_callback,
+        )
+        self._conversational = ConversationalAgent(
+            self._provider_for("conversational"),
+            self._assistant_name,
+            self._fact_service,
+        )
+
+    def set_agent_provider(self, agent_name: str, provider: Any, model_spec: str) -> None:
+        self._agent_chat_providers[agent_name] = provider
+        self._agent_model_specs[agent_name] = model_spec
+        self._rebuild_agents()
+
+    def get_agent_model_specs(self) -> Dict[str, str]:
+        return dict(self._agent_model_specs)
 
     def run(
         self,
