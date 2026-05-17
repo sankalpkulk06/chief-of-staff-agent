@@ -79,6 +79,7 @@ class AgentRunner:
         schedule_todo_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         assistant_name: str = "Sage",
         rag_top_k: int = 5,
+        rag_fallback_threshold: float = 0.5,
     ):
         self._default_chat_provider = chat_provider
         self._agent_chat_providers = agent_chat_providers or {}
@@ -92,6 +93,7 @@ class AgentRunner:
         self._schedule_todo_callback = schedule_todo_callback
         self._assistant_name = assistant_name
         self._rag_top_k = rag_top_k
+        self._rag_fallback_threshold = rag_fallback_threshold
 
         self._rebuild_agents()
 
@@ -177,6 +179,10 @@ class AgentRunner:
                     self._rag._top_k = top_k
                 result = agent.execute(step.task, question, history, agent_results, user_id=user_id)
                 self._rag._top_k = original_top_k
+
+                top_score = result.metadata.get("top_score", 1.0)
+                if top_score > self._rag_fallback_threshold and self._research is not None:
+                    result = self._research.execute(step.task, question, history, agent_results)
             else:
                 result = agent.execute(step.task, question, history, agent_results)
 

@@ -91,6 +91,7 @@ class ChatService:
         assistant_name: str = "Sage",
         enable_tools: bool = True,
         user_id: str = "default",
+        rag_fallback_distance_threshold: float = 0.5,
     ):
         self._retriever = retriever
         self._chat_provider = chat_provider
@@ -108,6 +109,7 @@ class ChatService:
         self._assistant_name = assistant_name
         self._enable_tools = enable_tools
         self._user_id = user_id
+        self._rag_fallback_distance_threshold = rag_fallback_distance_threshold
 
         self._agent_runner = AgentRunner(
             chat_provider=chat_provider,
@@ -122,6 +124,7 @@ class ChatService:
             schedule_todo_callback=schedule_todo_callback,
             assistant_name=assistant_name,
             rag_top_k=max_prompt_chunks,
+            rag_fallback_threshold=rag_fallback_distance_threshold,
         )
 
         # In-memory cache of news articles per session for follow-up questions

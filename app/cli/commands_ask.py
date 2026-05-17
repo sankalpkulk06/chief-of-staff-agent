@@ -176,6 +176,7 @@ def create_chat_service(
         assistant_name=settings.assistant_name,
         enable_tools=True,
         user_id=user_id,
+        rag_fallback_distance_threshold=settings.rag_fallback_distance_threshold,
     )
 
 

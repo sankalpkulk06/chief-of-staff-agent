@@ -46,7 +46,7 @@ class RAGAgent:
                         f"to '{task}'."
                     ),
                     success=True,
-                    metadata={"chunks_found": 0},
+                    metadata={"chunks_found": 0, "top_score": 1.0},
                 )
 
             # Build a cited context block.
@@ -78,7 +78,7 @@ class RAGAgent:
                 output=answer,
                 success=True,
                 citations=citations,
-                metadata={"chunks_found": len(retrieval.chunks)},
+                metadata={"chunks_found": len(retrieval.chunks), "top_score": retrieval.chunks[0].score},
             )
 
         except Exception as exc:

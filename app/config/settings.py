@@ -31,6 +31,7 @@ class Settings(BaseModel):
     chunk_size: int = Field(default=800, gt=0)
     chunk_overlap: int = Field(default=120, ge=0)
     retrieval_top_k: int = Field(default=5, gt=0)
+    rag_fallback_distance_threshold: float = 0.5
     news_max_results: int = Field(default=5, gt=0)
     email_max_results: int = Field(default=20, gt=0)
     reminders_default_list: str = "Reminders"
