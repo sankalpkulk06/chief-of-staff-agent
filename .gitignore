@@ -18,6 +18,12 @@ env/
 data/credentials/
 data/sqlite/
 data/chroma/
+data/cache/
+data/reports/
+
+# Docs binaries
+docs/*.docx
+docs/*.pdf
 
 # OS
 .DS_Store
