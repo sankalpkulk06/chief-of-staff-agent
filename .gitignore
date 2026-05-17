@@ -44,3 +44,5 @@ logs/
 .coverage
 htmlcov/
 
+# commands - not to be pushed to the repo
+commands/
