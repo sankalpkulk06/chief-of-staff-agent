@@ -34,8 +34,21 @@ class ResearchAgent:
     ) -> AgentResult:
         # Determine whether this is a news or general web search query.
         task_lower = task.lower()
-        is_news = any(w in task_lower for w in ("news", "latest", "recent", "today", "happened"))
 
+        # Honour explicit routing prefix set by the orchestrator's rule-based planner.
+        if task_lower.startswith("web search:"):
+            clean_task = task[len("web search:"):].strip()
+            return self._web_search_query(clean_task) if self._web_search else AgentResult(
+                agent="research_agent", task=task, output="Web search is not configured.", success=False, error="no_web_search"
+            )
+        if task_lower.startswith("news:"):
+            clean_task = task[len("news:"):].strip()
+            return self._fetch_news(clean_task) if self._news else AgentResult(
+                agent="research_agent", task=task, output="News service is not configured.", success=False, error="no_news"
+            )
+
+        # Heuristic routing when no prefix is present.
+        is_news = any(w in task_lower for w in ("news", "latest", "recent", "today", "happened", "headlines"))
         if is_news and self._news:
             return self._fetch_news(task)
         if self._web_search:

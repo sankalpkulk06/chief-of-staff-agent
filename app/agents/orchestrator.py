@@ -1,7 +1,7 @@
 """Orchestrator agent — plans tasks and synthesizes results from sub-agents."""
 import json
 import re
-from typing import Any, List
+from typing import Any, List, Optional
 
 from app.agents.base import AgentResult, AgentStep, OrchestratorPlan
 from app.providers.ollama_chat import OllamaChatProvider
@@ -90,6 +90,12 @@ class OrchestratorAgent:
                 reasoning="simple conversational query — no planning needed",
             )
 
+        # Rule-based pre-decomposition for compound research requests.
+        # Small models reliably miss these — detect and split before LLM planning.
+        rule_plan = self._rule_based_plan(question)
+        if rule_plan:
+            return rule_plan
+
         agent_list = "\n".join(f"- {name}: {desc}" for name, desc in AGENT_DESCRIPTIONS.items())
         system = _PLAN_SYSTEM.format(agent_list=agent_list)
 
@@ -148,6 +154,54 @@ class OrchestratorAgent:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _rule_based_plan(question: str) -> Optional["OrchestratorPlan"]:
+        """
+        Detect compound requests that small models reliably fail to split.
+        Returns a plan if a rule fires, None to fall through to LLM planning.
+
+        Handles patterns like:
+          "search for X and tell me the news about Y"
+          "what is X and what's the news on Y"
+          "find info on X and also check news about Y"
+        """
+        q = question.lower()
+
+        # Detect: web-search intent + news intent in the same message
+        _search_words = {"search", "look up", "find", "what is", "explain", "tell me about", "google"}
+        _news_words = {"news", "latest", "recent", "headlines", "what's happening"}
+        _connectors = {" and ", " also ", " plus ", " as well as ", " then "}
+
+        has_search = any(w in q for w in _search_words)
+        has_news = any(w in q for w in _news_words)
+        has_connector = any(c in q for c in _connectors)
+
+        if has_search and has_news and has_connector:
+            # Split at the connector to extract the two sub-tasks
+            import re
+            parts = re.split(r"\band\b|\balso\b|\bplus\b|\bas well as\b|\bthen\b", question, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) == 2:
+                first, second = parts[0].strip(), parts[1].strip()
+                # Assign each part to the right agent
+                first_is_news = any(w in first.lower() for w in _news_words)
+                second_is_news = any(w in second.lower() for w in _news_words)
+                steps = [
+                    AgentStep(
+                        agent="research_agent",
+                        task=f"news: {first}" if first_is_news else f"web search: {first}",
+                    ),
+                    AgentStep(
+                        agent="research_agent",
+                        task=f"news: {second}" if second_is_news else f"web search: {second}",
+                    ),
+                ]
+                return OrchestratorPlan(
+                    steps=steps,
+                    reasoning="compound research request — split into web search + news steps",
+                )
+
+        return None
 
     @staticmethod
     def _is_fast_path(question: str) -> bool:
