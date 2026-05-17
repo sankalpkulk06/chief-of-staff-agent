@@ -90,6 +90,7 @@ def create_web_search_service() -> WebSearchService:
 def create_url_ingestion_service(
     registry: SQLiteRegistry,
     chat_provider: OllamaChatProvider,
+    vector_store: Optional[ChromaStore] = None,
 ) -> URLIngestionService:
     settings = get_settings()
     paths = settings.resolve_paths()
@@ -100,7 +101,7 @@ def create_url_ingestion_service(
             model=settings.ollama_embedding_model,
         ),
         registry=registry,
-        vector_store=ChromaStore(paths.chroma_dir),
+        vector_store=vector_store or ChromaStore(paths.chroma_dir),
     )
     return URLIngestionService(
         ingest_coordinator=coordinator,
@@ -125,12 +126,13 @@ def create_chat_service(
 ) -> ChatService:
     settings = get_settings()
     paths = settings.resolve_paths()
+    shared_vector_store = ChromaStore(paths.chroma_dir)
     retriever = Retriever(
         embeddings_provider=OllamaEmbeddingsProvider(
             base_url=settings.ollama_base_url,
             model=settings.ollama_embedding_model,
         ),
-        vector_store=ChromaStore(paths.chroma_dir),
+        vector_store=shared_vector_store,
         metadata_registry=SQLiteRegistry(paths.sqlite_db_path),
         default_top_k=settings.retrieval_top_k,
     )
@@ -145,7 +147,7 @@ def create_chat_service(
 
     web_search_service = create_web_search_service()
     habit_service = HabitService(registry, user_id=user_id)
-    url_ingestion_service = create_url_ingestion_service(registry, chat_provider) if settings.url_ingestion_enabled else None
+    url_ingestion_service = create_url_ingestion_service(registry, chat_provider, shared_vector_store) if settings.url_ingestion_enabled else None
 
     # Per-user Gmail token stored under data/credentials/{user_id}/
     try:

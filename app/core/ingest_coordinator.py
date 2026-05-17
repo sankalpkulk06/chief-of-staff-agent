@@ -85,7 +85,7 @@ class IngestCoordinator:
 
         Returns (document_id, chunks_created). Returns (doc_id, 0) if already ingested.
         """
-        url_hash = hashlib.sha256(source_url.encode()).hexdigest()[:16]
+        url_hash = hashlib.sha256(f"{user_id}:{source_url}".encode()).hexdigest()[:16]
         fake_path = Path(f"/url/{url_hash}")
         checksum = hashlib.sha256(content.encode()).hexdigest()
         from app.ingestion.ids import build_document_id

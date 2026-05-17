@@ -204,6 +204,21 @@ class ChatService:
         """
         history = self.get_history(session_id)
 
+        # URL + question → ingest the page, then answer from that page immediately.
+        url_question_answer = self._answer_url_question(
+            question,
+            top_k=top_k,
+            response_style=response_style,
+        )
+        if url_question_answer is not None:
+            return self._record_answer(
+                session_id=session_id,
+                question=question,
+                answer=url_question_answer,
+                history=history,
+                sources_used=True,
+            )
+
         # URL paste → ingest immediately, no agent needed
         url_answer = self._answer_url_ingestion(question, response_style=response_style)
         if url_answer is not None:
@@ -331,10 +346,82 @@ class ChatService:
         url = self._url_ingestion_service.extract_url(question)
         if not url:
             return None
-        result = self._url_ingestion_service.ingest(url)
+        result = self._url_ingestion_service.ingest(url, user_id=self._user_id)
         return self._url_ingestion_service.format_confirmation(
             result, whatsapp=self._is_whatsapp_style(response_style)
         )
+
+    def _answer_url_question(
+        self,
+        question: str,
+        top_k: Optional[int] = None,
+        response_style: Optional[str] = None,
+    ) -> Optional[str]:
+        if not self._url_ingestion_service:
+            return None
+
+        url = self._url_ingestion_service.extract_url(question)
+        if not url:
+            return None
+
+        if self._url_ingestion_service.is_url(question):
+            return None
+
+        if self._url_ingestion_service.is_ingest_intent(question):
+            return None
+
+        article_question = question.replace(url, " ", 1).strip(" \t\n\r,.-")
+        if not article_question:
+            return None
+
+        ingest_result = self._url_ingestion_service.ingest(url, user_id=self._user_id)
+        if not ingest_result.success and not ingest_result.already_existed:
+            return self._url_ingestion_service.format_confirmation(
+                ingest_result,
+                whatsapp=self._is_whatsapp_style(response_style),
+            )
+
+        retrieval = self._retriever.retrieve(
+            question=article_question,
+            top_k=max(top_k or self._max_prompt_chunks, 10),
+            user_id=self._user_id,
+            source_url=url,
+        )
+        if not retrieval.chunks:
+            return (
+                "I saved the article, but I couldn't find enough relevant text in it "
+                f"to answer: {article_question}"
+            )
+
+        chunk_lines = []
+        for i, chunk in enumerate(retrieval.chunks, 1):
+            source = chunk.file_name or chunk.source_url or "the article"
+            chunk_lines.append(f"[{i}] {source}\n{chunk.text.strip()[:900]}")
+        context = "\n\n".join(chunk_lines)
+
+        style = self._resolve_response_style(response_style)
+        style_instruction = f"\n\nResponse style:\n{style}" if style else ""
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "Answer using only the article excerpts provided. "
+                    "If the excerpts do not contain the answer, say that clearly. "
+                    "Keep the answer grounded in the article."
+                    f"{style_instruction}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Article URL: {url}\n"
+                    f"Question: {article_question}\n\n"
+                    f"Article excerpts:\n{context}\n\n"
+                    "Answer:"
+                ),
+            },
+        ]
+        return self._chat_provider.chat(messages=messages)
 
     def _answer_direct_command(
         self, question: str, response_style: Optional[str] = None

@@ -93,11 +93,11 @@ find information in my documents about AI
    Orchestrator plans: research_agent (web) -> research_agent (news)
    Same agent called twice in one query
 -------------------------------------------------------------
-with a quick search tell me what CrewAI is and also get me the news on AI agent frameworks
-search for what LangGraph does and also get me the latest news on AI orchestration tools
-look up what AutoGen is and also get me the news on Microsoft AI
-search for Groq API and also get me the latest news on fast LLM inference
-look up what Qdrant is and also get me the news on vector databases
+WORKS: with a quick search tell me what CrewAI is and also get me the news on AI agent frameworks
+WORKS: search for what LangGraph does and also get me the latest news on AI orchestration tools
+WORKS: look up what Nvidia NeMo is and also get me the news on Microsoft AI
+WORKS: search for Groq API and also get me the latest news on fast LLM inference
+WORKS: look up what Qdrant is and also get me the news on vector databases
 
 
 -------------------------------------------------------------

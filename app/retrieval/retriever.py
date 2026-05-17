@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -5,6 +6,8 @@ from pydantic import BaseModel, Field
 from app.providers.ollama_embeddings import OllamaEmbeddingsProvider
 from app.storage.chroma_store import ChromaStore
 from app.storage.sqlite_registry import SQLiteRegistry
+
+log = logging.getLogger(__name__)
 
 
 class RetrievedChunk(BaseModel):
@@ -44,11 +47,29 @@ class Retriever:
         self._metadata_registry = metadata_registry
         self._default_top_k = default_top_k
 
-    def retrieve(self, question: str, top_k: Optional[int] = None, user_id: Optional[str] = None) -> RetrievalResult:
+    def retrieve(
+        self,
+        question: str,
+        top_k: Optional[int] = None,
+        user_id: Optional[str] = None,
+        source_url: Optional[str] = None,
+    ) -> RetrievalResult:
         effective_top_k = top_k or self._default_top_k
         query_embedding = self._embeddings_provider.embed_query(question)
-        where = {"user_id": user_id} if user_id else None
+        filters = []
+        if user_id:
+            filters.append({"user_id": user_id})
+        if source_url:
+            filters.append({"source_url": source_url})
+        if len(filters) == 1:
+            where = filters[0]
+        elif len(filters) > 1:
+            where = {"$and": filters}
+        else:
+            where = None
+        log.debug("Retriever query: top_k=%s user_id=%r where=%r", effective_top_k, user_id, where)
         vector_records = self._vector_store.query_similar(query_embedding=query_embedding, n_results=effective_top_k, where=where)
+        log.debug("Retriever got %d vector records", len(vector_records))
 
         chunks: List[RetrievedChunk] = []
         for record in vector_records:

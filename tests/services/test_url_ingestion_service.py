@@ -31,13 +31,14 @@ class _Coordinator:
         self.registry = registry
         self.calls = []
 
-    def ingest_text(self, content, title, source_url, extra_metadata=None):
+    def ingest_text(self, content, title, source_url, extra_metadata=None, user_id="default"):
         self.calls.append(
             {
                 "content": content,
                 "title": title,
                 "source_url": source_url,
                 "extra_metadata": extra_metadata or {},
+                "user_id": user_id,
             }
         )
         doc = ParsedDocument(
@@ -55,9 +56,10 @@ class _Coordinator:
                 **(extra_metadata or {}),
             },
         )
-        self.registry.upsert_document("doc-url", doc)
-        self.registry.set_document_source("doc-url", source_type="url", source_url=source_url)
-        return "doc-url", 2
+        document_id = f"doc-url-{user_id}"
+        self.registry.upsert_document(document_id, doc, user_id=user_id)
+        self.registry.set_document_source(document_id, source_type="url", source_url=source_url)
+        return document_id, 2
 
 
 def _response(url, text, status_code=200):
@@ -140,6 +142,33 @@ def test_ingest_writes_document_and_dedups(tmp_path, monkeypatch):
         assert service.list_url_sources()[0]["source_url"] == "https://example.com/saved"
         assert duplicate.already_existed is True
         assert len(coordinator.calls) == 1
+    finally:
+        registry.close()
+
+
+def test_ingest_dedupes_per_user(tmp_path, monkeypatch):
+    registry = SQLiteRegistry(tmp_path / "registry.db")
+    coordinator = _Coordinator(registry)
+    html = """
+    <html><head><title>Saved Article</title></head>
+    <body><main>one two three four five six seven eight nine ten</main></body></html>
+    """
+
+    def fake_get(url, **kwargs):
+        return _response(url, html)
+
+    monkeypatch.setattr("app.services.url_ingestion_service.httpx.get", fake_get)
+    try:
+        service = _service(registry, coordinator=coordinator)
+
+        service.ingest("https://example.com/saved", user_id="user-a")
+        duplicate_for_a = service.ingest("https://example.com/saved", user_id="user-a")
+        service.ingest("https://example.com/saved", user_id="user-b")
+
+        assert duplicate_for_a.already_existed is True
+        assert [call["user_id"] for call in coordinator.calls] == ["user-a", "user-b"]
+        assert registry.is_url_ingested("https://example.com/saved", user_id="user-a") is True
+        assert registry.is_url_ingested("https://example.com/saved", user_id="user-b") is True
     finally:
         registry.close()
 

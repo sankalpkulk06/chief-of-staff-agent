@@ -29,6 +29,15 @@ class _StubChatProvider:
         return "stubbed grounded answer"
 
 
+class _CapturingVectorStore:
+    def __init__(self):
+        self.calls = []
+
+    def query_similar(self, query_embedding, n_results=5, where=None):
+        self.calls.append({"query_embedding": query_embedding, "n_results": n_results, "where": where})
+        return []
+
+
 def _prepare_storage_with_chunks(tmp_path):
     file_path = tmp_path / "notes.txt"
     file_path.write_text("alpha beta gamma delta epsilon zeta eta theta", encoding="utf-8")
@@ -88,6 +97,29 @@ def test_retriever_empty_result_handling(tmp_path):
     assert result.is_empty is True
     assert result.chunks == []
     assert result.top_k == 3
+
+
+def test_retriever_combines_user_and_source_url_filters():
+    vector_store = _CapturingVectorStore()
+    retriever = Retriever(
+        embeddings_provider=_StubEmbeddingsProvider([1.0, 0.0, 0.0]),
+        vector_store=vector_store,
+        metadata_registry=None,
+        default_top_k=3,
+    )
+
+    retriever.retrieve(
+        "summarize it",
+        user_id="user-123",
+        source_url="https://example.com/article",
+    )
+
+    assert vector_store.calls[0]["where"] == {
+        "$and": [
+            {"user_id": "user-123"},
+            {"source_url": "https://example.com/article"},
+        ]
+    }
 
 
 def test_prompt_builder_output_shape():

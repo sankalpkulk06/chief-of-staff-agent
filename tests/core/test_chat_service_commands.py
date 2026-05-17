@@ -5,7 +5,9 @@ import pytest
 from app.core.chat_service import ChatService
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
+from app.retrieval.retriever import RetrievalResult, RetrievedChunk
 from app.schemas.document import ParsedDocument
+from app.services.url_ingestion_service import URLIngestionResult
 from app.services.news_service import NewsArticle
 from app.storage.sqlite_registry import SQLiteRegistry
 
@@ -26,6 +28,77 @@ class _ToolCallingChatProvider:
 
     def chat(self, messages):
         return next(self.responses)
+
+
+class _URLQuestionService:
+    def __init__(self):
+        self.ingested = []
+
+    def extract_url(self, text):
+        return "https://example.com/article" if "https://example.com/article" in text else None
+
+    def is_url(self, text):
+        return text.strip() == "https://example.com/article"
+
+    def is_ingest_intent(self, text):
+        return text.lower().startswith("save ")
+
+    def ingest(self, url, user_id="default"):
+        self.ingested.append((url, user_id))
+        return URLIngestionResult(
+            success=True,
+            url=url,
+            title="Example Article",
+            summary="Saved",
+            chunks_added=2,
+            already_existed=False,
+            error=None,
+        )
+
+    def format_confirmation(self, result, whatsapp=False):
+        return "Could not ingest URL"
+
+
+class _URLQuestionRetriever:
+    def __init__(self):
+        self.calls = []
+
+    def retrieve(self, question, top_k=None, user_id=None, source_url=None):
+        self.calls.append(
+            {
+                "question": question,
+                "top_k": top_k,
+                "user_id": user_id,
+                "source_url": source_url,
+            }
+        )
+        return RetrievalResult(
+            question=question,
+            top_k=top_k or 0,
+            chunks=[
+                RetrievedChunk(
+                    chunk_id="chunk-1",
+                    document_id="doc-1",
+                    text="The article says the trial had three phases and describes each phase.",
+                    score=0.1,
+                    file_name="Example Article",
+                    source_type="url",
+                    source_url="https://example.com/article",
+                )
+            ],
+        )
+
+
+class _AnsweringChatProvider:
+    def __init__(self):
+        self.messages = []
+
+    def chat(self, messages):
+        self.messages.append(messages)
+        return "Based on the article, it has three phases."
+
+    def generate(self, prompt):
+        return "title"
 
 
 @pytest.fixture
@@ -96,6 +169,37 @@ def test_model_agent_name_normalization_accepts_display_and_short_names():
     assert ChatService.normalize_agent_name("research") == "research_agent"
     assert ChatService.normalize_agent_name("action") == "action_agent"
     assert ChatService.normalize_agent_name("conversational") == "conversational"
+
+
+def test_url_plus_question_ingests_then_answers_from_that_url(registry):
+    retriever = _URLQuestionRetriever()
+    chat_provider = _AnsweringChatProvider()
+    url_service = _URLQuestionService()
+    service = ChatService(
+        retriever=retriever,
+        chat_provider=chat_provider,
+        registry=registry,
+        url_ingestion_service=url_service,
+        user_id="user-123",
+    )
+    service.create_session("session")
+
+    result = service.answer_in_session(
+        session_id="session",
+        question="https://example.com/article what is the summary of this",
+    )
+
+    assert result.answer == "Based on the article, it has three phases."
+    assert url_service.ingested == [("https://example.com/article", "user-123")]
+    assert retriever.calls == [
+        {
+            "question": "what is the summary of this",
+            "top_k": 10,
+            "user_id": "user-123",
+            "source_url": "https://example.com/article",
+        }
+    ]
+    assert "Article excerpts" in chat_provider.messages[0][1]["content"]
 
 
 def test_habits_command_reads_shared_habit_data(registry):
@@ -219,4 +323,3 @@ def test_sources_intent_works_without_slash(registry):
     assert "Your saved sources" in result.answer
     assert "Saved Article" in result.answer
     assert "example.com" in result.answer
-

@@ -1,10 +1,13 @@
 """RAG agent — searches the user's personal documents and answers from them."""
+import logging
 from typing import Any, List, Optional
 
 
 from app.agents.base import AgentResult
 from app.providers.ollama_chat import OllamaChatProvider
 from app.retrieval.retriever import Retriever
+
+log = logging.getLogger(__name__)
 
 _SYSTEM = """\
 You are a document assistant for a personal AI called Sage. \
@@ -32,6 +35,7 @@ class RAGAgent:
     ) -> AgentResult:
         try:
             retrieval = self._retriever.retrieve(question=task, top_k=self._top_k, user_id=user_id)
+            log.debug("RAG retrieve: task=%r top_k=%s user_id=%r chunks=%d", task[:80], self._top_k, user_id, len(retrieval.chunks))
 
             if not retrieval.chunks:
                 return AgentResult(
