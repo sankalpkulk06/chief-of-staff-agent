@@ -7,26 +7,45 @@ from app.providers.ollama_chat import OllamaChatProvider
 from app.services.news_service import NewsService
 from app.services.web_search_service import WebSearchService
 
-# Regex strips LLM meta-language so the actual search term reaches the API.
-_META_PREFIX = re.compile(
-    r"^(please\s+)?"
-    r"(do\s+a\s+)?(quick\s+)?"
-    r"(search(\s+the\s+web)?(\s+for)?|look\s+up|find|research|google|fetch|get)\s+"
-    r"(information\s+(about|on)\s+|info\s+(about|on)\s+|about\s+|on\s+)?",
-    re.IGNORECASE,
-)
-_META_TELL = re.compile(
-    r"^(tell\s+me\s+(about|what|how)\s+|explain\s+|what\s+(is|are|does|do)\s+)",
-    re.IGNORECASE,
-)
+# Strips LLM meta-language so the actual search term reaches the API.
+# Applied repeatedly until no pattern matches.
+# ORDER MATTERS: more specific patterns must come before general ones.
+_META_PATTERNS = [
+    # "with a quick search tell me..." / "with a search find..."
+    re.compile(r"^with\s+(a\s+)?(quick\s+)?(search|look|scan)\s+", re.IGNORECASE),
+    # "also get me the news on..." / "also tell me..." / "also find..."
+    re.compile(r"^also\s+(get\s+me\s+|tell\s+me\s+|find\s+|fetch\s+)?", re.IGNORECASE),
+    # "get me the news on..." / "get me the..." / "get me..."
+    re.compile(r"^get\s+me\s+(the\s+)?(news\s+(on|about)\s+|latest\s+)?", re.IGNORECASE),
+    # "the news on/about..." / "the latest..."  (leftover after stripping "get me")
+    re.compile(r"^the\s+(news\s+(on|about)\s+|latest\s+news\s+(on|about)\s+)", re.IGNORECASE),
+    # "please do a quick search for..." / "search the web for..." / "look up..." / "find..."
+    re.compile(
+        r"^(please\s+)?(do\s+a\s+)?(quick\s+)?"
+        r"(search(\s+the\s+web)?(\s+for)?|look\s+up|find|research|google|fetch)\s+"
+        r"(information\s+(about|on)\s+|info\s+(about|on)\s+|about\s+|on\s+)?",
+        re.IGNORECASE,
+    ),
+    # "tell me about..." / "tell me what..." / "tell me the..." / "explain..." / "what is/does..."
+    re.compile(
+        r"^(tell\s+me\s+(about|what|how|the)\s+|explain\s+|what\s+(is|are|does|do)\s+)",
+        re.IGNORECASE,
+    ),
+]
 
 
 def _clean_query(task: str) -> str:
     """Strip orchestrator meta-language to get a bare search query."""
     q = task.strip()
-    q = _META_PREFIX.sub("", q).strip()
-    q = _META_TELL.sub("", q).strip()
-    # Remove trailing punctuation noise
+    # Apply patterns iteratively until none match
+    changed = True
+    while changed:
+        changed = False
+        for pattern in _META_PATTERNS:
+            new_q = pattern.sub("", q).strip()
+            if new_q != q:
+                q = new_q
+                changed = True
     q = q.rstrip("?.!").strip()
     return q or task
 

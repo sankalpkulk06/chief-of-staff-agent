@@ -123,17 +123,19 @@ class OrchestratorAgent:
         """Merge multiple agent outputs into a single coherent reply."""
         successful = [r for r in results if r.success and r.output]
 
-        # Single result — no synthesis LLM call needed.
-        if len(successful) == 1:
-            return successful[0].output
-
         if not successful:
             failed_errors = "; ".join(r.error or "unknown error" for r in results if not r.success)
             return f"I ran into some trouble completing your request: {failed_errors}"
 
+        # Only skip synthesis when there was genuinely a single planned step.
+        # If multiple steps were planned but only one succeeded, we still want
+        # synthesis so the LLM can acknowledge what it found vs what it couldn't.
+        if len(results) == 1 and len(successful) == 1:
+            return successful[0].output
+
         context_parts = []
         for r in successful:
-            context_parts.append(f"[{r.agent}]\n{r.output}")
+            context_parts.append(f"[{r.agent} — task: {r.task}]\n{r.output}")
         combined = "\n\n---\n\n".join(context_parts)
 
         messages: list[dict[str, Any]] = [
