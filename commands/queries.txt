@@ -1,0 +1,212 @@
+=============================================================
+  SAGE DEMO QUERIES — Wipro Junior FDE Assignment
+  Multi-Agent System Test Cases
+=============================================================
+
+-------------------------------------------------------------
+1. FAST PATH — Conversational (no agent planning overhead)
+-------------------------------------------------------------
+hello
+who are you
+what can you do
+thanks
+
+
+-------------------------------------------------------------
+2. SINGLE AGENT — Action Agent (fact saving)
+   Orchestrator plans: action_agent -> conversational
+-------------------------------------------------------------
+my name is Sankalp Kulkarni
+I am a software engineer
+I live in San Francisco
+I work at Wipro as a Junior FDE
+my favourite programming language is Python
+remember that I prefer concise answers
+
+
+-------------------------------------------------------------
+3. SINGLE AGENT — Action Agent (todos)
+   Orchestrator plans: action_agent
+-------------------------------------------------------------
+remind me to prepare my demo slides tomorrow at 9am
+add a task to review the multi-agent architecture tonight at 7pm
+remind me to submit the assignment by Wednesday at 11pm
+
+
+-------------------------------------------------------------
+4. SINGLE AGENT — Action Agent (habits)
+   Orchestrator plans: action_agent
+-------------------------------------------------------------
+I want to start tracking my daily workout habit
+I want to track reading for 30 minutes every day
+log that I meditated today
+log that I worked out today
+show me my habits
+what is my habit progress this week
+
+
+-------------------------------------------------------------
+5. SINGLE AGENT — Action Agent (facts recall)
+   Orchestrator plans: action_agent
+-------------------------------------------------------------
+what facts do you know about me
+list my personal facts
+what do you know about my work
+
+
+-------------------------------------------------------------
+6. SINGLE AGENT — Research Agent (web search only)
+   Orchestrator plans: research_agent (web search)
+-------------------------------------------------------------
+with a quick search what is CrewAI
+search for what LangGraph does
+look up the difference between LangGraph and CrewAI
+what is AutoGen
+search for the best vector databases in 2025
+look up what Groq API offers
+
+
+-------------------------------------------------------------
+7. SINGLE AGENT — Research Agent (news only)
+   Orchestrator plans: research_agent (news)
+-------------------------------------------------------------
+get me the latest news on OpenAI
+news on AI agent frameworks this week
+what is the latest news about Google DeepMind
+get me news on large language models
+latest news on the AI industry
+
+
+-------------------------------------------------------------
+8. SINGLE AGENT — RAG Agent (document search)
+   Requires a document to be ingested first
+   Orchestrator plans: rag_agent
+-------------------------------------------------------------
+what does my saved document say about multi-agent systems
+search my notes for anything about Python
+what did I save about machine learning
+find information in my documents about AI
+
+
+-------------------------------------------------------------
+9. MULTI-AGENT — Web Search + News (compound, rule-based split)
+   Orchestrator plans: research_agent (web) -> research_agent (news)
+   Same agent called twice in one query
+-------------------------------------------------------------
+with a quick search tell me what CrewAI is and also get me the news on AI agent frameworks
+search for what LangGraph does and also get me the latest news on AI orchestration tools
+look up what AutoGen is and also get me the news on Microsoft AI
+search for Groq API and also get me the latest news on fast LLM inference
+look up what Qdrant is and also get me the news on vector databases
+
+
+-------------------------------------------------------------
+10. MULTI-AGENT — Research + Action (compound)
+    Orchestrator plans: research_agent -> action_agent
+-------------------------------------------------------------
+search for what CrewAI does and remind me to try it this weekend
+look up the best Python agent frameworks and add a todo to evaluate them tomorrow at 10am
+search for Groq API pricing and remind me to set up an API key tonight
+find what LangGraph is and add it to my tasks to learn it next week
+
+
+-------------------------------------------------------------
+11. MULTI-AGENT — Fact Save + Conversational
+    Orchestrator plans: action_agent -> conversational
+    (Personal info statement always triggers two steps)
+-------------------------------------------------------------
+my name is Sankalp and I am building a multi-agent AI system for Wipro
+I am currently preparing for a technical interview at Wipro
+I graduated from university with a degree in computer science
+
+
+-------------------------------------------------------------
+12. MULTI-AGENT — Research + Action + Conversational (3 steps)
+    Orchestrator plans: research_agent -> action_agent -> conversational
+-------------------------------------------------------------
+search for what Wipro does as a company, save that as a work fact, and remind me to read about it tonight
+look up LangGraph tutorials, save that I am learning LangGraph, and remind me to study it this weekend
+
+
+-------------------------------------------------------------
+13. SLASH COMMANDS — Direct (bypass agents, fast)
+-------------------------------------------------------------
+/remember-personal I am building Sage for the Wipro FDE assignment
+/remember-work I am interviewing for a Junior FDE role at Wipro
+/facts personal
+/facts work
+/todo Submit GitHub link to tyler.parks@wipro.com by Wednesday 11:59pm
+/habit add daily standup @09:00
+/habits
+/search what is multi-agent orchestration
+/news AI agents
+/analytics
+/sessions
+/configure status
+/help
+
+
+-------------------------------------------------------------
+14. EDGE CASES — Robustness tests
+-------------------------------------------------------------
+
+Ambiguous query (should default to conversational or web search):
+what is the weather like
+
+Very long compound query (stress test the rule-based splitter):
+with a quick search tell me what CrewAI is, also search for what LangGraph does, and also get me the latest news on AI agent frameworks in 2025
+
+Follow-up after a fact is saved (tests session memory injection):
+  Step 1: my name is Sankalp
+  Step 2: what is my name
+
+Habit log then check (tests state persistence in same session):
+  Step 1: log that I read for 30 minutes today
+  Step 2: show me my habits
+
+Todo then confirm (tests action + recall):
+  Step 1: remind me to review my code at 8pm tonight
+  Step 2: what reminders do I have
+
+
+-------------------------------------------------------------
+15. DEMO SHOWSTOPPERS — Use these for the Wipro presentation
+-------------------------------------------------------------
+
+[1] Personal memory + two-step agent plan
+    my name is Sankalp Kulkarni and I am building a multi-agent AI system
+
+[2] Clearest multi-agent demo — same agent twice, different tools
+    with a quick search tell me what CrewAI is and also get me the news on AI agent frameworks
+
+[3] Research -> Action pipeline
+    search for the top AI agent frameworks in 2025 and remind me to evaluate them this weekend
+
+[4] Same agent called twice — web search + news from different sources
+    look up what Groq API is and also get me the latest news on fast LLM inference
+
+[5] Three-step pipeline — research, save fact, create reminder
+    search for what Wipro does, save it as a work fact, and remind me to read about it tonight
+
+[6] Habit tracking end-to-end
+    Step 1: I want to start tracking my daily coding habit
+    Step 2: log that I coded today
+    Step 3: /habits
+
+
+=============================================================
+  QUERY PATTERNS COVERED
+=============================================================
+  [x] Single agent: conversational (fast path, no LLM planning)
+  [x] Single agent: action_agent — facts, todos, habits
+  [x] Single agent: research_agent — web search only
+  [x] Single agent: research_agent — news only
+  [x] Single agent: rag_agent — document search
+  [x] Multi-agent: research_agent x2 (same agent, web + news)
+  [x] Multi-agent: research_agent -> action_agent
+  [x] Multi-agent: action_agent -> conversational
+  [x] Multi-agent: 3-step pipeline (research + action + conversational)
+  [x] Slash commands (direct, bypass agent pipeline)
+  [x] Follow-up queries (session memory across turns)
+  [x] Edge cases (ambiguous, very long compound)
+=============================================================
