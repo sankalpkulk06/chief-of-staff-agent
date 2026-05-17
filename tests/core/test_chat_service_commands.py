@@ -150,22 +150,6 @@ def test_remember_command_can_use_whatsapp_style(registry):
     assert result.answer.startswith("🧠 Personal fact saved:")
 
 
-def test_current_news_query_uses_news_service_with_whatsapp_style(registry):
-    service = _news_service(registry)
-    service.create_session("session")
-
-    result = service.answer_in_session(
-        session_id="session",
-        question="what is the latest news on Sam Altman and Elon Musk",
-        response_style="whatsapp",
-    )
-
-    assert result.sources_used is True
-    assert result.news_sources[0]["title"] == "OpenAI Trial Live Updates"
-    assert "📰 *Latest News: sam altman and elon musk*" in result.answer
-    assert "⚡ *Summary*" in result.answer
-    assert "🔗 *Sources*" in result.answer
-
 
 def test_todo_command_writes_sqlite_not_apple(registry):
     service = _service(registry)
@@ -228,39 +212,3 @@ def test_sources_intent_works_without_slash(registry):
     assert "example.com" in result.answer
 
 
-def test_natural_language_reminder_uses_add_todo_tool(registry):
-    scheduled = []
-    service = ChatService(
-        retriever=_UnusedRetriever(),
-        chat_provider=_UnusedChatProvider(),
-        registry=registry,
-        fact_service=FactService(registry),
-        habit_service=HabitService(registry),
-        schedule_todo_callback=scheduled.append,
-    )
-    service.create_session("session")
-
-    result = service.answer_in_session(
-        session_id="session",
-        question="remind me to take the trash out at 8PM today",
-    )
-
-    todos = registry.get_todos_due_soon(minutes_ahead=1440)
-    assert "Added Sage reminder" in result.answer
-    assert todos[0]["title"] == "take the trash out"
-    assert scheduled[0]["id"] == todos[0]["id"]
-
-
-def test_direct_reminder_without_due_date_still_writes_sqlite(registry):
-    service = _service(registry)
-    service.create_session("session")
-
-    result = service.answer_in_session(
-        session_id="session",
-        question="remind me to buy oat milk",
-    )
-
-    row = registry._connection.execute("SELECT title, due_at FROM todos").fetchone()
-    assert "Added Sage reminder" in result.answer
-    assert row["title"] == "buy oat milk"
-    assert row["due_at"] is None

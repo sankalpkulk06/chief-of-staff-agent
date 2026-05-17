@@ -199,6 +199,7 @@ class ChatService:
         """
         history = self.get_history(session_id)
 
+        # URL paste → ingest immediately, no agent needed
         url_answer = self._answer_url_ingestion(question, response_style=response_style)
         if url_answer is not None:
             return self._record_answer(
@@ -208,15 +209,7 @@ class ChatService:
                 history=history,
             )
 
-        reminder_answer = self._answer_direct_reminder_request(question, response_style=response_style)
-        if reminder_answer is not None:
-            return self._record_answer(
-                session_id=session_id,
-                question=question,
-                answer=reminder_answer,
-                history=history,
-            )
-
+        # Explicit slash commands (/todo, /facts, /habits, etc.) → bypass agents
         direct_answer = self._answer_direct_command(question, response_style=response_style)
         if direct_answer is not None:
             return self._record_answer(
@@ -226,6 +219,7 @@ class ChatService:
                 history=history,
             )
 
+        # Gmail triage → dedicated service, not an agent task
         email_answer = self._answer_email_request(question, response_style=response_style)
         if email_answer is not None:
             return self._record_answer(
@@ -235,19 +229,7 @@ class ChatService:
                 history=history,
             )
 
-        news_result = self._answer_news_query(question, response_style=response_style)
-        if news_result is not None:
-            answer, news_articles = news_result
-            return self._record_answer(
-                session_id=session_id,
-                question=question,
-                answer=answer,
-                history=history,
-                sources_used=bool(news_articles),
-                news_articles=news_articles,
-            )
-
-        # Multi-agent orchestration: plan → dispatch → synthesize
+        # All other natural language → multi-agent orchestration: plan → dispatch → synthesize
         run = self._agent_runner.run(
             question=question,
             history=history,
