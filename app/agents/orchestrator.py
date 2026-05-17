@@ -18,11 +18,14 @@ AGENT_DESCRIPTIONS = {
     ),
     "action_agent": (
         "Performs actions: creates todos/reminders, logs habit completions, adds new habits to track, "
-        "and saves or recalls personal/work facts. Use when the user wants to DO something."
+        "and saves or recalls personal/work facts. "
+        "ALWAYS use this when the user states personal information (name, job, location, preferences, "
+        "age, etc.) — save it as a fact so Sage remembers it. "
+        "Use when the user wants to DO something or share something about themselves."
     ),
     "conversational": (
-        "Handles general chat, greetings, simple direct questions, and follow-ups that don't need "
-        "documents, web search, or any action."
+        "Handles general chat, greetings, acknowledgements, and follow-ups that don't need "
+        "documents, web search, or any action. Use AFTER action_agent when confirming what was saved."
     ),
 }
 
@@ -36,9 +39,18 @@ Available agents:
 Rules:
 - Choose ONLY the agents actually needed for this request.
 - For a simple greeting or direct question, one "conversational" step is enough.
+- If the user shares personal information (name, job, location, age, preferences), ALWAYS use \
+action_agent first to save it as a fact, then conversational to acknowledge it warmly.
 - For compound requests (e.g. "search the web for X and remind me to follow up"), use multiple agents.
-- Order steps so that information-gathering steps come before action steps.
+- Order steps: save/retrieve facts or do research BEFORE generating the conversational response.
 - Each "task" field should be a clear, self-contained instruction for that agent.
+
+Examples:
+- "my name is John" → [action_agent: save fact "name is John", conversational: greet John by name]
+- "I work as a software engineer" → [action_agent: save fact, conversational: acknowledge]
+- "remind me to call mom at 5pm" → [action_agent: create todo, conversational: confirm]
+- "what is the capital of France?" → [conversational only]
+- "search for LangGraph tutorials and add a reminder" → [research_agent, action_agent]
 
 Respond with ONLY valid JSON — no prose before or after:
 {{
@@ -54,7 +66,7 @@ Multiple specialized agents have gathered information to answer the user's reque
 Combine their outputs into a single clear, natural response. \
 Do not mention the agents or the internal process — just answer the user directly."""
 
-# Patterns that are obviously conversational — skip planning overhead.
+# Patterns that are obviously pure conversational — skip planning overhead.
 _FAST_PATH_STARTS = frozenset([
     "hi", "hello", "hey", "howdy", "sup", "yo",
     "thanks", "thank", "cheers", "cool", "great", "nice",
@@ -142,6 +154,7 @@ class OrchestratorAgent:
         words = question.lower().strip().split()
         if not words:
             return True
+        # Only short pure-greeting messages skip planning
         return words[0] in _FAST_PATH_STARTS and len(words) <= 4
 
     @staticmethod
