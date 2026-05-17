@@ -13,7 +13,6 @@ from app.core.habit_service import HabitService
 from app.providers.ollama_chat import OllamaChatProvider
 from app.retrieval.retriever import Retriever
 from app.services.news_service import NewsService
-from app.services.reminders_service import RemindersService
 from app.services.web_search_service import WebSearchService
 from app.storage.sqlite_registry import SQLiteRegistry
 
@@ -75,7 +74,6 @@ class AgentRunner:
         news_service: Optional[NewsService] = None,
         web_search_service: Optional[WebSearchService] = None,
         habit_service: Optional[HabitService] = None,
-        reminders_service: Optional[RemindersService] = None,
         schedule_todo_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         assistant_name: str = "Sage",
         rag_top_k: int = 5,
@@ -89,7 +87,6 @@ class AgentRunner:
             registry=registry,
             fact_service=fact_service,
             habit_service=habit_service,
-            reminders_service=reminders_service,
             schedule_todo_callback=schedule_todo_callback,
         )
         self._conversational = ConversationalAgent(chat_provider, assistant_name, fact_service)

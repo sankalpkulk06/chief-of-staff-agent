@@ -16,14 +16,12 @@ from app.cli.commands_ask import (
     create_analytics_service,
     create_chat_service,
     create_news_service,
-    create_reminders_service,
     create_web_search_service,
 )
 from app.config import get_settings
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
 from app.services.email_service import EmailService
-from app.services.reminders_service import RemindersServiceError
 from app.providers.ollama_chat import OllamaChatProvider
 from app.providers.ollama_embeddings import OllamaProviderError
 from app.storage.sqlite_registry import SQLiteRegistry
@@ -280,19 +278,16 @@ def _handle_configure(args: str, user_id: str, registry, settings, paths) -> str
     if not parts:
         return (
             "Usage:\n"
-            "  /configure email            — connect your Gmail account\n"
-            "  /configure reminders [list] — set your Apple Reminders default list\n"
-            "  /configure status           — show what's configured for your account"
+            "  /configure email   — connect your Gmail account\n"
+            "  /configure status  — show what's configured for your account"
         )
 
     sub = parts[0].lower()
 
     if sub == "status":
         gmail_configured = (paths.user_credentials_dir(user_id) / "personal_token.json").exists()
-        reminders_list = registry.get_user_setting(user_id, "reminders_list") or settings.reminders_default_list
         lines = ["Your configuration:"]
-        lines.append(f"  Gmail:    {'✓ connected' if gmail_configured else '✗ not connected  →  run /configure email'}")
-        lines.append(f"  Reminders list: {reminders_list}")
+        lines.append(f"  Gmail: {'✓ connected' if gmail_configured else '✗ not connected  →  run /configure email'}")
         return "\n".join(lines)
 
     if sub == "email":
@@ -317,18 +312,7 @@ def _handle_configure(args: str, user_id: str, registry, settings, paths) -> str
         except Exception as exc:
             return f"Gmail setup failed: {exc}"
 
-    if sub == "reminders":
-        list_name = parts[1].strip() if len(parts) > 1 else ""
-        if not list_name:
-            current = registry.get_user_setting(user_id, "reminders_list") or settings.reminders_default_list
-            return (
-                f"Current Apple Reminders list: {current}\n"
-                "Usage: /configure reminders <list-name>"
-            )
-        registry.set_user_setting(user_id, "reminders_list", list_name)
-        return f"Apple Reminders default list set to '{list_name}' for your account."
-
-    return f"Unknown configure option '{sub}'. Use: email, reminders, status."
+    return f"Unknown configure option '{sub}'. Use: email, status."
 
 
 def _print_help() -> None:
@@ -337,7 +321,6 @@ def _print_help() -> None:
     commands = [
         ("/help", "Show this help message"),
         ("/configure email", "Connect your Gmail account (per-user OAuth)"),
-        ("/configure reminders [list]", "Set your Apple Reminders default list"),
         ("/configure status", "Show your account's configuration"),
         ("/topk <n>", "Set retrieval depth (default: 5)"),
         ("/session", "Show current session ID"),
@@ -352,7 +335,6 @@ def _print_help() -> None:
         ("/search <query>", "Search the web for current information"),
         ("/usage", "Show today's Twilio WhatsApp usage"),
         ("/todo <task> [#list] [@due]", "Add a Sage reminder"),
-        ("/apple-reminder <task> [#list] [@due]", "Add a task to Apple Reminders"),
         ("/habit add <name> [@time]", "Track a new habit (optional reminder time)"),
         ("/habit log <name> [skipped]", "Log a habit as done or skipped"),
         ("/habit unlog <name>", "Remove today's log entry for a habit"),
@@ -438,7 +420,6 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
     fact_service = service.get_fact_service()
     web_search_service = service.get_web_search_service()
     news_service = create_news_service()
-    reminders_service = create_reminders_service()
     habit_service = service.get_habit_service() or HabitService(service.get_registry(), user_id=user_id)
     registry = service.get_registry()
 
@@ -726,24 +707,7 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             continue
 
         if lowered == "/apple-reminder" or lowered.startswith("/apple-reminder "):
-            task_input = question[len("/apple-reminder"):].strip()
-            if not task_input:
-                console.print("\n[yellow]Usage:[/yellow] /apple-reminder <task> [#list] [@due-date]\n")
-                continue
-
-            try:
-                task, list_name, due_date = _parse_task_list_and_due_date(task_input)
-                if not task:
-                    console.print("\n[yellow]Usage:[/yellow] /apple-reminder <task> [#list] [@due-date]\n")
-                    continue
-
-                target_list = reminders_service.add_reminder(task=task, list_name=list_name, due_date=due_date)
-                due_date_str = f" due {due_date.strftime('%a, %b %d at %I:%M%p')}" if due_date else ""
-                console.print(
-                    f"\n[green]✓[/green] Added Apple Reminder to [bold]{target_list}[/bold]: {task}{due_date_str}\n"
-                )
-            except RemindersServiceError as exc:
-                console.print(f"\n[red]✗[/red] {exc}\n")
+            console.print("\n[yellow]Apple Reminders integration has been removed. Use [bold]/todo[/bold] to add reminders.\n")
             continue
 
         try:

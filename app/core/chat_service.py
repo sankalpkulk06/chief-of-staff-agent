@@ -8,7 +8,6 @@ from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.services.email_service import EmailService
 from app.services.news_service import NewsService, NewsArticle
-from app.services.reminders_service import RemindersService
 from app.core.todo_parser import parse_due_date, parse_reminder_request
 from app.services.web_search_service import WebSearchService
 from app.services.url_ingestion_service import URLIngestionService
@@ -80,7 +79,6 @@ class ChatService:
         registry: SQLiteRegistry,
         fact_service: Optional[FactService] = None,
         news_service: Optional[NewsService] = None,
-        reminders_service: Optional[RemindersService] = None,
         web_search_service: Optional[WebSearchService] = None,
         habit_service: Optional[HabitService] = None,
         url_ingestion_service: Optional[URLIngestionService] = None,
@@ -97,7 +95,6 @@ class ChatService:
         self._registry = registry
         self._fact_service = fact_service
         self._news_service = news_service
-        self._reminders_service = reminders_service
         self._web_search_service = web_search_service
         self._habit_service = habit_service
         self._url_ingestion_service = url_ingestion_service
@@ -117,7 +114,6 @@ class ChatService:
             news_service=news_service,
             web_search_service=web_search_service,
             habit_service=habit_service,
-            reminders_service=reminders_service,
             schedule_todo_callback=schedule_todo_callback,
             assistant_name=assistant_name,
             rag_top_k=max_prompt_chunks,
@@ -398,8 +394,7 @@ class ChatService:
             return self._todo_command(args, response_style=response_style)
 
         if lowered == "/apple-reminder" or lowered.startswith("/apple-reminder "):
-            args = command[len("/apple-reminder"):].strip()
-            return self._apple_reminder_command(args, response_style=response_style)
+            return self._style_status("Apple Reminders integration has been removed. Use /todo instead.", "ℹ️", response_style)
 
         if lowered == "/habits":
             if not self._habit_service:
@@ -500,9 +495,6 @@ class ChatService:
     def _answer_direct_reminder_request(
         self, question: str, response_style: Optional[str] = None
     ) -> Optional[str]:
-        if "apple reminder" in question.lower() or "apple reminders" in question.lower():
-            return None
-
         parsed = parse_reminder_request(question)
         if parsed is None:
             return None
@@ -525,18 +517,6 @@ class ChatService:
             self._schedule_todo_callback(todo)
         due_str = f" due {due_at.strftime('%a, %b %d at %I:%M%p')}" if due_at else ""
         return self._style_status(f"Added Sage reminder: {todo['title']}{due_str}.", "✅", response_style)
-
-    def _apple_reminder_command(self, args: str, response_style: Optional[str] = None) -> str:
-        if not self._reminders_service:
-            return self._style_status("Apple Reminders is not configured.", "⚠️", response_style)
-        if not args:
-            return self._style_status("Usage: /apple-reminder <task> [#list] [@due-date]", "📝", response_style)
-        task, list_name, due_at = self._parse_task_list_and_due_date(args)
-        if not task:
-            return self._style_status("Usage: /apple-reminder <task> [#list] [@due-date]", "📝", response_style)
-        target_list = self._reminders_service.add_reminder(task=task, list_name=list_name, due_date=due_at)
-        due_str = f" due {due_at.strftime('%a, %b %d at %I:%M%p')}" if due_at else ""
-        return self._style_status(f"Added to Apple Reminders {target_list}: {task}{due_str}.", "✅", response_style)
 
     def _style_status(self, text: str, emoji: str, response_style: Optional[str]) -> str:
         if self._is_whatsapp_style(response_style):

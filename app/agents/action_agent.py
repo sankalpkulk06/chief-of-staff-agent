@@ -8,7 +8,6 @@ from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
 from app.providers.ollama_chat import OllamaChatProvider
-from app.services.reminders_service import RemindersService
 from app.storage.sqlite_registry import SQLiteRegistry
 
 _EXTRACT_SYSTEM = """\
@@ -22,7 +21,6 @@ Possible actions:
 - get_habits: retrieve habit summary. Params: none
 - remember_fact: save a personal or work fact. Params: fact (str), category ("personal"|"work")
 - list_facts: list stored facts. Params: category ("personal"|"work"|"all")
-- add_apple_reminder: add to Apple Reminders (only if explicitly requested). Params: task (str), due_date (str, optional)
 
 Output ONLY valid JSON:
 {"action": "action_name", "params": {...}}"""
@@ -37,14 +35,12 @@ class ActionAgent:
         registry: Optional[SQLiteRegistry] = None,
         fact_service: Optional[FactService] = None,
         habit_service: Optional[HabitService] = None,
-        reminders_service: Optional[RemindersService] = None,
         schedule_todo_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         self._provider = chat_provider
         self._registry = registry
         self._fact_service = fact_service
         self._habit_service = habit_service
-        self._reminders_service = reminders_service
         self._schedule_todo_callback = schedule_todo_callback
 
     def execute(
@@ -95,7 +91,6 @@ class ActionAgent:
             "get_habits": self._get_habits,
             "remember_fact": self._remember_fact,
             "list_facts": self._list_facts,
-            "add_apple_reminder": self._add_apple_reminder,
         }
         handler = handlers.get(action)
         if not handler:
@@ -202,17 +197,3 @@ class ActionAgent:
             lines.append(f"• {f.content} ({f.category})")
         return AgentResult(agent="action_agent", task=task, output="\n".join(lines), success=True)
 
-    def _add_apple_reminder(self, params: dict, task: str) -> AgentResult:
-        if not self._reminders_service:
-            return AgentResult(agent="action_agent", task=task, output="", success=False, error="no_reminders_service")
-        reminder_task = params.get("task", task)
-        due_at = parse_due_date(params.get("due_date", ""))
-        list_name = params.get("list_name")
-        target_list = self._reminders_service.add_reminder(task=reminder_task, list_name=list_name, due_date=due_at)
-        due_str = f" due {due_at.strftime('%a, %b %d at %I:%M%p')}" if due_at else ""
-        return AgentResult(
-            agent="action_agent",
-            task=task,
-            output=f"Added to Apple Reminders ({target_list}): {reminder_task}{due_str}.",
-            success=True,
-        )

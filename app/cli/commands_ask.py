@@ -13,7 +13,6 @@ from app.core.qa_service import QAService
 from app.ingestion.ingest_service import IngestService
 from app.services.email_service import EmailService
 from app.services.news_service import NewsService
-from app.services.reminders_service import RemindersService
 from app.services.url_ingestion_service import URLIngestionService
 from app.services.web_search_service import WebSearchService
 from app.export.markdown_exporter import export_qa_to_markdown
@@ -56,10 +55,6 @@ def create_fact_service(user_id: str = "default") -> FactService:
 def create_news_service() -> NewsService:
     settings = get_settings()
     return NewsService(max_results=settings.news_max_results)
-
-
-def create_reminders_service(default_list: str = "Reminders") -> RemindersService:
-    return RemindersService(default_list_name=default_list)
 
 
 def create_web_search_service() -> WebSearchService:
@@ -126,10 +121,6 @@ def create_chat_service(
     fact_service = create_fact_service(user_id=user_id)
     news_service = create_news_service()
 
-    # Per-user reminders list preference
-    reminders_list = registry.get_user_setting(user_id, "reminders_list") or settings.reminders_default_list
-    reminders_service = create_reminders_service(default_list=reminders_list)
-
     web_search_service = create_web_search_service()
     habit_service = HabitService(registry, user_id=user_id)
     url_ingestion_service = create_url_ingestion_service(registry, chat_provider) if settings.url_ingestion_enabled else None
@@ -150,7 +141,6 @@ def create_chat_service(
         registry=registry,
         fact_service=fact_service,
         news_service=news_service,
-        reminders_service=reminders_service,
         web_search_service=web_search_service,
         habit_service=habit_service,
         url_ingestion_service=url_ingestion_service,

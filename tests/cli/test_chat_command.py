@@ -145,10 +145,6 @@ def _patch_chat_dependencies(monkeypatch, responses, chat_service, reminders_ser
     monkeypatch.setattr("app.cli.commands_chat.thinking_spinner", _noop_spinner)
     monkeypatch.setattr("app.cli.commands_chat.create_chat_service", lambda **kwargs: chat_service)
     monkeypatch.setattr("app.cli.commands_chat.create_news_service", lambda: _StubNewsService())
-    monkeypatch.setattr(
-        "app.cli.commands_chat.create_reminders_service",
-        lambda: reminders_service or _StubRemindersService(),
-    )
 
 
 def test_chat_command_single_turn_and_exit(monkeypatch):
@@ -193,43 +189,35 @@ def test_chat_command_topk_command(monkeypatch):
 
 def test_chat_command_todo_adds_reminder_without_hitting_llm(monkeypatch):
     chat_service = _StubChatService(_qa_result("unused"))
-    reminders_service = _StubRemindersService(list_name="Errands")
-    _patch_chat_dependencies(monkeypatch, ["/todo Buy oat milk", "quit"], chat_service, reminders_service)
+    _patch_chat_dependencies(monkeypatch, ["/todo Buy oat milk", "quit"], chat_service)
 
     result = runner.invoke(cli, ["chat"])
 
     assert result.exit_code == 0
     assert "Added Sage reminder" in result.stdout
     assert "Buy oat milk" in result.stdout
-    assert reminders_service.calls == []
     assert chat_service.registry.todos[0]["title"] == "Buy oat milk"
     assert chat_service.answer_calls == []
 
 
 def test_chat_command_todo_without_task_shows_usage(monkeypatch):
     chat_service = _StubChatService(_qa_result("unused"))
-    reminders_service = _StubRemindersService()
-    _patch_chat_dependencies(monkeypatch, ["/todo", "quit"], chat_service, reminders_service)
+    _patch_chat_dependencies(monkeypatch, ["/todo", "quit"], chat_service)
 
     result = runner.invoke(cli, ["chat"])
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
     assert "/todo <task>" in result.stdout
-    assert reminders_service.calls == []
 
 
-def test_chat_command_apple_reminder_explicitly_uses_apple(monkeypatch):
+def test_chat_command_apple_reminder_removed(monkeypatch):
     chat_service = _StubChatService(_qa_result("unused"))
-    reminders_service = _StubRemindersService(
-        list_name="Errands"
-    )
-    _patch_chat_dependencies(monkeypatch, ["/apple-reminder Buy oat milk", "quit"], chat_service, reminders_service)
+    _patch_chat_dependencies(monkeypatch, ["/apple-reminder Buy oat milk", "quit"], chat_service)
 
     result = runner.invoke(cli, ["chat"])
 
     assert result.exit_code == 0
-    assert "Added Apple Reminder" in result.stdout
-    assert reminders_service.calls[0][0] == "Buy oat milk"
+    assert "removed" in result.stdout.lower() or "todo" in result.stdout.lower()
     assert chat_service.registry.todos == []
     assert chat_service.answer_calls == []
