@@ -84,6 +84,17 @@ class SQLiteRegistry:
         if "user_id" not in _cols("named_sessions"):
             self._connection.execute("ALTER TABLE named_sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
 
+        # user_settings (new table — create if missing)
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id       TEXT NOT NULL,
+                setting_key   TEXT NOT NULL,
+                setting_value TEXT NOT NULL,
+                updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, setting_key)
+            )
+        """)
+
     def close(self) -> None:
         self._connection.close()
 
@@ -511,6 +522,37 @@ class SQLiteRegistry:
 
     def clear_nudge_context(self, phone_number: str) -> None:
         self._connection.execute("DELETE FROM nudge_context WHERE phone_number = ?", (phone_number,))
+        self._connection.commit()
+
+    # ------------------------------------------------------------------
+    # User settings
+    # ------------------------------------------------------------------
+
+    def get_user_setting(self, user_id: str, key: str) -> Optional[str]:
+        row = self._connection.execute(
+            "SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = ?",
+            (user_id, key),
+        ).fetchone()
+        return row["setting_value"] if row else None
+
+    def set_user_setting(self, user_id: str, key: str, value: str) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO user_settings (user_id, setting_key, setting_value)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id, setting_key) DO UPDATE SET
+                setting_value = excluded.setting_value,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, key, value),
+        )
+        self._connection.commit()
+
+    def delete_user_setting(self, user_id: str, key: str) -> None:
+        self._connection.execute(
+            "DELETE FROM user_settings WHERE user_id = ? AND setting_key = ?",
+            (user_id, key),
+        )
         self._connection.commit()
 
     # ------------------------------------------------------------------

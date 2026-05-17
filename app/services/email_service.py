@@ -3,7 +3,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Literal
+from typing import TYPE_CHECKING, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -30,10 +30,20 @@ class TriagedEmail(BaseModel):
 
 
 class EmailService:
-    def __init__(self, credentials_dir: Path, account_type: AccountType) -> None:
+    def __init__(
+        self,
+        credentials_dir: Path,
+        account_type: AccountType,
+        token_dir: Optional[Path] = None,
+    ) -> None:
+        """
+        credentials_dir: directory containing credentials.json (shared OAuth client secret)
+        token_dir: directory to store/read the user OAuth token (per-user; defaults to credentials_dir)
+        """
         self._credentials_dir = credentials_dir
         self._account_type = account_type
-        self._token_path = credentials_dir / f"{account_type}_token.json"
+        token_location = token_dir or credentials_dir
+        self._token_path = token_location / f"{account_type}_token.json"
         self._client_secrets_path = credentials_dir / "credentials.json"
 
     def _authenticate(self):

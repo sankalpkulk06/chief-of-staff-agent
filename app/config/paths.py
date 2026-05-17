@@ -14,6 +14,12 @@ class AppPaths(BaseModel):
     reports_dir: Path
     credentials_dir: Path
 
+    def user_credentials_dir(self, user_id: str) -> Path:
+        """Per-user credentials directory — stores OAuth tokens isolated by user."""
+        d = self.credentials_dir / user_id
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def ensure_directories(self) -> None:
         for directory in (self.data_dir, self.chroma_dir, self.sqlite_dir, self.cache_dir, self.reports_dir, self.credentials_dir):
             directory.mkdir(parents=True, exist_ok=True)

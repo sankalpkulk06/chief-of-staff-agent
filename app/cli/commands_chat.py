@@ -274,11 +274,71 @@ def _format_weekly_summary(summaries) -> str:
     return "\n".join(lines)
 
 
+def _handle_configure(args: str, user_id: str, registry, settings, paths) -> str:
+    """Handle /configure email | /configure reminders [list-name]"""
+    parts = args.strip().split(maxsplit=1)
+    if not parts:
+        return (
+            "Usage:\n"
+            "  /configure email            — connect your Gmail account\n"
+            "  /configure reminders [list] — set your Apple Reminders default list\n"
+            "  /configure status           — show what's configured for your account"
+        )
+
+    sub = parts[0].lower()
+
+    if sub == "status":
+        gmail_configured = (paths.user_credentials_dir(user_id) / "personal_token.json").exists()
+        reminders_list = registry.get_user_setting(user_id, "reminders_list") or settings.reminders_default_list
+        lines = ["Your configuration:"]
+        lines.append(f"  Gmail:    {'✓ connected' if gmail_configured else '✗ not connected  →  run /configure email'}")
+        lines.append(f"  Reminders list: {reminders_list}")
+        return "\n".join(lines)
+
+    if sub == "email":
+        from app.services.email_service import EmailService
+        user_creds_dir = paths.user_credentials_dir(user_id)
+        client_secrets = paths.credentials_dir / "credentials.json"
+        if not client_secrets.exists():
+            return (
+                "Gmail client secret not found.\n"
+                "Download OAuth 2.0 credentials (Desktop app) from Google Cloud Console\n"
+                "and save as data/credentials/credentials.json, then try again."
+            )
+        console.print("\n[yellow]Opening browser for Gmail authorization...[/yellow]")
+        try:
+            svc = EmailService(
+                credentials_dir=paths.credentials_dir,
+                account_type="personal",
+                token_dir=user_creds_dir,
+            )
+            svc._authenticate()
+            return "Gmail connected. Your token is stored privately for your account only."
+        except Exception as exc:
+            return f"Gmail setup failed: {exc}"
+
+    if sub == "reminders":
+        list_name = parts[1].strip() if len(parts) > 1 else ""
+        if not list_name:
+            current = registry.get_user_setting(user_id, "reminders_list") or settings.reminders_default_list
+            return (
+                f"Current Apple Reminders list: {current}\n"
+                "Usage: /configure reminders <list-name>"
+            )
+        registry.set_user_setting(user_id, "reminders_list", list_name)
+        return f"Apple Reminders default list set to '{list_name}' for your account."
+
+    return f"Unknown configure option '{sub}'. Use: email, reminders, status."
+
+
 def _print_help() -> None:
     console.print("\n[bold cyan]━━━━━━━━━━ Available Commands ━━━━━━━━━━[/bold cyan]")
     console.print()
     commands = [
         ("/help", "Show this help message"),
+        ("/configure email", "Connect your Gmail account (per-user OAuth)"),
+        ("/configure reminders [list]", "Set your Apple Reminders default list"),
+        ("/configure status", "Show your account's configuration"),
         ("/topk <n>", "Set retrieval depth (default: 5)"),
         ("/session", "Show current session ID"),
         ("/sessions", "List recent chat sessions"),
@@ -301,7 +361,7 @@ def _print_help() -> None:
         ("exit | quit", "Exit chat mode"),
     ]
     for cmd, desc in commands:
-        console.print(f"[bold green]{cmd:<30}[/bold green] {desc}")
+        console.print(f"[bold green]{cmd:<35}[/bold green] {desc}")
     console.print()
 
 
@@ -434,6 +494,11 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             break
         if lowered == "/help":
             _print_help()
+            continue
+        if lowered == "/configure" or lowered.startswith("/configure "):
+            args = question[len("/configure"):].strip()
+            result = _handle_configure(args, user_id, registry, settings, paths)
+            console.print(f"\n{result}\n")
             continue
         if lowered == "/session":
             console.print(f"\n[dim]Session ID:[/dim] [bold]{session_id}[/bold]\n")

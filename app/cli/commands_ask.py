@@ -58,9 +58,8 @@ def create_news_service() -> NewsService:
     return NewsService(max_results=settings.news_max_results)
 
 
-def create_reminders_service() -> RemindersService:
-    settings = get_settings()
-    return RemindersService(default_list_name=settings.reminders_default_list)
+def create_reminders_service(default_list: str = "Reminders") -> RemindersService:
+    return RemindersService(default_list_name=default_list)
 
 
 def create_web_search_service() -> WebSearchService:
@@ -126,12 +125,23 @@ def create_chat_service(
     registry = SQLiteRegistry(paths.sqlite_db_path)
     fact_service = create_fact_service(user_id=user_id)
     news_service = create_news_service()
-    reminders_service = create_reminders_service()
+
+    # Per-user reminders list preference
+    reminders_list = registry.get_user_setting(user_id, "reminders_list") or settings.reminders_default_list
+    reminders_service = create_reminders_service(default_list=reminders_list)
+
     web_search_service = create_web_search_service()
     habit_service = HabitService(registry, user_id=user_id)
     url_ingestion_service = create_url_ingestion_service(registry, chat_provider) if settings.url_ingestion_enabled else None
+
+    # Per-user Gmail token stored under data/credentials/{user_id}/
     try:
-        email_service = EmailService(credentials_dir=paths.credentials_dir, account_type="personal")
+        user_creds_dir = paths.user_credentials_dir(user_id)
+        email_service = EmailService(
+            credentials_dir=paths.credentials_dir,
+            account_type="personal",
+            token_dir=user_creds_dir,
+        )
     except Exception:
         email_service = None
     return ChatService(

@@ -151,3 +151,11 @@ CREATE TABLE IF NOT EXISTS named_sessions (
     session_id TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id       TEXT NOT NULL,
+    setting_key   TEXT NOT NULL,
+    setting_value TEXT NOT NULL,
+    updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, setting_key)
+);
