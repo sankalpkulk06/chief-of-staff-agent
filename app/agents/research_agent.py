@@ -1,10 +1,34 @@
 """Research agent — web search and live news fetching."""
+import re
 from typing import Any, List, Optional
 
 from app.agents.base import AgentResult
 from app.providers.ollama_chat import OllamaChatProvider
 from app.services.news_service import NewsService
 from app.services.web_search_service import WebSearchService
+
+# Regex strips LLM meta-language so the actual search term reaches the API.
+_META_PREFIX = re.compile(
+    r"^(please\s+)?"
+    r"(do\s+a\s+)?(quick\s+)?"
+    r"(search(\s+the\s+web)?(\s+for)?|look\s+up|find|research|google|fetch|get)\s+"
+    r"(information\s+(about|on)\s+|info\s+(about|on)\s+|about\s+|on\s+)?",
+    re.IGNORECASE,
+)
+_META_TELL = re.compile(
+    r"^(tell\s+me\s+(about|what|how)\s+|explain\s+|what\s+(is|are|does|do)\s+)",
+    re.IGNORECASE,
+)
+
+
+def _clean_query(task: str) -> str:
+    """Strip orchestrator meta-language to get a bare search query."""
+    q = task.strip()
+    q = _META_PREFIX.sub("", q).strip()
+    q = _META_TELL.sub("", q).strip()
+    # Remove trailing punctuation noise
+    q = q.rstrip("?.!").strip()
+    return q or task
 
 _SUMMARIZE_SYSTEM = """\
 You are a research assistant for a personal AI called Sage. \
@@ -68,7 +92,8 @@ class ResearchAgent:
 
     def _fetch_news(self, task: str) -> AgentResult:
         try:
-            articles = self._news.search_news(task) or self._news.get_top_news()
+            query = _clean_query(task)
+            articles = self._news.search_news(query) or self._news.get_top_news()
             if not articles:
                 return AgentResult(
                     agent="research_agent",
@@ -109,12 +134,13 @@ class ResearchAgent:
 
     def _web_search_query(self, task: str) -> AgentResult:
         try:
-            results = self._web_search.search(task)
+            query = _clean_query(task)
+            results = self._web_search.search(query)
             if not results:
                 return AgentResult(
                     agent="research_agent",
                     task=task,
-                    output=f"No web results found for '{task}'.",
+                    output=f"No web results found for '{query}'.",
                     success=True,
                 )
 
