@@ -64,8 +64,17 @@ class Settings(BaseModel):
     sage_passphrase: str = ""
     sage_username: str = ""
 
+    max_agent_steps: int = Field(default=5, gt=0)
+    max_history_turns: int = Field(default=20, gt=0)
+    llm_timeout_seconds: int = Field(default=30, gt=0)
+    llm_max_retries: int = Field(default=3, gt=0)
+
     security_enabled: bool = True
     max_input_length: int = Field(default=2000, gt=0)
+    max_output_length: int = Field(default=8000, gt=0)
+    rate_limit_per_minute: int = Field(default=10, gt=0)
+    rate_limit_enabled: bool = True
+    html_sanitization_enabled: bool = True
 
     @model_validator(mode="after")
     def validate_chunking(self) -> "Settings":

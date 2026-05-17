@@ -96,6 +96,7 @@ def test_ollama_chat_bad_status_handled():
     provider = OllamaChatProvider(
         base_url="http://localhost:11434",
         model="llama3.2:3b",
+        max_retries=1,  # one attempt only — test only queues one fake response
         session=session,
     )
 

@@ -7,6 +7,11 @@ class OllamaProviderError(Exception):
     """Raised when an Ollama provider request fails."""
 
 
+class TransientProviderError(OllamaProviderError):
+    """Raised on network failures or 5xx responses — safe to retry.
+    4xx errors are permanent failures and are NOT retried."""
+
+
 class OllamaEmbeddingsProvider:
     def __init__(
         self,

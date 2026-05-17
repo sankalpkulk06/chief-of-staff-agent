@@ -44,6 +44,8 @@ def create_chat_provider(settings: Settings, spec: Union[str, ModelSpec]) -> Cha
         return OllamaChatProvider(
             base_url=settings.ollama_base_url,
             model=model_spec.model,
+            timeout_seconds=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
         )
 
     if model_spec.provider == "groq":
@@ -51,6 +53,8 @@ def create_chat_provider(settings: Settings, spec: Union[str, ModelSpec]) -> Cha
             api_key=settings.groq_api_key,
             base_url=settings.groq_base_url,
             model=model_spec.model,
+            timeout_seconds=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
         )
 
     raise ValueError(f"Unsupported chat provider '{model_spec.provider}'. Use: ollama, groq.")

