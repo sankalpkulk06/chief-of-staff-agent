@@ -112,12 +112,15 @@ class ResearchAgent:
     def _fetch_news(self, task: str) -> AgentResult:
         try:
             query = _clean_query(task)
-            articles = self._news.search_news(query) or self._news.get_top_news()
+            articles = self._news.search_news(query)
+            if not articles and self._web_search:
+                # Google News RSS is blocked from GCP IPs — fall back to web search.
+                return self._web_search_query(task)
             if not articles:
                 return AgentResult(
                     agent="research_agent",
                     task=task,
-                    output=f"No news found for '{task}'.",
+                    output=f"No news found for '{query}'.",
                     success=True,
                 )
 
@@ -143,6 +146,8 @@ class ResearchAgent:
                 metadata={"source": "news", "article_count": len(articles)},
             )
         except Exception as exc:
+            if self._web_search:
+                return self._web_search_query(task)
             return AgentResult(
                 agent="research_agent",
                 task=task,
