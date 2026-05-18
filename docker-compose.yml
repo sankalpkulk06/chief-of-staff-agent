@@ -10,25 +10,8 @@ services:
       - .env
     environment:
       DATA_DIR: /app/data
-      OLLAMA_BASE_URL: http://ollama:11434
       WEBHOOK_PORT: 8000
     ports:
       - "${WEBHOOK_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
-    depends_on:
-      - ollama
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: sage-ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama:/root/.ollama
-
-volumes:
-  ollama:

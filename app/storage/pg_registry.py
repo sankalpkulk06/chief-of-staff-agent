@@ -6,10 +6,31 @@ import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import unquote, urlparse
 
 import psycopg2
 import psycopg2.extras
 from psycopg2.extras import RealDictCursor
+
+
+def _connect(database_url: str) -> psycopg2.extensions.connection:
+    """Connect using parsed URL components so special chars in passwords work correctly."""
+    p = urlparse(database_url)
+    kwargs: Dict[str, object] = {
+        "host": p.hostname,
+        "port": p.port or 5432,
+        "dbname": p.path.lstrip("/"),
+        "user": unquote(p.username) if p.username else "",
+        "password": unquote(p.password) if p.password else "",
+        "cursor_factory": RealDictCursor,
+    }
+    # Pass through query-string params (e.g. sslmode=require)
+    if p.query:
+        for part in p.query.split("&"):
+            k, _, v = part.partition("=")
+            if k:
+                kwargs[k] = v
+    return psycopg2.connect(**kwargs)
 
 from app.schemas.chunk import DocumentChunk
 from app.schemas.document import ParsedDocument
@@ -38,14 +59,14 @@ class PostgresRegistry:
 
     def __init__(self, database_url: str):
         self._database_url = database_url
-        self._conn = psycopg2.connect(database_url, cursor_factory=RealDictCursor)
+        self._conn = _connect(database_url)
         self._conn.autocommit = False
 
     def _cursor(self):
         try:
             self._conn.isolation_level  # ping
         except psycopg2.InterfaceError:
-            self._conn = psycopg2.connect(self._database_url, cursor_factory=RealDictCursor)
+            self._conn = _connect(self._database_url)
             self._conn.autocommit = False
         return self._conn.cursor()
 

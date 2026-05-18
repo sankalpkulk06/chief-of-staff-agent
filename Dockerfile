@@ -16,6 +16,7 @@ RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
 COPY app ./app
+COPY frontend ./frontend
 COPY README.md ./
 
 RUN pip install -e . \
