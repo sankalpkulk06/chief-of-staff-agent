@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Protocol, Union
 
 from app.config.settings import Settings
+from app.providers.gemini_chat import GeminiChatProvider
 from app.providers.groq_chat import GroqChatProvider
 from app.providers.huggingface_embeddings import HuggingFaceEmbeddingsProvider
 from app.providers.ollama_chat import OllamaChatProvider
@@ -67,7 +68,15 @@ def create_chat_provider(settings: Settings, spec: Union[str, ModelSpec]) -> Cha
             max_retries=settings.llm_max_retries,
         )
 
-    raise ValueError(f"Unsupported chat provider '{model_spec.provider}'. Use: ollama, groq.")
+    if model_spec.provider == "gemini":
+        return GeminiChatProvider(
+            api_key=settings.gemini_api_key,
+            model=model_spec.model,
+            timeout_seconds=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
+
+    raise ValueError(f"Unsupported chat provider '{model_spec.provider}'. Use: ollama, groq, gemini.")
 
 
 def default_chat_model_spec(settings: Settings) -> str:

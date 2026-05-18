@@ -7,7 +7,7 @@ from app.agents.base import AgentResult
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
-from app.providers.ollama_chat import OllamaChatProvider
+from app.providers.factory import ChatProvider
 from app.storage.sqlite_registry import SQLiteRegistry
 
 _EXTRACT_SYSTEM = """\
@@ -31,7 +31,7 @@ class ActionAgent:
 
     def __init__(
         self,
-        chat_provider: OllamaChatProvider,
+        chat_provider: ChatProvider,
         registry: Optional[SQLiteRegistry] = None,
         fact_service: Optional[FactService] = None,
         habit_service: Optional[HabitService] = None,

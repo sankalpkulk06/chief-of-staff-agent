@@ -4,7 +4,7 @@ import re
 from typing import Any, List, Optional
 
 from app.agents.base import AgentResult, AgentStep, OrchestratorPlan
-from app.providers.ollama_chat import OllamaChatProvider
+from app.providers.factory import ChatProvider
 
 # Descriptions shown to the orchestrator LLM so it knows what each agent can do.
 AGENT_DESCRIPTIONS = {
@@ -17,11 +17,13 @@ AGENT_DESCRIPTIONS = {
         "Use for questions about recent events, external facts, or anything not in the user's documents."
     ),
     "action_agent": (
-        "Performs actions: creates todos/reminders, logs habit completions, adds new habits to track, "
+        "Performs actions and retrieves personal data: creates todos/reminders, logs habit completions, "
+        "adds new habits to track, lists the user's current habits and streaks, "
         "and saves or recalls personal/work facts. "
+        "ALWAYS use this when the user asks about their own habits, goals, or saved facts. "
         "ALWAYS use this when the user states personal information (name, job, location, preferences, "
         "age, etc.) — save it as a fact so Sage remembers it. "
-        "Use when the user wants to DO something or share something about themselves."
+        "Use when the user wants to DO something, retrieve their personal data, or share something about themselves."
     ),
     "conversational": (
         "Handles general chat, greetings, acknowledgements, and follow-ups that don't need "
@@ -37,20 +39,38 @@ Available agents:
 {agent_list}
 
 Rules:
-- Choose ONLY the agents actually needed for this request.
-- For a simple greeting or direct question, one "conversational" step is enough.
-- If the user shares personal information (name, job, location, age, preferences), ALWAYS use \
-action_agent first to save it as a fact, then conversational to acknowledge it warmly.
-- For compound requests (e.g. "search the web for X and remind me to follow up"), use multiple agents.
-- Order steps: save/retrieve facts or do research BEFORE generating the conversational response.
-- Each "task" field should be a clear, self-contained instruction for that agent.
+- Choose ONLY the agents actually needed. Prefer fewer steps over more.
+- For greetings, thanks, or acknowledgements: one "conversational" step only.
+- For pure factual questions with no personal context needed: one "conversational" step only.
+- If the user shares ANY personal information (name, job, location, age, preferences, health, \
+habits, relationships): ALWAYS use action_agent first to save it as a fact, then conversational.
+- If the user wants to log a habit completion ("I ran today", "did meditation", "went to gym"): \
+use action_agent to log it, then conversational to acknowledge.
+- If the user asks about their own saved notes, documents, or past information: use rag_agent.
+- If the user asks about current events, news, or external facts: use research_agent.
+- For compound requests, split into the minimum necessary steps and order them: \
+facts/actions first → research second → conversational last.
+- Each "task" field must be a self-contained instruction that makes sense without context.
 
 Examples:
-- "my name is John" → [action_agent: save fact "name is John", conversational: greet John by name]
-- "I work as a software engineer" → [action_agent: save fact, conversational: acknowledge]
-- "remind me to call mom at 5pm" → [action_agent: create todo, conversational: confirm]
-- "what is the capital of France?" → [conversational only]
-- "search for LangGraph tutorials and add a reminder" → [research_agent, action_agent]
+- "hi" → [conversational: greet the user]
+- "my name is John" → [action_agent: save fact user's name is John | conversational: greet John by name]
+- "I'm a software engineer at Google" → [action_agent: save facts job=software engineer company=Google | conversational: acknowledge warmly]
+- "I live in Mumbai and I'm 28" → [action_agent: save facts location=Mumbai age=28 | conversational: acknowledge]
+- "I ran 5km today" → [action_agent: log habit completion running 5km | conversational: congratulate]
+- "I've been meditating every day this week" → [action_agent: log habit meditation completed | conversational: acknowledge streak]
+- "remind me to call mom at 5pm" → [action_agent: create todo call mom at 5pm | conversational: confirm the reminder]
+- "add reading to my habits" → [action_agent: create new habit reading | conversational: confirm habit added]
+- "what are my habits?" → [action_agent: recall habits list | conversational: present the list]
+- "what did I save about React?" → [rag_agent: search documents about React | conversational: summarize findings]
+- "catch me up on my goals" → [rag_agent: search documents about goals and objectives | conversational: summarize]
+- "what's happening in AI?" → [research_agent: search latest AI news and developments | conversational: summarize]
+- "what is the capital of France?" → [conversational: answer directly]
+- "search for LangGraph tutorials and remind me to try it" → [research_agent: search LangGraph tutorials | action_agent: create todo try LangGraph | conversational: confirm]
+- "what are my habits and what's the news in fitness?" → [action_agent: recall habits list | research_agent: search fitness news | conversational: present both]
+- "catch me up on my goals and what's happening in AI" → [rag_agent: search saved goals | research_agent: search latest AI news | conversational: summarize both]
+- "I prefer working at night" → [action_agent: save fact prefers working at night | conversational: acknowledge]
+- "I drink coffee every morning" → [action_agent: save fact drinks coffee every morning | conversational: acknowledge]
 
 Respond with ONLY valid JSON — no prose before or after:
 {{
@@ -78,7 +98,7 @@ _FAST_PATH_STARTS = frozenset([
 class OrchestratorAgent:
     """Plans the multi-agent execution and synthesizes the final reply."""
 
-    def __init__(self, chat_provider: OllamaChatProvider, assistant_name: str = "Sage"):
+    def __init__(self, chat_provider: ChatProvider, assistant_name: str = "Sage"):
         self._provider = chat_provider
         self._assistant_name = assistant_name
 

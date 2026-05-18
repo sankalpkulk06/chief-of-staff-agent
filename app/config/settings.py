@@ -28,6 +28,9 @@ class Settings(BaseModel):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_chat_model: str = "llama-3.3-70b-versatile"
 
+    gemini_api_key: str = ""
+    gemini_chat_model: str = "gemini-2.5-flash"
+
     orchestrator_chat_model: str = ""
     rag_chat_model: str = ""
     research_chat_model: str = ""
