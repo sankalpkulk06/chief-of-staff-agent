@@ -74,6 +74,7 @@ class ResearchAgent:
         original_question: str,
         history: List[dict[str, Any]],
         previous_results: Optional[List[AgentResult]] = None,
+        user_id: Optional[str] = None,
     ) -> AgentResult:
         # Determine whether this is a news or general web search query.
         task_lower = task.lower()

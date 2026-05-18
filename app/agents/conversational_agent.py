@@ -31,6 +31,7 @@ class ConversationalAgent:
         history: List[dict[str, Any]],
         previous_results: Optional[List[AgentResult]] = None,
         response_style: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> AgentResult:
         try:
             system = _SYSTEM_BASE.format(assistant_name=self._assistant_name)
