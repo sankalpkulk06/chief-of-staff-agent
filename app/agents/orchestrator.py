@@ -71,6 +71,10 @@ Examples:
 - "catch me up on my goals and what's happening in AI" → [rag_agent: search saved goals | research_agent: search latest AI news | conversational: summarize both]
 - "I prefer working at night" → [action_agent: save fact prefers working at night | conversational: acknowledge]
 - "I drink coffee every morning" → [action_agent: save fact drinks coffee every morning | conversational: acknowledge]
+- "I love UFC, what fights are coming up?" → [action_agent: save fact loves UFC | research_agent: search upcoming UFC fights and events | conversational: present findings]
+- "I'm into cricket, what's the latest?" → [action_agent: save fact interested in cricket | research_agent: search latest cricket news | conversational: summarize]
+- "I've been reading about stoicism, what are the latest books on it?" → [action_agent: save fact reads about stoicism | research_agent: search latest stoicism books | conversational: present results]
+- "I started learning Spanish, any tips?" → [action_agent: save fact learning Spanish | research_agent: search Spanish learning tips and resources | conversational: give advice]
 
 Respond with ONLY valid JSON — no prose before or after:
 {{
