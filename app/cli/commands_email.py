@@ -6,7 +6,7 @@ from rich.rule import Rule
 
 from app.config import get_settings
 from app.services.email_service import AccountType, EmailService
-from app.providers.ollama_chat import OllamaChatProvider
+from app.providers.factory import create_default_chat_provider
 from app.ui.spinner import thinking_spinner
 
 console = Console()
@@ -18,9 +18,9 @@ def _create_email_service(account_type: AccountType) -> EmailService:
     return EmailService(credentials_dir=paths.credentials_dir, account_type=account_type)
 
 
-def _create_chat_provider() -> OllamaChatProvider:
+def _create_chat_provider():
     settings = get_settings()
-    return OllamaChatProvider(base_url=settings.ollama_base_url, model=settings.ollama_chat_model)
+    return create_default_chat_provider(settings)
 
 
 def _run_email_command(
