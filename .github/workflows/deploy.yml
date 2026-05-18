@@ -44,12 +44,14 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
         run: |
           ENV_VARS="DATABASE_URL=${DATABASE_URL}"
           ENV_VARS="${ENV_VARS},GROQ_API_KEY=${GROQ_API_KEY}"
+          ENV_VARS="${ENV_VARS},GEMINI_API_KEY=${GEMINI_API_KEY}"
           ENV_VARS="${ENV_VARS},HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}"
-          ENV_VARS="${ENV_VARS},ORCHESTRATOR_CHAT_MODEL=groq:llama-3.3-70b-versatile"
+          ENV_VARS="${ENV_VARS},ORCHESTRATOR_CHAT_MODEL=gemini:gemini-2.5-flash"
           ENV_VARS="${ENV_VARS},ACTION_CHAT_MODEL=groq:llama-3.3-70b-versatile"
           ENV_VARS="${ENV_VARS},EMBEDDINGS_PROVIDER=sentence-transformers"
           ENV_VARS="${ENV_VARS},HUGGINGFACE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2"
