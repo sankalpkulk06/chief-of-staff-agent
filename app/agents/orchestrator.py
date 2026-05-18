@@ -44,8 +44,10 @@ Rules:
 - For pure factual questions with no personal context needed: one "conversational" step only.
 - If the user shares ANY personal information (name, job, location, age, preferences, health, \
 habits, relationships): ALWAYS use action_agent first to save it as a fact, then conversational.
-- If the user wants to log a habit completion ("I ran today", "did meditation", "went to gym"): \
-use action_agent to log it, then conversational to acknowledge.
+- If the user mentions completing a physical or personal activity that sounds like a tracked habit \
+("I ran today", "went to the gym", "did meditation", "hit the gym", "worked out", "read today", \
+"journaled", "took a walk"): ALWAYS use action_agent to log it, then conversational to acknowledge. \
+Do NOT route these to conversational only.
 - If the user asks about their own saved notes, documents, or past information: use rag_agent.
 - If the user asks about current events, news, or external facts: use research_agent.
 - For compound requests, split into the minimum necessary steps and order them: \
@@ -58,6 +60,9 @@ Examples:
 - "I'm a software engineer at Google" → [action_agent: save facts job=software engineer company=Google | conversational: acknowledge warmly]
 - "I live in Mumbai and I'm 28" → [action_agent: save facts location=Mumbai age=28 | conversational: acknowledge]
 - "I ran 5km today" → [action_agent: log habit completion running 5km | conversational: congratulate]
+- "I went to the gym today" → [action_agent: log habit gym done | conversational: acknowledge]
+- "just got back from the gym" → [action_agent: log habit gym done | conversational: acknowledge]
+- "hit the gym this morning" → [action_agent: log habit gym done | conversational: acknowledge]
 - "I've been meditating every day this week" → [action_agent: log habit meditation completed | conversational: acknowledge streak]
 - "remind me to call mom at 5pm" → [action_agent: create todo call mom at 5pm | conversational: confirm the reminder]
 - "add reading to my habits" → [action_agent: create new habit reading | conversational: confirm habit added]
