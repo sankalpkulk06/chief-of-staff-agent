@@ -96,13 +96,10 @@ class AnalyticsService:
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
         for session in sessions:
-            created_str = session["created_at"]
-            try:
-                dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+            dt = self._parse_datetime(session["created_at"])
+            if dt is not None:
                 day_name = days[dt.weekday()]
                 day_counts[day_name] += 1
-            except (ValueError, AttributeError):
-                pass
 
         if day_counts:
             most_common = max(day_counts.items(), key=lambda x: x[1])
@@ -116,12 +113,9 @@ class AnalyticsService:
 
         hour_counts = defaultdict(int)
         for turn in all_turns:
-            created_str = turn.get("created_at", "")
-            try:
-                dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+            dt = self._parse_datetime(turn.get("created_at", ""))
+            if dt is not None:
                 hour_counts[dt.hour] += 1
-            except (ValueError, AttributeError):
-                pass
 
         if hour_counts:
             most_active = max(hour_counts.items(), key=lambda x: x[1])
@@ -191,12 +185,9 @@ class AnalyticsService:
 
         dates = []
         for session in sessions:
-            created_str = session["created_at"]
-            try:
-                dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+            dt = self._parse_datetime(session["created_at"])
+            if dt is not None:
                 dates.append(dt)
-            except (ValueError, AttributeError):
-                pass
 
         if dates:
             first = min(dates)
@@ -210,12 +201,9 @@ class AnalyticsService:
 
         dates = []
         for session in sessions:
-            updated_str = session["updated_at"]
-            try:
-                dt = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+            dt = self._parse_datetime(session["updated_at"])
+            if dt is not None:
                 dates.append(dt)
-            except (ValueError, AttributeError):
-                pass
 
         if dates:
             last = max(dates)
@@ -229,11 +217,19 @@ class AnalyticsService:
 
         active_dates = set()
         for session in sessions:
-            created_str = session["created_at"]
-            try:
-                dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+            dt = self._parse_datetime(session["created_at"])
+            if dt is not None:
                 active_dates.add(dt.date())
-            except (ValueError, AttributeError):
-                pass
 
         return len(active_dates)
+
+    @staticmethod
+    def _parse_datetime(value) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        return None

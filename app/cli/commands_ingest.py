@@ -3,13 +3,14 @@ from pathlib import Path
 import typer
 
 from app.config import get_settings
+from app.config.validation import CloudConfigurationError, validate_runtime_configuration
 from app.core.ingest_coordinator import IngestCoordinator
 from app.ingestion.chunker import Chunker, ChunkingConfig
 from app.ingestion.ingest_service import IngestService
 from app.parsers.router import ParserRouter
-from app.providers.ollama_embeddings import OllamaEmbeddingsProvider, OllamaProviderError
-from app.storage.chroma_store import ChromaStore
-from app.storage.sqlite_registry import SQLiteRegistry
+from app.providers.factory import create_embeddings_provider
+from app.providers.ollama_embeddings import OllamaProviderError
+from app.storage.factory import create_registry, create_vector_store
 
 
 def create_ingest_coordinator() -> IngestCoordinator:
@@ -26,12 +27,9 @@ def create_ingest_coordinator() -> IngestCoordinator:
                 )
             ),
         ),
-        embeddings_provider=OllamaEmbeddingsProvider(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_embedding_model,
-        ),
-        registry=SQLiteRegistry(paths.sqlite_db_path),
-        vector_store=ChromaStore(paths.chroma_dir),
+        embeddings_provider=create_embeddings_provider(settings),
+        registry=create_registry(settings.database_url, paths.sqlite_db_path),
+        vector_store=create_vector_store(settings.database_url, paths.chroma_dir, settings.embedding_dimension),
         supported_extensions=parser_router.supported_extensions,
     )
 
@@ -47,6 +45,13 @@ def ingest_command(
     resolved = path.resolve()
     if not resolved.exists():
         typer.echo(f"Error: path does not exist: {resolved}")
+        raise typer.Exit(code=1)
+
+    settings = get_settings()
+    try:
+        validate_runtime_configuration(settings)
+    except CloudConfigurationError as exc:
+        typer.echo(f"Configuration error: {exc}")
         raise typer.Exit(code=1)
 
     coordinator = create_ingest_coordinator()
@@ -75,4 +80,3 @@ def ingest_command(
         for error in summary.errors:
             typer.echo(f"- {error}")
         raise typer.Exit(code=1)
-

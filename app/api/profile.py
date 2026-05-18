@@ -47,13 +47,9 @@ async def get_profile(
                 longest_streak = summary.streak
                 longest_habit = summary.habit.name
 
-    # Total docs and chunks
-    row = registry._connection.execute(
-        "SELECT COUNT(DISTINCT d.document_id) AS docs, COUNT(c.chunk_id) AS chunks "
-        "FROM documents d LEFT JOIN chunks c ON c.document_id = d.document_id"
-    ).fetchone()
-    total_docs = row["docs"] if row else 0
-    total_chunks = row["chunks"] if row else 0
+    sources = registry.list_all_sources()
+    total_docs = len(sources)
+    total_chunks = sum(len(registry.get_chunks_for_document(source["document_id"])) for source in sources)
 
     username = (
         get_settings().sage_username

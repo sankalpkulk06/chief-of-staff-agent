@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.storage.sqlite_registry import SQLiteRegistry
 
@@ -15,6 +16,13 @@ class Fact(BaseModel):
     confidence_score: float
     created_at: str
     usage_count: int
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _stringify_created_at(cls, value) -> str:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
 
 
 class FactService:

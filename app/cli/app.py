@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.cli.commands_ask import ask_command
 from app.cli.commands_ingest import ingest_command
 from app.cli.commands_serve import serve_command
-from app.storage.sqlite_registry import SQLiteRegistry
+from app.storage.factory import create_registry
 
 cli = typer.Typer(
     add_completion=False,
@@ -42,6 +42,10 @@ def show_config() -> None:
     typer.echo(f"ollama_base_url={settings.ollama_base_url}")
     typer.echo(f"ollama_chat_model={settings.ollama_chat_model}")
     typer.echo(f"ollama_embedding_model={settings.ollama_embedding_model}")
+    typer.echo(f"embeddings_provider={settings.embeddings_provider}")
+    typer.echo(f"embedding_dimension={settings.embedding_dimension}")
+    typer.echo(f"huggingface_api_key={'set' if settings.huggingface_api_key else 'not set'}")
+    typer.echo(f"huggingface_embedding_model={settings.huggingface_embedding_model}")
     typer.echo(f"groq_api_key={'set' if settings.groq_api_key else 'not set'}")
     typer.echo(f"groq_chat_model={settings.groq_chat_model}")
     typer.echo(f"orchestrator_chat_model={settings.orchestrator_chat_model or 'ollama:' + settings.ollama_chat_model}")
@@ -76,7 +80,7 @@ def sources() -> None:
     """List all ingested sources."""
     settings = get_settings()
     paths = settings.resolve_paths()
-    registry = SQLiteRegistry(paths.sqlite_db_path)
+    registry = create_registry(getattr(settings, "database_url", ""), paths.sqlite_db_path)
     try:
         saved = registry.list_all_sources()
     finally:

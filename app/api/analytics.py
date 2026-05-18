@@ -24,45 +24,30 @@ class AnalyticsOut(BaseModel):
 async def get_analytics(
     registry: SQLiteRegistry = Depends(get_registry),
 ) -> AnalyticsOut:
-    # ---- heatmap: turns per (day-of-week, hour) over last 14 days ----
-    rows = registry._connection.execute(
-        """
-        SELECT CAST(strftime('%w', created_at) AS INTEGER) AS dow,
-               CAST(strftime('%H', created_at) AS INTEGER) AS hour,
-               COUNT(*) AS cnt
-        FROM chat_turns
-        WHERE created_at >= datetime('now', '-14 days')
-        GROUP BY dow, hour
-        """
-    ).fetchall()
-
+    turns = []
+    for session in registry.list_sessions(limit=10000):
+        turns.extend(registry.get_session_turns(session["session_id"]))
     heatmap = [[0] * 24 for _ in range(7)]
-    for r in rows:
-        day_idx = _DOW_REMAP.get(r["dow"], 0)
-        heatmap[day_idx][r["hour"]] = r["cnt"]
+    hour_counts: Dict[int, int] = {}
+    user_turns = []
+    for turn in turns:
+        created_at = turn.get("created_at")
+        dow = getattr(created_at, "weekday", lambda: None)()
+        hour = getattr(created_at, "hour", None)
+        if dow is None and isinstance(created_at, str):
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                dow, hour = dt.weekday(), dt.hour
+            except ValueError:
+                pass
+        if dow is not None and hour is not None:
+            heatmap[dow][hour] += 1
+            hour_counts[hour] = hour_counts.get(hour, 0) + 1
+        if turn.get("role") == "user":
+            user_turns.append(turn)
 
-    # most active hour (global, not just last 14 days)
-    hour_rows = registry._connection.execute(
-        """
-        SELECT CAST(strftime('%H', created_at) AS INTEGER) AS hour,
-               COUNT(*) AS cnt
-        FROM chat_turns
-        GROUP BY hour
-        ORDER BY cnt DESC
-        LIMIT 1
-        """
-    ).fetchone()
-    most_active_hour = hour_rows["hour"] if hour_rows else 9
-
-    # ---- topics: top user-turn keywords as a proxy for topics ----
-    kw_rows = registry._connection.execute(
-        """
-        SELECT content FROM chat_turns
-        WHERE role = 'user'
-        ORDER BY created_at DESC
-        LIMIT 500
-        """
-    ).fetchall()
+    most_active_hour = max(hour_counts.items(), key=lambda item: item[1])[0] if hour_counts else 9
 
     stop = {
         "the","a","an","is","it","what","how","can","do","i","my","me","you",
@@ -77,7 +62,7 @@ async def get_analytics(
     }
 
     word_counts: Dict[str, int] = {}
-    for r in kw_rows:
+    for r in user_turns[-500:]:
         for word in r["content"].lower().split():
             w = word.strip(".,!?;:\"'()[]{}")
             if len(w) > 3 and w not in stop and w.isalpha():

@@ -322,14 +322,6 @@ class SecurityAgent:
         event_id = str(uuid.uuid4())
         safe_snippet = (snippet or "")[:100]
         try:
-            self._registry._connection.execute(
-                """
-                INSERT INTO security_events
-                    (event_id, user_id, event_type, severity, snippet)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (event_id, user_id, event_type, severity, safe_snippet),
-            )
-            self._registry._connection.commit()
+            self._registry.log_security_event(event_id, user_id, event_type, severity, safe_snippet)
         except Exception as exc:
             log.warning("SecurityAgent: failed to log event: %s", exc)

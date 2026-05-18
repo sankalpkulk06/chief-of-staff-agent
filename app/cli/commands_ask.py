@@ -4,6 +4,7 @@ import typer
 from rich.console import Console
 
 from app.config import get_settings
+from app.config.validation import CloudConfigurationError, validate_runtime_configuration
 from app.core.analytics_service import AnalyticsService
 from app.core.chat_service import ChatService
 from app.core.fact_service import FactService
@@ -16,32 +17,24 @@ from app.services.news_service import NewsService
 from app.services.url_ingestion_service import URLIngestionService
 from app.services.web_search_service import WebSearchService
 from app.export.markdown_exporter import export_qa_to_markdown
-from app.providers.factory import create_chat_provider
-from app.providers.ollama_chat import OllamaChatProvider
-from app.providers.ollama_embeddings import OllamaEmbeddingsProvider, OllamaProviderError
+from app.providers.factory import (
+    agent_model_specs,
+    create_chat_provider,
+    create_default_chat_provider,
+    create_embeddings_provider,
+)
+from app.providers.ollama_embeddings import OllamaProviderError
 from app.retrieval.retriever import Retriever
-from app.storage.chroma_store import ChromaStore
+from app.storage.factory import create_registry, create_vector_store
 from app.agents.security_agent import SecurityAgent
 from app.agents.security_policy import SecurityPolicy
-from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
 console = Console()
 
 
-def _default_chat_model_spec(settings) -> str:
-    return f"ollama:{settings.ollama_chat_model}"
-
-
 def _agent_model_specs(settings) -> dict[str, str]:
-    default = _default_chat_model_spec(settings)
-    return {
-        "orchestrator": settings.orchestrator_chat_model or default,
-        "rag_agent": settings.rag_chat_model or default,
-        "research_agent": settings.research_chat_model or default,
-        "action_agent": settings.action_chat_model or default,
-        "conversational": settings.conversational_chat_model or default,
-    }
+    return agent_model_specs(settings)
 
 
 def create_agent_chat_providers(settings) -> tuple[dict[str, object], dict[str, str]]:
@@ -53,25 +46,19 @@ def create_qa_service() -> QAService:
     settings = get_settings()
     paths = settings.resolve_paths()
     retriever = Retriever(
-        embeddings_provider=OllamaEmbeddingsProvider(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_embedding_model,
-        ),
-        vector_store=ChromaStore(paths.chroma_dir),
-        metadata_registry=SQLiteRegistry(paths.sqlite_db_path),
+        embeddings_provider=create_embeddings_provider(settings),
+        vector_store=create_vector_store(settings.database_url, paths.chroma_dir, settings.embedding_dimension),
+        metadata_registry=create_registry(settings.database_url, paths.sqlite_db_path),
         default_top_k=settings.retrieval_top_k,
     )
-    chat_provider = OllamaChatProvider(
-        base_url=settings.ollama_base_url,
-        model=settings.ollama_chat_model,
-    )
+    chat_provider = create_default_chat_provider(settings)
     return QAService(retriever=retriever, chat_provider=chat_provider)
 
 
 def create_fact_service(user_id: str = "default") -> FactService:
     settings = get_settings()
     paths = settings.resolve_paths()
-    registry = SQLiteRegistry(paths.sqlite_db_path)
+    registry = create_registry(settings.database_url, paths.sqlite_db_path)
     return FactService(registry=registry, user_id=user_id)
 
 
@@ -90,20 +77,17 @@ def create_web_search_service() -> WebSearchService:
 
 
 def create_url_ingestion_service(
-    registry: SQLiteRegistry,
-    chat_provider: OllamaChatProvider,
-    vector_store: Optional[ChromaStore] = None,
+    registry,
+    chat_provider,
+    vector_store=None,
 ) -> URLIngestionService:
     settings = get_settings()
     paths = settings.resolve_paths()
     coordinator = IngestCoordinator(
         ingest_service=IngestService(),
-        embeddings_provider=OllamaEmbeddingsProvider(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_embedding_model,
-        ),
+        embeddings_provider=create_embeddings_provider(settings),
         registry=registry,
-        vector_store=vector_store or ChromaStore(paths.chroma_dir),
+        vector_store=vector_store or create_vector_store(settings.database_url, paths.chroma_dir, settings.embedding_dimension),
     )
     return URLIngestionService(
         ingest_coordinator=coordinator,
@@ -118,7 +102,7 @@ def create_url_ingestion_service(
 def create_analytics_service() -> AnalyticsService:
     settings = get_settings()
     paths = settings.resolve_paths()
-    registry = SQLiteRegistry(paths.sqlite_db_path)
+    registry = create_registry(settings.database_url, paths.sqlite_db_path)
     return AnalyticsService(registry=registry)
 
 
@@ -128,22 +112,16 @@ def create_chat_service(
 ) -> ChatService:
     settings = get_settings()
     paths = settings.resolve_paths()
-    shared_vector_store = ChromaStore(paths.chroma_dir)
+    shared_vector_store = create_vector_store(settings.database_url, paths.chroma_dir, settings.embedding_dimension)
     retriever = Retriever(
-        embeddings_provider=OllamaEmbeddingsProvider(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_embedding_model,
-        ),
+        embeddings_provider=create_embeddings_provider(settings),
         vector_store=shared_vector_store,
-        metadata_registry=SQLiteRegistry(paths.sqlite_db_path),
+        metadata_registry=create_registry(settings.database_url, paths.sqlite_db_path),
         default_top_k=settings.retrieval_top_k,
     )
-    chat_provider = OllamaChatProvider(
-        base_url=settings.ollama_base_url,
-        model=settings.ollama_chat_model,
-    )
+    chat_provider = create_default_chat_provider(settings)
     agent_chat_providers, agent_model_specs = create_agent_chat_providers(settings)
-    registry = SQLiteRegistry(paths.sqlite_db_path)
+    registry = create_registry(settings.database_url, paths.sqlite_db_path)
     fact_service = create_fact_service(user_id=user_id)
     news_service = create_news_service()
 
@@ -192,6 +170,12 @@ def ask_command(
     top_k: Optional[int] = typer.Option(None, "--top-k", help="Override number of retrieved chunks."),
     export: bool = typer.Option(False, "--export", help="Export answer to Markdown file."),
 ) -> None:
+    settings = get_settings()
+    try:
+        validate_runtime_configuration(settings)
+    except CloudConfigurationError as exc:
+        typer.echo(f"Configuration error: {exc}")
+        raise typer.Exit(code=1)
     service = create_qa_service()
     try:
         with thinking_spinner("thinking..."):

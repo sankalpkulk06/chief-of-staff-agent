@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, List, Literal, Optional
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from app.providers.ollama_chat import OllamaChatProvider
+    from app.providers.factory import ChatProvider
 
 AccountType = Literal["personal", "work"]
 
@@ -109,7 +109,7 @@ class EmailService:
 
         return emails
 
-    def triage(self, emails: List[EmailMessage], chat_provider: "OllamaChatProvider") -> List[TriagedEmail]:
+    def triage(self, emails: List[EmailMessage], chat_provider: "ChatProvider") -> List[TriagedEmail]:
         if not emails:
             return []
 

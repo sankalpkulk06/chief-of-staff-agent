@@ -2,6 +2,7 @@ import getpass
 import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Tuple
 
 import typer
@@ -19,13 +20,15 @@ from app.cli.commands_ask import (
     create_news_service,
     create_web_search_service,
 )
+from app.cli.commands_ingest import create_ingest_coordinator
 from app.config import get_settings
+from app.config.validation import CloudConfigurationError, validate_runtime_configuration
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
 from app.services.email_service import EmailService
-from app.providers.ollama_chat import OllamaChatProvider
 from app.providers.ollama_embeddings import OllamaProviderError
-from app.providers.factory import create_chat_provider, ModelSpec
+from app.providers.factory import create_chat_provider, create_default_chat_provider, ModelSpec
+from app.storage.factory import create_registry
 from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
@@ -50,7 +53,7 @@ def _is_email_request(text: str) -> bool:
 def _handle_email_personal(console: Console, settings) -> None:
     paths = settings.resolve_paths()
     service = EmailService(credentials_dir=paths.credentials_dir, account_type="personal")
-    chat_provider = OllamaChatProvider(base_url=settings.ollama_base_url, model=settings.ollama_chat_model)
+    chat_provider = create_default_chat_provider(settings)
 
     try:
         with thinking_spinner("fetching personal emails..."):
@@ -462,9 +465,14 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
     """Run an interactive chat session with conversation history."""
     settings = get_settings()
     paths = settings.resolve_paths()
+    try:
+        validate_runtime_configuration(settings)
+    except CloudConfigurationError as exc:
+        console.print(f"\n[red]Configuration error:[/red] {exc}\n")
+        raise typer.Exit(code=1)
 
     # Bootstrap registry just for auth (before full service creation)
-    bootstrap_registry = SQLiteRegistry(paths.sqlite_db_path)
+    bootstrap_registry = create_registry(settings.database_url, paths.sqlite_db_path)
     user = _prompt_auth(bootstrap_registry, console)
     user_id: str = user["user_id"]
     username: str = user["username"]
@@ -478,10 +486,7 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
     registry = service.get_registry()
 
     # Create chat provider for news summary generation
-    chat_provider = OllamaChatProvider(
-        base_url=settings.ollama_base_url,
-        model=settings.ollama_chat_model,
-    )
+    chat_provider = create_default_chat_provider(settings)
 
     session_top_k = top_k
 
@@ -769,6 +774,34 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
 
         if lowered == "/apple-reminder" or lowered.startswith("/apple-reminder "):
             console.print("\n[yellow]Apple Reminders integration has been removed. Use [bold]/todo[/bold] to add reminders.\n")
+            continue
+
+        # Detect file/directory paths and ingest them instead of answering
+        # Only treat as path if single line, short enough, and starts with a path character
+        _q = question.strip()
+        _looks_like_path = (
+            "\n" not in _q
+            and len(_q) < 512
+            and (_q.startswith("/") or _q.startswith("~/") or _q.startswith("./"))
+        )
+        maybe_path = Path(_q).expanduser() if _looks_like_path else None
+        if maybe_path is not None and maybe_path.exists() and (maybe_path.is_file() or maybe_path.is_dir()):
+            try:
+                coordinator = create_ingest_coordinator()
+                with thinking_spinner("ingesting..."):
+                    summary = coordinator.ingest(maybe_path, user_id=user_id)
+                processed = summary.files_processed
+                skipped = summary.files_skipped
+                chunks = summary.chunks_created
+                errors = summary.errors
+                if processed:
+                    console.print(f"\n[green]✓[/green] Ingested [bold]{processed}[/bold] file(s), [bold]{chunks}[/bold] chunks stored in Supabase\n")
+                else:
+                    console.print(f"\n[yellow]⚠[/yellow] No files processed ({skipped} skipped)\n")
+                for err in errors:
+                    console.print(f"[red]  ✗ {err}[/red]")
+            except Exception as exc:
+                console.print(f"\n[red]✗[/red] Ingest failed: {exc}\n")
             continue
 
         try:

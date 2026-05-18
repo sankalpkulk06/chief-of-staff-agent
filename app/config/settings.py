@@ -18,6 +18,12 @@ class Settings(BaseModel):
     ollama_chat_model: str = "llama3.2:3b"
     ollama_embedding_model: str = "nomic-embed-text"
 
+    embeddings_provider: str = "ollama"
+    embedding_dimension: int = Field(default=768, gt=0)
+    huggingface_api_key: str = ""
+    huggingface_base_url: str = "https://api-inference.huggingface.co"
+    huggingface_embedding_model: str = "BAAI/bge-small-en-v1.5"
+
     groq_api_key: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_chat_model: str = "llama-3.3-70b-versatile"
@@ -56,6 +62,9 @@ class Settings(BaseModel):
     url_scrape_timeout: int = 10
     url_min_content_words: int = 100
     url_max_content_words: int = 50000
+
+    supabase_url: str = ""
+    database_url: str = ""  # PostgreSQL DSN — set to use Supabase/Postgres instead of SQLite+ChromaDB
 
     data_dir: Optional[Path] = None
 

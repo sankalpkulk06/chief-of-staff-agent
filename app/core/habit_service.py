@@ -50,16 +50,34 @@ def _parse_reminder_time(raw: str) -> str:
 
 class HabitService:
     def __init__(self, registry: SQLiteRegistry, user_id: str = "default"):
-        self._db = registry._connection
+        self._db = getattr(registry, "_connection", None) or getattr(registry, "_conn")
+        self._is_postgres = hasattr(registry, "_conn")
         self._user_id = user_id
+
+    def _execute(self, sql: str, params: tuple = ()):
+        if self._is_postgres:
+            sql = sql.replace("?", "%s").replace("COLLATE NOCASE", "")
+            cursor = self._db.cursor()
+            cursor.execute(sql, params)
+            return cursor
+        return self._db.execute(sql, params)
+
+    def _commit(self) -> None:
+        self._db.commit()
+
+    @staticmethod
+    def _date_from_db(value) -> date:
+        if isinstance(value, date):
+            return value
+        return date.fromisoformat(value)
 
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
 
     def _get_habit_by_name(self, name: str) -> Optional[Habit]:
-        row = self._db.execute(
-            "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND name = ? COLLATE NOCASE AND active = 1",
+        row = self._execute(
+            "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND LOWER(name) = LOWER(?) AND active = 1",
             (self._user_id, name),
         ).fetchone()
         if row is None:
@@ -67,7 +85,7 @@ class HabitService:
         return Habit(id=row["id"], name=row["name"], reminder_time=row["reminder_time"], active=bool(row["active"]))
 
     def get_habit_by_id(self, habit_id: str) -> Optional[Habit]:
-        row = self._db.execute(
+        row = self._execute(
             "SELECT id, name, reminder_time, active FROM habits WHERE id = ? AND user_id = ? AND active = 1",
             (habit_id, self._user_id),
         ).fetchone()
@@ -76,7 +94,7 @@ class HabitService:
         return Habit(id=row["id"], name=row["name"], reminder_time=row["reminder_time"], active=bool(row["active"]))
 
     def _get_all_active(self) -> list[Habit]:
-        rows = self._db.execute(
+        rows = self._execute(
             "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND active = 1 ORDER BY created_at ASC",
             (self._user_id,),
         ).fetchall()
@@ -92,11 +110,11 @@ class HabitService:
             return existing
         habit_id = str(uuid.uuid4())
         rt = _parse_reminder_time(reminder_time) if reminder_time != "21:00" else reminder_time
-        self._db.execute(
+        self._execute(
             "INSERT INTO habits (id, user_id, name, reminder_time) VALUES (?, ?, ?, ?)",
             (habit_id, self._user_id, name, rt),
         )
-        self._db.commit()
+        self._commit()
         return Habit(id=habit_id, name=name, reminder_time=rt, active=True)
 
     def log_habit(self, name: str, status: str = "done", note: str = "") -> HabitLog:
@@ -111,11 +129,11 @@ class HabitService:
             raise ValueError(f"Habit '{habit_id}' not found.")
         log_id = str(uuid.uuid4())
         now = datetime.now()
-        self._db.execute(
+        self._execute(
             "INSERT INTO habit_logs (id, habit_id, logged_at, status, note) VALUES (?, ?, ?, ?, ?)",
             (log_id, habit_id, now.isoformat(), status, note),
         )
-        self._db.commit()
+        self._commit()
         return HabitLog(id=log_id, habit_id=habit_id, logged_at=now, status=status, note=note)
 
     def unlog_habit(self, name: str) -> int:
@@ -124,19 +142,19 @@ class HabitService:
         if habit is None:
             raise ValueError(f"Habit '{name}' not found.")
         today = date.today().isoformat()
-        cursor = self._db.execute(
+        cursor = self._execute(
             "DELETE FROM habit_logs WHERE habit_id = ? AND DATE(logged_at) = ?",
             (habit.id, today),
         )
-        self._db.commit()
+        self._commit()
         return cursor.rowcount
 
     def delete_habit(self, name: str) -> bool:
         habit = self._get_habit_by_name(name)
         if habit is None:
             return False
-        self._db.execute("UPDATE habits SET active = 0 WHERE id = ?", (habit.id,))
-        self._db.commit()
+        self._execute("UPDATE habits SET active = 0 WHERE id = ?", (habit.id,))
+        self._commit()
         return True
 
     # ------------------------------------------------------------------
@@ -144,7 +162,7 @@ class HabitService:
     # ------------------------------------------------------------------
 
     def get_streak(self, habit_id: str) -> int:
-        rows = self._db.execute(
+        rows = self._execute(
             """
             SELECT DATE(logged_at) as day, status
             FROM habit_logs
@@ -158,7 +176,7 @@ class HabitService:
         done_days: set[date] = set()
         for row in rows:
             if row["status"] == "done":
-                done_days.add(date.fromisoformat(row["day"]))
+                done_days.add(self._date_from_db(row["day"]))
 
         streak = 0
         check = date.today()
@@ -174,7 +192,7 @@ class HabitService:
         summaries: list[HabitSummary] = []
 
         for habit in habits:
-            rows = self._db.execute(
+            rows = self._execute(
                 """
                 SELECT DATE(logged_at) as day, status
                 FROM habit_logs
@@ -186,7 +204,7 @@ class HabitService:
             done_days: set[date] = set()
             logged_today = False
             for row in rows:
-                d = date.fromisoformat(row["day"])
+                d = self._date_from_db(row["day"])
                 if row["status"] == "done":
                     done_days.add(d)
                 if d == today:
@@ -201,9 +219,20 @@ class HabitService:
 
         return summaries
 
+    def get_logs_since(self, habit_id: str, since: date) -> list[dict]:
+        rows = self._execute(
+            """
+            SELECT DATE(logged_at) as day, status
+            FROM habit_logs
+            WHERE habit_id = ? AND DATE(logged_at) >= ?
+            """,
+            (habit_id, since.isoformat()),
+        ).fetchall()
+        return [{"day": self._date_from_db(row["day"]).isoformat(), "status": row["status"]} for row in rows]
+
     def get_unlogged_today(self) -> list[Habit]:
         today = date.today().isoformat()
-        rows = self._db.execute(
+        rows = self._execute(
             """
             SELECT h.id FROM habits h
             WHERE h.user_id = ? AND h.active = 1

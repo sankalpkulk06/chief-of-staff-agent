@@ -6,7 +6,7 @@ from lxml import etree
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from app.providers.ollama_chat import OllamaChatProvider
+    from app.providers.factory import ChatProvider
 
 
 class NewsArticle(BaseModel):
@@ -153,13 +153,13 @@ class NewsService:
         return clean.strip()
 
     def generate_summary(
-        self, articles: List[NewsArticle], chat_provider: "OllamaChatProvider"
+        self, articles: List[NewsArticle], chat_provider: "ChatProvider"
     ) -> str:
         """Generate a consolidated summary of news articles under 200 words.
 
         Args:
             articles: List of NewsArticle objects to summarize
-            chat_provider: OllamaChatProvider instance for LLM generation
+            chat_provider: ChatProvider instance for LLM generation
 
         Returns:
             A concise summary of the articles under 200 words

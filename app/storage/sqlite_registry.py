@@ -555,6 +555,17 @@ class SQLiteRegistry:
         )
         self._connection.commit()
 
+    def log_security_event(self, event_id: str, user_id: str, event_type: str, severity: str, snippet: str) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO security_events
+                (event_id, user_id, event_type, severity, snippet)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event_id, user_id, event_type, severity, snippet),
+        )
+        self._connection.commit()
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

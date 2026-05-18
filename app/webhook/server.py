@@ -10,9 +10,10 @@ from fastapi.responses import FileResponse
 from app.api.router import api_router
 from app.cli.commands_ask import create_chat_service, create_news_service
 from app.config import get_settings
+from app.config.validation import validate_runtime_configuration
 from app.core.habit_service import HabitService
 from app.scheduler.scheduler import build_scheduler, schedule_todo_reminder
-from app.storage.sqlite_registry import SQLiteRegistry
+from app.storage.factory import create_registry
 from app.services.whatsapp_service import WhatsAppService
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,9 @@ async def lifespan(app: FastAPI):
     global _chat_service, _registry, _whatsapp_service, _habit_service
     settings = get_settings()
     paths = settings.resolve_paths()
+    validate_runtime_configuration(settings)
 
-    _registry = SQLiteRegistry(paths.sqlite_db_path)
+    _registry = create_registry(settings.database_url, paths.sqlite_db_path)
 
     if (
         settings.whatsapp_enabled
