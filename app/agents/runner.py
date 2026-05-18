@@ -235,6 +235,19 @@ class AgentRunner:
 
             agent_results.append(result)
 
+            # Stop immediately if a HITL gate was triggered — don't run further
+            # steps or synthesize, as subsequent agents would produce output that
+            # makes the reply sound like the action already completed.
+            if result.metadata.get("hitl_pending"):
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                return RunResult(
+                    output=result.output,
+                    plan=plan,
+                    agent_results=agent_results,
+                    latency_ms=latency_ms,
+                    security_flags=_security_flags,
+                )
+
         # 3. Synthesize
         final_output = self._orchestrator.synthesize(question, agent_results, history)
 
