@@ -274,11 +274,15 @@ class ChatService:
             for c in r.citations
             if c.get("url") and not c.get("snippet")  # web / news citations have URLs
         ]
-        doc_citations = [
-            c for r in run.agent_results
-            for c in r.citations
-            if c.get("snippet")  # doc citations have snippets
-        ]
+
+        # Detect HITL pending state from any action_agent result
+        hitl_pending = False
+        hitl_id = None
+        for r in run.agent_results:
+            if r.metadata.get("hitl_pending"):
+                hitl_pending = True
+                hitl_id = r.metadata.get("hitl_id")
+                break
 
         return self._record_answer(
             session_id=session_id,
@@ -288,6 +292,8 @@ class ChatService:
             sources_used=bool(run.citations),
             web_sources=web_sources,
             agent_steps=run.steps_summary,
+            hitl_pending=hitl_pending,
+            hitl_id=hitl_id,
         )
 
     def _record_answer(
@@ -300,6 +306,8 @@ class ChatService:
         news_articles: Optional[List[NewsArticle]] = None,
         web_sources: Optional[List[dict]] = None,
         agent_steps: Optional[list] = None,
+        hitl_pending: bool = False,
+        hitl_id: Optional[str] = None,
     ) -> QAResult:
         """Persist a user/assistant exchange and return the standard result shape."""
         user_turn_id = str(uuid.uuid4())
@@ -334,6 +342,8 @@ class ChatService:
             news_sources=[{"title": a.title, "source": a.source, "url": a.url} for a in news_articles],
             web_sources=web_sources,
             steps=agent_steps or [],
+            hitl_pending=hitl_pending,
+            hitl_id=hitl_id,
         )
 
     @classmethod

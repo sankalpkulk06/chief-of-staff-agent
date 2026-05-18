@@ -17,6 +17,8 @@ class QAResult(BaseModel):
     news_sources: List[dict] = Field(default_factory=list)
     web_sources: List[dict] = Field(default_factory=list)
     steps: List[dict] = Field(default_factory=list)  # agent execution steps
+    hitl_pending: bool = False
+    hitl_id: Optional[str] = None
 
 
 class QAService:

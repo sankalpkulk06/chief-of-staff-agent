@@ -95,6 +95,21 @@ class SQLiteRegistry:
             )
         """)
 
+        # hitl_requests (new table — create if missing)
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS hitl_requests (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL DEFAULT 'default',
+                session_id      TEXT,
+                action_type     TEXT NOT NULL,
+                action_payload  TEXT NOT NULL DEFAULT '{}',
+                status          TEXT NOT NULL DEFAULT 'pending',
+                created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at      DATETIME DEFAULT (datetime('now', '+10 minutes')),
+                resolved_at     DATETIME
+            )
+        """)
+
     def close(self) -> None:
         self._connection.close()
 
@@ -563,6 +578,56 @@ class SQLiteRegistry:
             VALUES (?, ?, ?, ?, ?)
             """,
             (event_id, user_id, event_type, severity, snippet),
+        )
+        self._connection.commit()
+
+    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # HITL requests
+    # ------------------------------------------------------------------
+
+    def create_hitl_request(
+        self,
+        id: str,
+        user_id: str,
+        action_type: str,
+        action_payload: dict,
+        session_id: Optional[str] = None,
+    ) -> str:
+        self._connection.execute(
+            """
+            INSERT INTO hitl_requests (id, user_id, session_id, action_type, action_payload)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (id, user_id, session_id, action_type, json.dumps(action_payload)),
+        )
+        self._connection.commit()
+        return id
+
+    def get_hitl_request(self, id: str) -> Optional[Dict[str, object]]:
+        row = self._connection.execute(
+            "SELECT * FROM hitl_requests WHERE id = ?", (id,)
+        ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        if isinstance(data.get("action_payload"), str):
+            data["action_payload"] = json.loads(data["action_payload"])
+        # Parse expires_at into a timezone-aware datetime for expiry comparison
+        from datetime import timezone
+        expires_raw = data.get("expires_at")
+        if isinstance(expires_raw, str):
+            from datetime import datetime as _dt
+            try:
+                data["expires_at"] = _dt.fromisoformat(expires_raw).replace(tzinfo=timezone.utc)
+            except ValueError:
+                data["expires_at"] = None
+        return data
+
+    def resolve_hitl_request(self, id: str, status: str) -> None:
+        self._connection.execute(
+            "UPDATE hitl_requests SET status = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, id),
         )
         self._connection.commit()
 

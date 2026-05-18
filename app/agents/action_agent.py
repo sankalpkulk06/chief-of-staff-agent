@@ -1,6 +1,7 @@
 """Action agent — todos, habits, and facts."""
 import json
 import re
+import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from app.agents.base import AgentResult
@@ -9,6 +10,8 @@ from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
 from app.providers.factory import ChatProvider
 from app.storage.sqlite_registry import SQLiteRegistry
+
+_WRITE_ACTIONS = {"add_todo", "add_habit", "log_habit", "remember_fact"}
 
 _EXTRACT_SYSTEM = """\
 You are an action extractor for a personal AI assistant. \
@@ -63,7 +66,11 @@ class ActionAgent:
         )
         try:
             action, params = self._extract_action(task)
-            return self._dispatch(action, params, task, fact_svc=fact_svc, habit_svc=habit_svc)
+            return self._dispatch(
+                action, params, task,
+                fact_svc=fact_svc, habit_svc=habit_svc,
+                user_id=user_id,
+            )
         except Exception as exc:
             return AgentResult(
                 agent="action_agent",
@@ -72,6 +79,23 @@ class ActionAgent:
                 success=False,
                 error=f"Action failed: {exc}",
             )
+
+    def execute_approved(self, hitl_id: str, user_id: str) -> AgentResult:
+        """Execute a previously deferred write action after user approval."""
+        if not self._registry:
+            return AgentResult(agent="action_agent", task="", output="",
+                               success=False, error="no_registry")
+        row = self._registry.get_hitl_request(hitl_id)
+        if not row:
+            return AgentResult(agent="action_agent", task="", output="",
+                               success=False, error="hitl_not_found")
+        fact_svc = FactService(self._registry, user_id=user_id)
+        habit_svc = HabitService(self._registry, user_id=user_id)
+        return self._dispatch(
+            row["action_type"], row["action_payload"], row["action_type"],
+            fact_svc=fact_svc, habit_svc=habit_svc,
+            hitl_bypass=True,
+        )
 
     # ------------------------------------------------------------------
 
@@ -101,9 +125,30 @@ class ActionAgent:
         task: str,
         fact_svc: Optional[FactService] = None,
         habit_svc: Optional[HabitService] = None,
+        user_id: Optional[str] = None,
+        hitl_bypass: bool = False,
     ) -> AgentResult:
         fact_svc = fact_svc or self._fact_service
         habit_svc = habit_svc or self._habit_service
+
+        # Gate all write actions behind HITL approval
+        if action in _WRITE_ACTIONS and not hitl_bypass and self._registry:
+            hitl_id = str(uuid.uuid4())
+            self._registry.create_hitl_request(
+                id=hitl_id,
+                user_id=user_id or "default",
+                action_type=action,
+                action_payload=params,
+            )
+            summary = self._describe_action(action, params)
+            return AgentResult(
+                agent="action_agent",
+                task=task,
+                output=f"I'm about to {summary}. Please confirm.",
+                success=True,
+                metadata={"hitl_pending": True, "hitl_id": hitl_id},
+            )
+
         handlers = {
             "add_todo": self._add_todo,
             "add_habit": lambda p, t: self._add_habit(p, t, habit_svc),
@@ -122,6 +167,29 @@ class ActionAgent:
                 error=f"unknown_action: {action}",
             )
         return handler(params, task)
+
+    @staticmethod
+    def _describe_action(action: str, params: dict) -> str:
+        """Return a clean human-readable description of a write action for HITL confirmation."""
+        if action == "add_todo":
+            task = params.get("task", "unknown task")
+            due = params.get("due_date")
+            due_str = f" — due {due}" if due else ""
+            return f"add a reminder: {task}{due_str}"
+        if action == "add_habit":
+            name = params.get("name", "unknown habit")
+            time = params.get("reminder_time", "21:00")
+            return f"start tracking habit '{name}' with a daily reminder at {time}"
+        if action == "log_habit":
+            name = params.get("name", "unknown habit")
+            status = params.get("status", "done")
+            verb = "mark" if status == "done" else "skip"
+            return f"{verb} '{name}' as {status} for today"
+        if action == "remember_fact":
+            fact = params.get("fact", "unknown fact")
+            category = params.get("category", "personal")
+            return f"save {category} fact: {fact}"
+        return f"perform action: {action}"
 
     def _add_todo(self, params: dict, task: str) -> AgentResult:
         if not self._registry:

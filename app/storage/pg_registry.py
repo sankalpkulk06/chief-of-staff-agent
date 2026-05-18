@@ -586,6 +586,50 @@ class PostgresRegistry:
         pass  # schema managed via Supabase migrations
 
     # ------------------------------------------------------------------
+    # HITL requests
+    # ------------------------------------------------------------------
+
+    def create_hitl_request(
+        self,
+        id: str,
+        user_id: str,
+        action_type: str,
+        action_payload: dict,
+        session_id: Optional[str] = None,
+    ) -> str:
+        import json as _json
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO hitl_requests (id, user_id, session_id, action_type, action_payload)
+                VALUES (%s, %s, %s, %s, %s::jsonb)
+                """,
+                (id, user_id, session_id, action_type, _json.dumps(action_payload)),
+            )
+        return id
+
+    def get_hitl_request(self, id: str) -> Optional[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM hitl_requests WHERE id = %s", (id,))
+            row = cur.fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        # Ensure expires_at is timezone-aware
+        expires = data.get("expires_at")
+        if expires is not None and expires.tzinfo is None:
+            from datetime import timezone
+            data["expires_at"] = expires.replace(tzinfo=timezone.utc)
+        return data
+
+    def resolve_hitl_request(self, id: str, status: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE hitl_requests SET status = %s, resolved_at = NOW() WHERE id = %s",
+                (status, id),
+            )
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 

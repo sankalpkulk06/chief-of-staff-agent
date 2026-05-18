@@ -47,6 +47,8 @@ class ChatResponse(BaseModel):
     sources: List[SourceOut] = []
     steps: List[StepOut] = []
     latency_ms: int
+    hitl_pending: bool = False
+    hitl_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -212,4 +214,6 @@ async def chat(
         sources=sources,
         steps=steps,
         latency_ms=latency_ms,
+        hitl_pending=result.hitl_pending,
+        hitl_id=result.hitl_id,
     )

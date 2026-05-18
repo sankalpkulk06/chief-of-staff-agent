@@ -707,6 +707,25 @@
   }
   .msg-meta .sources { color: var(--text-3); }
 
+  /* HITL approve / reject */
+  .hitl-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn-hitl {
+    padding: 5px 14px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    font-size: 12.5px;
+    font-family: var(--mono);
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .btn-hitl:disabled { opacity: 0.45; cursor: default; }
+  .btn-approve { background: #1a6b3c; color: #d4f5e2; border-color: #2a8a52; }
+  .btn-approve:hover:not(:disabled) { background: #1f7d47; }
+  .btn-reject  { background: #6b1a1a; color: #f5d4d4; border-color: #8a2a2a; }
+  .btn-reject:hover:not(:disabled)  { background: #7d1f1f; }
+  .hitl-done  { font-size: 12.5px; font-family: var(--mono); color: var(--text-3); }
+  .hitl-error { font-size: 12.5px; font-family: var(--mono); color: #d97575; }
+
   /* Step stream — terminal feel */
   .stepstream {
     font-family: var(--mono);
@@ -2093,6 +2112,40 @@
   }
 
   // ================================================================
+  // HITL approve / reject
+  // ================================================================
+  async function resolveHitl(hitlId, approved, btn) {
+    const container = btn.parentElement;
+    container.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+      const res = await fetch(`/api/v1/hitl/${hitlId}/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-sage-username': apiUsername(),
+          'x-sage-key': apiKey(),
+        },
+        body: JSON.stringify({ approved }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const label = approved ? `✓ Done — ${data.output}` : '✗ Rejected';
+        container.innerHTML = `<span class="hitl-done">${escapeHtml(label)}</span>`;
+      } else if (res.status === 410) {
+        container.innerHTML = `<span class="hitl-error">⚠ Expired — action was not taken</span>`;
+      } else if (res.status === 409) {
+        container.innerHTML = `<span class="hitl-done">Already resolved</span>`;
+      } else {
+        container.querySelectorAll('button').forEach(b => b.disabled = false);
+        container.insertAdjacentHTML('beforeend', `<span class="hitl-error"> Failed — try again</span>`);
+      }
+    } catch (_err) {
+      container.querySelectorAll('button').forEach(b => b.disabled = false);
+      container.insertAdjacentHTML('beforeend', `<span class="hitl-error"> Network error — try again</span>`);
+    }
+  }
+
+  // ================================================================
   // API layer
   // ================================================================
   const API = '/api/v1';
@@ -2504,6 +2557,11 @@
         <div class="avatar-s">S</div>
         <div class="bubble-wrap">
           <div class="bubble">${renderMarkdown(data.reply)}</div>
+          ${data.hitl_pending && data.hitl_id ? `
+          <div class="hitl-confirm" id="hitl-${escapeHtml(data.hitl_id)}">
+            <button class="btn-hitl btn-approve" onclick="resolveHitl('${escapeHtml(data.hitl_id)}', true, this)">✓ Approve</button>
+            <button class="btn-hitl btn-reject" onclick="resolveHitl('${escapeHtml(data.hitl_id)}', false, this)">✗ Reject</button>
+          </div>` : ''}
           <div class="msg-meta">
             <span>${formatNow()}</span>
             <span class="sources">${srcLabel} · local · ${data.latency_ms}ms</span>
