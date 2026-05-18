@@ -1,6 +1,6 @@
 # Sage — Complete System Review
 
-**Last updated:** May 2026  
+**Last updated:** May 18, 2026  
 **Branch:** main  
 **Live URL:** https://sage-2607286466.us-central1.run.app  
 **Purpose:** Full reference for the Wipro FDE assignment review — agents, pipeline, security, storage, deployment.
@@ -22,8 +22,9 @@
 11. [REST API](#11-rest-api)
 12. [Deployment](#12-deployment)
 13. [Configuration Reference](#13-configuration-reference)
-14. [Known Limitations](#14-known-limitations)
-15. [What's Not Built Yet](#15-whats-not-built-yet)
+14. [HITL Gate](#14-hitl-human-in-the-loop-gate)
+15. [Known Limitations](#15-known-limitations)
+16. [What's Not Built Yet](#16-whats-not-built-yet)
 
 ---
 
@@ -40,7 +41,9 @@ Sage is a **personal AI chief-of-staff** built as a multi-agent system. It combi
 
 **Three surfaces:** CLI (`sage chat`), Web frontend, WhatsApp (via Twilio)  
 **Storage:** SQLite + ChromaDB locally; PostgreSQL (Supabase) + pgvector in cloud  
-**LLM:** Groq (`llama-3.3-70b-versatile`) for cloud; Ollama (local) for dev  
+**LLM (Orchestrator):** Gemini 2.5 Flash (`gemini:gemini-2.5-flash`) — better structured JSON planning  
+**LLM (Sub-agents):** Groq (`llama-3.3-70b-versatile`) — fast execution  
+**LLM (Local dev):** Ollama  
 **Embeddings:** `sentence-transformers/all-MiniLM-L6-v2` (384-dim) — runs in-process, no external service  
 **Deployed:** GCP Cloud Run — `https://sage-2607286466.us-central1.run.app`
 
@@ -102,8 +105,15 @@ Storage Layer (app/storage/factory.py):
   └── Cloud:      PostgresRegistry (Supabase) + PgVectorStore (pgvector)
 
 LLM / Embeddings:
-  ├── Chat:       Groq llama-3.3-70b-versatile (cloud) / Ollama (local)
-  └── Embeddings: sentence-transformers/all-MiniLM-L6-v2 (in-process, 384-dim)
+  ├── Orchestrator: Gemini 2.5 Flash (structured JSON planning, better trajectory)
+  ├── Sub-agents:   Groq llama-3.3-70b-versatile (cloud) / Ollama (local)
+  └── Embeddings:   sentence-transformers/all-MiniLM-L6-v2 (in-process, 384-dim)
+
+HITL Gate (Human-in-the-Loop):
+  ├── ActionAgent intercepts all write actions before execution
+  ├── Pending record inserted into hitl_requests (Supabase)
+  ├── Frontend renders approve/reject buttons inline in chat
+  └── POST /api/v1/hitl/{id}/resolve executes or discards on user decision
 ```
 
 ---
@@ -112,16 +122,21 @@ LLM / Embeddings:
 
 ### 3.1 OrchestratorAgent
 **File:** `app/agents/orchestrator.py`  
-**Role:** Planner and synthesizer — never executes tools directly.
+**Role:** Planner and synthesizer — never executes tools directly.  
+**Model:** Gemini 2.5 Flash (`ORCHESTRATOR_CHAT_MODEL=gemini:gemini-2.5-flash`) — chosen for reliable structured JSON output and better multi-intent decomposition than Llama-3.3-70b.
 
 **What it does:**
 - Receives the user's question and recent conversation history.
 - Produces a structured plan: an ordered list of `AgentStep(agent, task)` objects.
 - After all steps execute, synthesizes a single coherent reply from all sub-agent results.
 
+**Prompt design:** 20+ few-shot examples covering habits, facts, todos, compound queries (personal info + research), implicit activity logging, and read vs write routing. Examples are necessary because Gemini must generalise to novel phrasings.
+
 **Fast paths (no LLM planning):**
 - Simple greetings (`hi`, `hello`, `thanks`) → single `conversational` step instantly
 - Compound web+news queries detected by rule → two `research_agent` steps without LLM call
+
+**HITL early exit:** If any step returns `metadata.hitl_pending=True`, the runner stops immediately — no further steps run and synthesis is skipped. This prevents the synthesizer from hallucinating "I've done X" when X is still pending approval.
 
 **Fallback:** If the LLM plan parse fails → single `conversational` step.
 
@@ -172,14 +187,18 @@ If `top_score` exceeds `rag_fallback_distance_threshold` (default `0.5`), the RA
 
 **Tools available:**
 
-| Tool | Effect |
-|------|--------|
-| `add_todo` | Creates a todo with optional due date and list name |
-| `add_habit` | Registers a new habit with reminder time |
-| `log_habit` | Records a habit as done or skipped |
-| `get_habits` | Returns weekly habit summary |
-| `remember_fact` | Saves a personal or work fact to `learned_facts` |
-| `list_facts` | Returns stored facts by category |
+| Tool | Effect | HITL? |
+|------|--------|-------|
+| `add_todo` | Creates a todo with optional due date and list name | Yes — write |
+| `add_habit` | Registers a new habit with reminder time | Yes — write |
+| `log_habit` | Records a habit as done or skipped | Yes — write |
+| `get_habits` | Returns weekly habit summary | No — read |
+| `remember_fact` | Saves a personal or work fact to `learned_facts` | Yes — write |
+| `list_facts` | Returns stored facts by category | No — read |
+
+**HITL gate:** All four write actions are intercepted in `_dispatch()` before execution. A `hitl_requests` row is created in Supabase and an `AgentResult` with `metadata={"hitl_pending": True, "hitl_id": uuid}` is returned. The actual write only executes when `execute_approved(hitl_id, user_id)` is called via the resolve endpoint.
+
+**Habit name matching:** `HabitService._get_habit_by_name` tries exact match first, then falls back to `LIKE %name%` — so "gym" matches "going to the gym".
 
 All tool calls are scoped to the authenticated `user_id` — no cross-user data leakage.
 
@@ -224,15 +243,21 @@ Step 1: OrchestratorAgent.plan()
 Step 2: ResearchAgent → web search "LangGraph" via Tavily
   → AgentResult(output="LangGraph is a...", citations=[{url, title}])
 
-Step 3: ActionAgent → remember_fact (user_id scoped)
-  → FactService.remember(user_id=current_user_id)
-  → AgentResult(output="Saved: studying agent frameworks")
+Step 3: ActionAgent → remember_fact (HITL gate fires)
+  → hitl_requests row created (status=pending, expires in 10 min)
+  → AgentResult(output="I'm about to save personal fact: studying agent frameworks. Please confirm.",
+                metadata={"hitl_pending": True, "hitl_id": "uuid"})
+  → runner exits immediately (HITL early exit — no further steps, no synthesis)
+  → ChatResponse(reply="...", hitl_pending=True, hitl_id="uuid")
+  → frontend renders approve/reject buttons
 
-Step 4: ActionAgent → add_todo (user_id scoped)
-  → registry.create_todo(user_id=..., due_at=Saturday)
-  → AgentResult(output="Reminder set for Saturday")
-
-Step 5: ConversationalAgent → synthesizes all results
+  [User clicks Approve]
+  → POST /api/v1/hitl/{uuid}/resolve {"approved": true}
+  → auth check: user_id matches
+  → expiry check: within 10 min
+  → ActionAgent.execute_approved() → _dispatch(hitl_bypass=True)
+  → FactService.remember(user_id=...) + registry.resolve_hitl_request(status=approved)
+  → {"status": "approved", "output": "Personal fact saved: studying agent frameworks"}
 
 Step 6: OrchestratorAgent.synthesize() → unified reply
 
@@ -333,8 +358,13 @@ event_id, user_id, event_type, severity, snippet, created_at
 
 | Provider | Class | When used |
 |----------|-------|-----------|
-| Groq | `GroqChatProvider` | Cloud / default — `GROQ_API_KEY` set |
+| Gemini | `GeminiChatProvider` | Orchestrator — `GEMINI_API_KEY` set, `ORCHESTRATOR_CHAT_MODEL=gemini:gemini-2.5-flash` |
+| Groq | `GroqChatProvider` | Sub-agents (cloud default) — `GROQ_API_KEY` set |
 | Ollama | `OllamaChatProvider` | Local dev — no cloud key |
+
+**Routing strategy:** Orchestrator uses Gemini 2.5 Flash (better structured JSON planning), sub-agents use Groq (faster execution). Each agent has its own model spec via env vars. `default_chat_model_spec()` falls back Groq → Ollama; Gemini is only used when explicitly set in `ORCHESTRATOR_CHAT_MODEL`.
+
+**Gemini message conversion:** `GeminiChatProvider._convert_messages()` maps OpenAI-style `system/user/assistant` messages to Gemini's `systemInstruction + contents[role=user|model]` format.
 
 ### Embeddings providers
 
@@ -392,6 +422,7 @@ The backend switches automatically based on `DATABASE_URL`:
 | `chunks` | RAG chunks with embeddings (`vector(384)`) |
 | `todos` | Reminders with due dates |
 | `security_events` | All security blocks, flags, sanitizations |
+| `hitl_requests` | Pending/approved/rejected write actions awaiting human approval |
 
 ### Local: SQLite + ChromaDB
 
@@ -486,7 +517,8 @@ All endpoints under `/api/v1/*`. Authenticated endpoints require `X-Sage-Usernam
 |----------|-----------|
 | **Auth** | `GET /auth/info`, `POST /auth/login`, `POST /auth/signup` |
 | **Sessions** | `GET /sessions`, `POST /sessions`, `GET /sessions/{id}/messages`, `PATCH /sessions/{id}`, `DELETE /sessions/{id}`, `POST /sessions/{id}/generate-title` |
-| **Chat** | `POST /sessions/{id}/chat` → `{reply, sources, steps, latency_ms}` |
+| **Chat** | `POST /sessions/{id}/chat` → `{reply, sources, steps, latency_ms, hitl_pending, hitl_id}` |
+| **HITL** | `POST /hitl/{id}/resolve` → `{status, output, success}` — approve or reject a pending write action |
 | **Facts** | `GET /facts`, `POST /facts`, `DELETE /facts/{id}` |
 | **Habits** | `GET /habits`, `POST /habits`, `POST /habits/{id}/log`, `DELETE /habits/{id}/log`, `DELETE /habits/{id}` |
 | **Sources** | `GET /sources`, `POST /sources/ingest` |
@@ -566,9 +598,13 @@ Key Cloud Run settings:
 ## 13. Configuration Reference
 
 ```env
-# LLM — Groq (cloud)
+# LLM — Gemini (orchestrator)
+GEMINI_API_KEY=
+GEMINI_CHAT_MODEL=gemini-2.5-flash
+
+# LLM — Groq (sub-agents)
 GROQ_API_KEY=
-ORCHESTRATOR_CHAT_MODEL=groq:llama-3.3-70b-versatile
+ORCHESTRATOR_CHAT_MODEL=gemini:gemini-2.5-flash
 ACTION_CHAT_MODEL=groq:llama-3.3-70b-versatile
 
 # LLM — Ollama (local dev)
@@ -633,7 +669,74 @@ APP_ENV=development
 
 ---
 
-## 14. Known Limitations
+## 14. HITL (Human-in-the-Loop) Gate
+
+### Overview
+
+All ActionAgent write actions require explicit human approval before execution. Read actions (`get_habits`, `list_facts`) bypass HITL.
+
+### Flow
+
+```
+User message → Orchestrator → ActionAgent._dispatch()
+  → write action detected (add_todo | add_habit | log_habit | remember_fact)
+  → create hitl_requests row (status=pending, expires_at=now+10min)
+  → return AgentResult(output="I'm about to <action>. Please confirm.",
+                       metadata={hitl_pending: true, hitl_id: uuid})
+  → runner exits early (no further steps, no synthesis)
+  → ChatResponse includes hitl_pending=true, hitl_id=uuid
+  → frontend renders ✓ Approve / ✗ Reject buttons inline
+
+User clicks Approve:
+  POST /api/v1/hitl/{id}/resolve {"approved": true}
+  → auth: user_id must match hitl_requests.user_id (404 if mismatch)
+  → status check: must be "pending" (409 if already resolved)
+  → expiry check: NOW() > expires_at → mark expired, return 410
+  → ActionAgent.execute_approved(hitl_id, user_id) runs the deferred action
+  → hitl_requests.status = "approved", resolved_at = NOW()
+  → {"status": "approved", "output": "<action result>"}
+
+User clicks Reject:
+  → hitl_requests.status = "rejected"
+  → {"status": "rejected"}
+```
+
+### Human-readable confirmation text (`_describe_action`)
+
+| Action | Example output |
+|--------|---------------|
+| `add_todo` | "add a reminder: call mom — due Friday" |
+| `add_habit` | "start tracking habit 'reading' with a daily reminder at 21:00" |
+| `log_habit` | "mark 'going to the gym' as done for today" |
+| `remember_fact` | "save personal fact: I am 23 years old" |
+
+### `hitl_requests` schema
+
+```sql
+id              TEXT PRIMARY KEY
+user_id         TEXT NOT NULL
+session_id      TEXT
+action_type     TEXT NOT NULL       -- add_todo | add_habit | log_habit | remember_fact
+action_payload  JSONB               -- params extracted by LLM (e.g. {name, status})
+status          TEXT DEFAULT 'pending'  -- pending | approved | rejected | expired
+created_at      TIMESTAMPTZ
+expires_at      TIMESTAMPTZ DEFAULT NOW() + INTERVAL '10 minutes'
+resolved_at     TIMESTAMPTZ
+```
+
+### Frontend error states
+
+| HTTP status | Display |
+|-------------|---------|
+| 200 + success=true | "✓ Done — \<action result\>" |
+| 200 + success=false | "✗ Action failed — \<reason\>" |
+| 409 | "Already resolved" |
+| 410 | "⚠ Expired — action was not taken" |
+| Network error | Re-enables buttons, shows "Network error — try again" |
+
+---
+
+## 15. Known Limitations
 
 ### Agent & Pipeline
 
@@ -663,11 +766,10 @@ APP_ENV=development
 
 ---
 
-## 15. What's Not Built Yet
+## 16. What's Not Built Yet
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Gemini provider | Not built | Groq covers the cloud LLM need |
 | Agno workflow/team wiring | Not built | Custom runner used instead |
 | SecurityAgent tool authorization (per-agent allowed tools) | Not built | |
 | System prompt leakage detection in output | Not built | |
@@ -677,12 +779,22 @@ APP_ENV=development
 | Parallel agent execution | Not built | |
 | RAG reranker / hybrid BM25+vector | Not built | |
 | `--min-instances 1` for warm Cloud Run | Not configured | Costs ~$15/month |
+| HITL expiry background cleanup | Not built | Expired rows accumulate; no scheduled purge job yet |
+| HITL on WhatsApp | Not built | WhatsApp path bypasses HITL — writes execute immediately |
 
 ---
 
 ## Appendix: Commit History (key milestones)
 
 ```
+fe80e05  Improve orchestrator routing for implicit habit log phrases
+e7f219d  Fix habit partial name matching and HITL approve feedback
+41d4c73  Stop execution on HITL pending — skip further steps and synthesis
+3b50413  Fix execute() signature mismatch — add user_id param to conversational and research agents
+97e9d18  Add HITL gate — all ActionAgent write actions require human approval
+df1aa63  Expand orchestrator prompt with personal-info + research compound examples
+9c36dcc  Add Gemini provider and route orchestrator to Gemini 2.5 Flash
+c9ab299  Fix ActionAgent user isolation — scope FactService/HabitService per request
 b0f57cc  Add GitHub Actions deploy workflow and .dockerignore
 7459d9b  Docker + Supabase IPv4 pooler fix (aws-1-us-east-1.pooler.supabase.com)
 726cb72  Auth/user isolation — get_current_user, per-request HabitService/FactService
