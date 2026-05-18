@@ -2129,7 +2129,16 @@
       });
       if (res.ok) {
         const data = await res.json();
-        const label = approved ? `✓ Done — ${data.output}` : '✗ Rejected';
+        let label;
+        if (!approved) {
+          label = '✗ Rejected';
+        } else if (data.success && data.output) {
+          label = `✓ Done — ${data.output}`;
+        } else if (data.success) {
+          label = '✓ Done';
+        } else {
+          label = `✗ Action failed — ${data.output || 'unknown error'}`;
+        }
         container.innerHTML = `<span class="hitl-done">${escapeHtml(label)}</span>`;
       } else if (res.status === 410) {
         container.innerHTML = `<span class="hitl-error">⚠ Expired — action was not taken</span>`;

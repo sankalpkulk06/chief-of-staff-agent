@@ -76,9 +76,17 @@ class HabitService:
     # ------------------------------------------------------------------
 
     def _get_habit_by_name(self, name: str) -> Optional[Habit]:
+        # Exact match first
         row = self._execute(
             "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND LOWER(name) = LOWER(?) AND active = 1",
             (self._user_id, name),
+        ).fetchone()
+        if row is not None:
+            return Habit(id=row["id"], name=row["name"], reminder_time=row["reminder_time"], active=bool(row["active"]))
+        # Partial match fallback — handles "gym" matching "going to the gym"
+        row = self._execute(
+            "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND LOWER(name) LIKE ? AND active = 1",
+            (self._user_id, f"%{name.lower()}%"),
         ).fetchone()
         if row is None:
             return None
