@@ -44,6 +44,23 @@ async def lifespan(app: FastAPI):
 
     _registry = create_registry(settings.database_url, paths.sqlite_db_path)
 
+    # Seed default user from settings if not already in DB
+    username = (settings.sage_username or "sage").strip()
+    password = settings.sage_passphrase.strip()
+    if username and password:
+        existing = _registry.get_user_by_username(username)
+        if not existing:
+            _registry.create_user(username, password)
+            logger.info("Created default user '%s'", username)
+        elif not _registry.verify_password(username, password):
+            logger.warning(
+                "SAGE_PASSPHRASE changed but user '%s' already exists — "
+                "password NOT updated. Remove the user row manually to reset.",
+                username,
+            )
+
+    app.state.registry = _registry
+
     if (
         settings.whatsapp_enabled
         and settings.twilio_account_sid
@@ -101,6 +118,7 @@ async def lifespan(app: FastAPI):
         logger.info("Scheduler disabled or missing WhatsApp destination/config")
 
     app.state.chat_service = _chat_service
+    app.state.registry = _registry
 
     try:
         yield

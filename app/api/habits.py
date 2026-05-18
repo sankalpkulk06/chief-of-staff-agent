@@ -1,13 +1,13 @@
 from datetime import date, timedelta
-from typing import List
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.api.deps import get_chat_service, require_auth
-from app.core.chat_service import ChatService
+from app.api.deps import get_current_user, get_registry
+from app.core.habit_service import HabitService
 
-router = APIRouter(prefix="/habits", tags=["habits"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/habits", tags=["habits"])
 
 
 class HabitOut(BaseModel):
@@ -16,25 +16,21 @@ class HabitOut(BaseModel):
     streak: int
     days_done: int
     logged_today: bool
-    week: List[str]  # 7 entries: "done" | "skip" | "none" | "future"
+    week: List[str]
 
 
 @router.get("", response_model=List[HabitOut])
 async def list_habits(
-    chat_service: ChatService = Depends(get_chat_service),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> List[HabitOut]:
-    habit_service = chat_service.get_habit_service()
-    if habit_service is None:
-        return []
-
+    habit_service = HabitService(registry, user_id=current_user["user_id"])
     summaries = habit_service.get_weekly_summary()
     today = date.today()
     result = []
 
     for s in summaries:
-        # Build a per-day status for the last 7 days (oldest first)
         days = [(today - timedelta(days=6 - i)) for i in range(7)]
-
         rows = habit_service.get_logs_since(s.habit.id, days[0])
         log_map = {row["day"]: row["status"] for row in rows}
 

@@ -1,16 +1,12 @@
-import os
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.api.deps import get_chat_service, get_registry, require_auth
-from app.config import get_settings
+from app.api.deps import get_current_user, get_registry
 from app.core.analytics_service import AnalyticsService
-from app.core.chat_service import ChatService
-from app.storage.sqlite_registry import SQLiteRegistry
 
-router = APIRouter(prefix="/profile", tags=["profile"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/profile", tags=["profile"])
 
 
 class ProfileOut(BaseModel):
@@ -28,38 +24,34 @@ class ProfileOut(BaseModel):
 
 @router.get("", response_model=ProfileOut)
 async def get_profile(
-    registry: SQLiteRegistry = Depends(get_registry),
-    chat_service: ChatService = Depends(get_chat_service),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> ProfileOut:
-    analytics = AnalyticsService(registry).get_analytics()
+    user_id = current_user["user_id"]
+    analytics = AnalyticsService(registry).get_analytics(user_id=user_id)
 
     fact_counts = analytics.fact_categories_count
     facts_personal = fact_counts.get("personal", 0)
     facts_work = fact_counts.get("work", 0)
 
-    # Longest streak across all habits
+    from app.core.habit_service import HabitService
     longest_streak = 0
     longest_habit = ""
-    habit_service = chat_service.get_habit_service()
-    if habit_service:
+    try:
+        habit_service = HabitService(registry, user_id=user_id)
         for summary in habit_service.get_weekly_summary():
             if summary.streak > longest_streak:
                 longest_streak = summary.streak
                 longest_habit = summary.habit.name
+    except Exception:
+        pass
 
-    sources = registry.list_all_sources()
+    sources = registry.list_all_sources(user_id=user_id)
     total_docs = len(sources)
-    total_chunks = sum(len(registry.get_chunks_for_document(source["document_id"])) for source in sources)
-
-    username = (
-        get_settings().sage_username
-        or os.environ.get("USER")
-        or os.environ.get("USERNAME")
-        or "local user"
-    )
+    total_chunks = sum(len(registry.get_chunks_for_document(s["document_id"])) for s in sources)
 
     return ProfileOut(
-        username=username,
+        username=current_user["username"],
         joined=analytics.first_session,
         days_active=analytics.days_active,
         total_sessions=analytics.total_sessions,

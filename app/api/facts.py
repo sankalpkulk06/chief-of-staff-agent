@@ -1,12 +1,11 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.api.deps import get_registry, require_auth
-from app.storage.sqlite_registry import SQLiteRegistry
+from app.api.deps import get_current_user, get_registry
 
-router = APIRouter(prefix="/facts", tags=["facts"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/facts", tags=["facts"])
 
 
 class FactOut(BaseModel):
@@ -19,9 +18,10 @@ class FactOut(BaseModel):
 @router.get("", response_model=List[FactOut])
 async def list_facts(
     category: Optional[str] = None,
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> List[FactOut]:
-    rows = registry.list_facts(category=category)
+    rows = registry.list_facts(category=category, user_id=current_user["user_id"])
     return [
         FactOut(
             id=r["fact_id"],
@@ -36,7 +36,8 @@ async def list_facts(
 @router.delete("/{fact_id}")
 async def delete_fact(
     fact_id: str,
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> dict:
-    registry.delete_fact(fact_id)
+    registry.delete_fact(fact_id, user_id=current_user["user_id"])
     return {"ok": True}

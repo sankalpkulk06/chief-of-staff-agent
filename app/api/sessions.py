@@ -1,19 +1,14 @@
 import time
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from app.api.deps import get_chat_service, get_registry, require_auth
+from app.api.deps import get_chat_service, get_current_user, get_registry
 from app.core.chat_service import ChatService
-from app.storage.sqlite_registry import SQLiteRegistry
 
-router = APIRouter(
-    prefix="/sessions",
-    tags=["sessions"],
-    dependencies=[Depends(require_auth)],
-)
+router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 # ---------------------------------------------------------------------------
 # Response models
@@ -79,10 +74,10 @@ class ChatRequest(BaseModel):
 @router.get("", response_model=List[SessionSummary])
 async def list_sessions(
     limit: int = 20,
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> List[SessionSummary]:
-    """List recent chat sessions, newest first."""
-    rows = registry.list_sessions(limit=limit)
+    rows = registry.list_sessions(limit=limit, user_id=current_user["user_id"])
     return [
         SessionSummary(
             id=r["session_id"],
@@ -97,13 +92,13 @@ async def list_sessions(
 @router.post("", response_model=SessionSummary, status_code=status.HTTP_201_CREATED)
 async def create_session(
     body: CreateSessionRequest = CreateSessionRequest(),
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> SessionSummary:
-    """Create a new chat session and return it."""
     session_id = str(uuid.uuid4())
     title = body.title or ""
-    registry.create_session(session_id=session_id, title=title)
-    rows = registry.list_sessions(limit=100)
+    registry.create_session(session_id=session_id, title=title, user_id=current_user["user_id"])
+    rows = registry.list_sessions(limit=100, user_id=current_user["user_id"])
     row = next((r for r in rows if r["session_id"] == session_id), None)
     if row is None:
         raise HTTPException(status_code=500, detail="Session creation failed")
@@ -118,18 +113,14 @@ async def create_session(
 @router.get("/{session_id}/messages", response_model=List[MessageOut])
 async def get_messages(
     session_id: str,
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> List[MessageOut]:
-    """Return all turns for a session in chronological order."""
     turns = registry.get_session_turns(session_id)
     if turns is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return [
-        MessageOut(
-            role=t["role"],
-            content=t["content"],
-            created_at=str(t["created_at"]),
-        )
+        MessageOut(role=t["role"], content=t["content"], created_at=str(t["created_at"]))
         for t in turns
     ]
 
@@ -138,11 +129,11 @@ async def get_messages(
 async def update_session_title(
     session_id: str,
     body: PatchSessionRequest,
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> SessionSummary:
-    """Rename a session."""
     registry.update_session_title(session_id=session_id, title=body.title)
-    rows = registry.list_sessions(limit=200)
+    rows = registry.list_sessions(limit=200, user_id=current_user["user_id"])
     row = next((r for r in rows if r["session_id"] == session_id), None)
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -158,8 +149,8 @@ async def update_session_title(
 async def generate_title(
     session_id: str,
     chat_service: ChatService = Depends(get_chat_service),
+    current_user: Dict = Depends(get_current_user),
 ) -> dict:
-    """Ask the LLM to summarise the session in ≤5 words and persist the result."""
     title = chat_service.generate_session_title(session_id)
     return {"title": title}
 
@@ -167,9 +158,9 @@ async def generate_title(
 @router.delete("/{session_id}", status_code=status.HTTP_200_OK)
 async def delete_session(
     session_id: str,
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> dict:
-    """Delete a session and all its messages."""
     registry.delete_session(session_id=session_id)
     return {"ok": True}
 
@@ -179,24 +170,20 @@ async def chat(
     session_id: str,
     body: ChatRequest,
     chat_service: ChatService = Depends(get_chat_service),
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> ChatResponse:
-    """Send a message in a session and get Sage's reply.
-
-    Creates the session row if it doesn't yet exist (e.g. the client called
-    POST /sessions then immediately sends a message).
-    """
     if not body.message.strip():
         raise HTTPException(status_code=422, detail="message must not be empty")
 
-    # create_session is INSERT OR IGNORE — safe to call even if it already exists
-    registry.create_session(session_id=session_id, title="")
+    registry.create_session(session_id=session_id, title="", user_id=current_user["user_id"])
 
     t0 = time.monotonic()
     result = chat_service.answer_in_session(
         session_id=session_id,
         question=body.message,
         response_style="web",
+        user_id=current_user["user_id"],
     )
     latency_ms = int((time.monotonic() - t0) * 1000)
 

@@ -13,7 +13,6 @@ from app.services.web_search_service import WebSearchService
 from app.services.url_ingestion_service import URLIngestionService
 from app.providers.ollama_chat import OllamaChatProvider
 from app.retrieval.retriever import Retriever, RetrievalResult
-from app.storage.sqlite_registry import SQLiteRegistry
 from app.agents.runner import AgentRunner
 from app.agents.security_agent import SecurityAgent
 
@@ -77,7 +76,7 @@ class ChatService:
         self,
         retriever: Retriever,
         chat_provider: OllamaChatProvider,
-        registry: SQLiteRegistry,
+        registry: Any,
         agent_chat_providers: Optional[dict[str, Any]] = None,
         agent_model_specs: Optional[dict[str, str]] = None,
         fact_service: Optional[FactService] = None,
@@ -194,6 +193,7 @@ class ChatService:
         question: str,
         top_k: Optional[int] = None,
         response_style: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> QAResult:
         """Answer a question within a chat session with full conversation history.
 
@@ -209,6 +209,7 @@ class ChatService:
         Returns:
             QAResult with the answer and sources
         """
+        effective_uid = user_id or self._user_id
         history = self.get_history(session_id)
 
         # URL + question → ingest the page, then answer from that page immediately.
@@ -237,7 +238,9 @@ class ChatService:
             )
 
         # Explicit slash commands (/todo, /facts, /habits, etc.) → bypass agents
-        direct_answer = self._answer_direct_command(question, response_style=response_style)
+        direct_answer = self._answer_direct_command(
+            question, response_style=response_style, user_id=effective_uid
+        )
         if direct_answer is not None:
             return self._record_answer(
                 session_id=session_id,
@@ -262,7 +265,7 @@ class ChatService:
             history=history,
             response_style=self._resolve_response_style(response_style),
             top_k=top_k,
-            user_id=self._user_id,
+            user_id=effective_uid,
         )
 
         # Collect citations from agent results for the QAResult
@@ -431,9 +434,15 @@ class ChatService:
         return self._chat_provider.chat(messages=messages)
 
     def _answer_direct_command(
-        self, question: str, response_style: Optional[str] = None
+        self, question: str, response_style: Optional[str] = None, user_id: Optional[str] = None
     ) -> Optional[str]:
         """Handle slash commands without relying on model tool selection."""
+        from app.core.fact_service import FactService
+        effective_uid = user_id or self._user_id
+        # Create per-call user-scoped services so commands use the right user's data
+        habit_svc = HabitService(self._registry, user_id=effective_uid)
+        fact_svc = FactService(self._registry, user_id=effective_uid)
+
         command = question.strip()
         lowered = command.lower()
 
@@ -445,29 +454,27 @@ class ChatService:
 
         if lowered.startswith("/remember-personal "):
             return self._remember_fact_command(
-                command, "/remember-personal ", "personal", response_style=response_style
+                command, "/remember-personal ", "personal", response_style=response_style, fact_svc=fact_svc
             )
         if lowered.startswith("/remember-work "):
             return self._remember_fact_command(
-                command, "/remember-work ", "work", response_style=response_style
+                command, "/remember-work ", "work", response_style=response_style, fact_svc=fact_svc
             )
         if lowered in ("/remember-personal", "/remember-work"):
             usage = f"Usage: {lowered} <fact>"
             return f"📝 {usage}" if self._is_whatsapp_style(response_style) else usage
 
         if lowered.startswith("/facts"):
-            return self._facts_command(lowered, response_style=response_style)
+            return self._facts_command(lowered, response_style=response_style, fact_svc=fact_svc)
 
         if lowered == "/usage":
             return self._usage_command(response_style=response_style)
 
         if lowered.startswith("/forget "):
-            if not self._fact_service:
-                return self._style_status("Fact memory is not configured.", "⚠️", response_style)
             fact_id = command[len("/forget "):].strip()
             if not fact_id:
                 return self._style_status("Usage: /forget <fact-id>", "📝", response_style)
-            self._fact_service.forget(fact_id)
+            fact_svc.forget(fact_id)
             return self._style_status("Fact forgotten.", "🗑️", response_style)
 
         if lowered == "/todo" or lowered.startswith("/todo "):
@@ -478,18 +485,14 @@ class ChatService:
             return self._style_status("Apple Reminders integration has been removed. Use /todo instead.", "ℹ️", response_style)
 
         if lowered == "/habits":
-            if not self._habit_service:
-                return self._style_status("Habit tracking is not configured.", "⚠️", response_style)
-            return self._format_habit_summary(response_style=response_style)
+            return self._format_habit_summary(response_style=response_style, habit_svc=habit_svc)
 
         if lowered.startswith("/habit add "):
-            if not self._habit_service:
-                return self._style_status("Habit tracking is not configured.", "⚠️", response_style)
             args = command[len("/habit add "):].strip()
             name, reminder_time = self._parse_habit_reminder_time(args)
             if not name:
                 return self._style_status("Usage: /habit add <name> [@time]", "📝", response_style)
-            habit = self._habit_service.add_habit(name=name, reminder_time=reminder_time)
+            habit = habit_svc.add_habit(name=name, reminder_time=reminder_time)
             return self._style_status(
                 f"Habit '{habit.name}' added (reminder at {habit.reminder_time}).",
                 "✅",
@@ -497,8 +500,6 @@ class ChatService:
             )
 
         if lowered.startswith("/habit log "):
-            if not self._habit_service:
-                return self._style_status("Habit tracking is not configured.", "⚠️", response_style)
             args = command[len("/habit log "):].strip()
             if not args:
                 return self._style_status("Usage: /habit log <name> [skipped]", "📝", response_style)
@@ -508,20 +509,18 @@ class ChatService:
                 status = "skipped"
                 name = args[:-len(" skipped")].strip()
             try:
-                log = self._habit_service.log_habit(name=name, status=status)
+                log = habit_svc.log_habit(name=name, status=status)
             except ValueError as exc:
                 return str(exc)
             verb = "skipped" if log.status == "skipped" else "logged for today"
             return self._style_status(f"Habit '{name}' {verb}.", "✅", response_style)
 
         if lowered.startswith("/habit unlog "):
-            if not self._habit_service:
-                return self._style_status("Habit tracking is not configured.", "⚠️", response_style)
             name = command[len("/habit unlog "):].strip()
             if not name:
                 return self._style_status("Usage: /habit unlog <name>", "📝", response_style)
             try:
-                deleted = self._habit_service.unlog_habit(name)
+                deleted = habit_svc.unlog_habit(name)
             except ValueError as exc:
                 return str(exc)
             if deleted:
@@ -529,12 +528,10 @@ class ChatService:
             return self._style_status(f"No log found for '{name}' today.", "ℹ️", response_style)
 
         if lowered.startswith("/habit delete "):
-            if not self._habit_service:
-                return self._style_status("Habit tracking is not configured.", "⚠️", response_style)
             name = command[len("/habit delete "):].strip()
             if not name:
                 return self._style_status("Usage: /habit delete <name>", "📝", response_style)
-            if self._habit_service.delete_habit(name):
+            if habit_svc.delete_habit(name):
                 return self._style_status(f"Habit '{name}' removed.", "🗑️", response_style)
             return self._style_status(f"Habit '{name}' not found.", "ℹ️", response_style)
 
@@ -721,24 +718,26 @@ class ChatService:
         return "\n".join(lines)
 
     def _remember_fact_command(
-        self, command: str, prefix: str, category: str, response_style: Optional[str] = None
+        self, command: str, prefix: str, category: str, response_style: Optional[str] = None, fact_svc=None
     ) -> str:
-        if not self._fact_service:
+        svc = fact_svc or self._fact_service
+        if not svc:
             return self._style_status("Fact memory is not configured.", "⚠️", response_style)
         fact_text = command[len(prefix):].strip()
         if not fact_text:
             return self._style_status(f"Usage: {prefix.strip()} <fact>", "📝", response_style)
-        self._fact_service.remember(content=fact_text, category=category)
+        svc.remember(content=fact_text, category=category)
         return self._style_status(f"{category.title()} fact saved: {fact_text}", "🧠", response_style)
 
-    def _facts_command(self, lowered: str, response_style: Optional[str] = None) -> str:
-        if not self._fact_service:
+    def _facts_command(self, lowered: str, response_style: Optional[str] = None, fact_svc=None) -> str:
+        svc = fact_svc or self._fact_service
+        if not svc:
             return self._style_status("Fact memory is not configured.", "⚠️", response_style)
         parts = lowered.split()
         category = parts[1] if len(parts) > 1 else None
         if category == "all":
             category = None
-        facts = self._fact_service.list_facts(category=category)
+        facts = svc.list_facts(category=category)
         if not facts:
             return self._style_status(
                 "No facts learned yet. Use /remember-personal or /remember-work.",
@@ -786,8 +785,9 @@ class ChatService:
 
         return working, list_name, due_at
 
-    def _format_habit_summary(self, response_style: Optional[str] = None) -> str:
-        summaries = self._habit_service.get_weekly_summary() if self._habit_service else []
+    def _format_habit_summary(self, response_style: Optional[str] = None, habit_svc=None) -> str:
+        svc = habit_svc or self._habit_service
+        summaries = svc.get_weekly_summary() if svc else []
         week_label = date.today().strftime("Week of %b %-d, %Y")
         if self._is_whatsapp_style(response_style):
             lines = [f"📊 *Habit Summary* — {week_label}"]
@@ -890,7 +890,7 @@ class ChatService:
         """Get the web search service for external use."""
         return self._web_search_service
 
-    def get_registry(self) -> SQLiteRegistry:
+    def get_registry(self) -> Any:
         """Get the registry for external use."""
         return self._registry
 

@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
-from app.storage.sqlite_registry import SQLiteRegistry
+from typing import Any
 
 
 class AnalyticsStats(BaseModel):
@@ -36,18 +36,14 @@ class AnalyticsStats(BaseModel):
 class AnalyticsService:
     """Service for analyzing conversation patterns and usage statistics."""
 
-    def __init__(self, registry: SQLiteRegistry):
+    def __init__(self, registry: Any):
         self._registry = registry
 
-    def get_analytics(self) -> AnalyticsStats:
-        """Generate comprehensive analytics about usage patterns.
-
-        Returns:
-            AnalyticsStats with all computed metrics
-        """
-        sessions = self._registry.list_sessions(limit=10000)
+    def get_analytics(self, user_id: str = "default") -> AnalyticsStats:
+        """Generate comprehensive analytics about usage patterns."""
+        sessions = self._registry.list_sessions(limit=10000, user_id=user_id)
         all_turns = self._get_all_turns(sessions)
-        facts = self._registry.list_facts()
+        facts = self._registry.list_facts(user_id=user_id)
 
         return AnalyticsStats(
             total_sessions=len(sessions),

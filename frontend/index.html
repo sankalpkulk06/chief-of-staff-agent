@@ -234,6 +234,30 @@
   }
   .btn-ghost:hover { background: var(--bg-3); color: var(--text-1); border-color: var(--line-strong); }
 
+  .auth-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    width: 100%;
+  }
+  .auth-tab {
+    flex: 1;
+    height: 34px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-3);
+    border-radius: 7px;
+    transition: background 140ms, color 140ms;
+  }
+  .auth-tab.active {
+    background: var(--bg-4);
+    color: var(--text-1);
+  }
+  .auth-tab:hover:not(.active) { color: var(--text-2); }
+
   .login-foot {
     margin-top: 18px;
     font-family: var(--mono);
@@ -267,6 +291,26 @@
     gap: 10px;
   }
   .login-meta hr { flex: 1; height: 1px; background: var(--line); border: 0; }
+
+  .logout-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-4);
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    transition: background 140ms, color 140ms, border-color 140ms;
+  }
+  .logout-btn:hover {
+    background: rgba(210,117,117,0.08);
+    color: var(--err);
+    border-color: rgba(210,117,117,0.2);
+  }
 
   /* ===================================================================
      CHAT — three-panel layout
@@ -1588,13 +1632,24 @@
         Your AI. <span class="dot">·</span> Your machine. <span class="dot">·</span> Your data.
       </div>
 
-      <form class="pw-form" id="loginForm" autocomplete="off">
+      <!-- Tab switcher -->
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabLogin" type="button">Login</button>
+        <button class="auth-tab" id="tabSignup" type="button">Sign up</button>
+      </div>
+
+      <!-- Login form -->
+      <form class="pw-form" id="loginForm" autocomplete="on">
+        <div class="pw-field">
+          <span class="prompt">@</span>
+          <input id="userInput" type="text" placeholder="Username" autocomplete="username" />
+        </div>
         <div class="pw-field">
           <span class="prompt">$</span>
-          <input id="pwInput" type="password" placeholder="Enter passphrase" autocomplete="off" />
+          <input id="pwInput" type="password" placeholder="Password" autocomplete="current-password" />
         </div>
         <button type="submit" class="btn btn-primary" id="loginBtn">
-          <span>Enter Sage</span>
+          <span>Login</span>
           <svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14">
             <path d="M3 8h10M9 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -1602,14 +1657,37 @@
         <p id="loginError" style="display:none;margin:0;font-family:var(--mono);font-size:12px;color:var(--err);text-align:center;"></p>
       </form>
 
+      <!-- Sign up form -->
+      <form class="pw-form" id="signupForm" autocomplete="on" style="display:none;">
+        <div class="pw-field">
+          <span class="prompt">@</span>
+          <input id="signupUser" type="text" placeholder="Username (min 3 chars)" autocomplete="username" />
+        </div>
+        <div class="pw-field">
+          <span class="prompt">$</span>
+          <input id="signupPw" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
+        </div>
+        <div class="pw-field">
+          <span class="prompt">$</span>
+          <input id="signupPw2" type="password" placeholder="Confirm password" autocomplete="new-password" />
+        </div>
+        <button type="submit" class="btn btn-primary" id="signupBtn">
+          <span>Create account</span>
+          <svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <p id="signupError" style="display:none;margin:0;font-family:var(--mono);font-size:12px;color:var(--err);text-align:center;"></p>
+      </form>
+
       <div class="login-foot">
         <span class="pulse-dot"></span>
-        <span>Running locally on your machine</span>
+        <span id="loginFootText">Connecting…</span>
       </div>
 
       <div class="login-meta">
         <hr/>
-        <span>v0.4.2 · ollama llama3.1:8b</span>
+        <span id="loginMetaText">loading…</span>
         <hr/>
       </div>
     </div>
@@ -1639,52 +1717,27 @@
 
       <div class="sidebar-section">Recent</div>
       <div class="session-list" id="sessionList">
-        <div class="session-item active">
-          <div class="title">Triage inbox before standup</div>
-          <div class="meta">just now</div>
-        </div>
-        <div class="session-item">
-          <div class="title">Notes on Pieper diffusion paper</div>
-          <div class="meta">2h ago</div>
-        </div>
-        <div class="session-item">
-          <div class="title">Weekly habit review</div>
-          <div class="meta">yesterday</div>
-        </div>
-        <div class="session-item">
-          <div class="title">Refactor ChromaDB ingestion</div>
-          <div class="meta">2d ago</div>
-        </div>
-        <div class="session-item">
-          <div class="title">Draft reply to Anya re: trip</div>
-          <div class="meta">3d ago</div>
-        </div>
-        <div class="session-item">
-          <div class="title">Compare Tavily vs DDG fallback</div>
-          <div class="meta">last week</div>
-        </div>
-        <div class="session-item">
-          <div class="title">Morning briefing — Apr 24</div>
-          <div class="meta">last week</div>
-        </div>
-        <div class="session-item">
-          <div class="title">Onboarding script for Mum</div>
-          <div class="meta">Apr 22</div>
-        </div>
+        <div class="session-item" style="color:var(--text-4);font-size:12.5px;padding:14px 16px;pointer-events:none;">Loading sessions…</div>
       </div>
 
       <div class="sidebar-foot">
         <div class="status-row">
-          <span class="left"><span class="status-dot"></span> Ollama · llama3.1:8b</span>
-          <span class="ver">connected</span>
+          <span class="left"><span class="status-dot"></span> <span id="sideModelLabel">connecting…</span></span>
+          <span class="ver" id="sideStatusLabel">—</span>
         </div>
         <div class="user-chip" id="sideUserChip" title="Open profile">
-          <div class="avatar">M</div>
+          <div class="avatar" id="sideAvatar">?</div>
           <div>
-            <div class="name">Local user</div>
-            <div class="sub">~/sage</div>
+            <div class="name" id="sideUsername">Loading…</div>
+            <div class="sub" id="sideStorage">~/sage</div>
           </div>
         </div>
+        <button class="logout-btn" id="logoutBtn" title="Sign out">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="13" height="13">
+            <path d="M6 3H3v10h3M10 5l3 3-3 3M13 8H6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Sign out
+        </button>
       </div>
     </aside>
 
@@ -1707,7 +1760,7 @@
             <span class="label">Commands</span>
             <span class="keys"><span class="key">⌘</span><span class="key">K</span></span>
           </button>
-          <button class="topbar-avatar" id="topAvatar" title="Profile" aria-label="Profile">M</button>
+          <button class="topbar-avatar" id="topAvatar" title="Profile" aria-label="Profile">?</button>
         </div>
       </header>
 
@@ -1847,19 +1900,14 @@
     <div class="profile-shell">
       <!-- Hero -->
       <div class="profile-hero">
-        <div class="hero-avatar">M</div>
+        <div class="hero-avatar">?</div>
         <div class="hero-info">
-          <h1 class="hero-name">Maya</h1>
+          <h1 class="hero-name">Loading…</h1>
           <div class="hero-sub">
-            <span class="pill"><span class="dot"></span>local user</span>
-            <span>~/sage</span>
-            <span class="sep">·</span>
-            <span>joined Feb 12, 2026</span>
-            <span class="sep">·</span>
-            <span>78 days active</span>
+            <span class="pill"><span class="dot"></span>loading</span>
           </div>
           <p class="hero-summary">
-            <span class="accent">$</span> Currently working on her PhD thesis on diffusion models with Dr. Kahn. Lives in Lisbon, prefers mornings, drinks oat-milk flat whites, runs Tuesdays and Fridays. Sage has learned <strong style="color:var(--text-1);font-weight:500">23 facts</strong> across 4 categories and tracks <strong style="color:var(--text-1);font-weight:500">4 active habits</strong>.
+            <span class="accent">$</span> Loading profile…
           </p>
         </div>
         <div class="hero-actions">
@@ -1874,23 +1922,23 @@
       <div class="stat-row">
         <div class="stat">
           <div class="label"><span class="glyph">▎</span>Sessions</div>
-          <div class="value">142<span class="unit">total</span></div>
-          <div class="delta"><span class="up">↑ 12</span> this week</div>
+          <div class="value">—<span class="unit">total</span></div>
+          <div class="delta">loading…</div>
         </div>
         <div class="stat">
           <div class="label"><span class="glyph">▎</span>Facts learned</div>
-          <div class="value">23<span class="unit">stored</span></div>
-          <div class="delta">14 personal · 9 work</div>
+          <div class="value">—<span class="unit">stored</span></div>
+          <div class="delta">loading…</div>
         </div>
         <div class="stat">
           <div class="label"><span class="glyph">▎</span>Longest streak</div>
-          <div class="value">31<span class="unit">days</span></div>
-          <div class="delta">morning pages · since Mar 30</div>
+          <div class="value">—<span class="unit">days</span></div>
+          <div class="delta">loading…</div>
         </div>
         <div class="stat">
           <div class="label"><span class="glyph">▎</span>Knowledge base</div>
-          <div class="value">87<span class="unit">docs</span></div>
-          <div class="delta">2,341 chunks indexed</div>
+          <div class="value">—<span class="unit">docs</span></div>
+          <div class="delta">loading…</div>
         </div>
       </div>
 
@@ -1957,9 +2005,9 @@
         <div class="lock">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2" stroke-linecap="round"/></svg>
         </div>
-        <div class="body">
-          <p><strong style="color:var(--text-1);font-weight:500">Everything on this page lives on your machine.</strong></p>
-          <p style="color:var(--text-3);">Facts and habits in <code>~/sage/data/registry.db</code>. Embeddings in <code>~/sage/data/chroma/</code>. No cloud sync, no telemetry, no third party reads this. Sage cannot send your data anywhere you didn't tell it to.</p>
+        <div class="body" id="privacyBody">
+          <p><strong style="color:var(--text-1);font-weight:500">Your data, your control.</strong></p>
+          <p style="color:var(--text-3);" id="privacyDetail">Loading storage info…</p>
         </div>
       </div>
     </div>
@@ -2012,10 +2060,17 @@
       .join('');
   }
 
+  function parseDate(dateStr) {
+    if (!dateStr) return new Date(NaN);
+    const str = String(dateStr).trim();
+    // Normalise space separator → T; only append Z if no tz offset present
+    const iso = str.replace(' ', 'T');
+    return new Date(/[Z+\-]\d*$/.test(iso) ? iso : iso + 'Z');
+  }
+
   function formatRelative(dateStr) {
     if (!dateStr) return '';
-    const str = String(dateStr).trim();
-    const d = new Date(str.includes('T') ? str : str.replace(' ', 'T') + 'Z');
+    const d = parseDate(dateStr);
     const diffMs = Date.now() - d.getTime();
     const mins = Math.floor(diffMs / 60000);
     if (mins < 1)  return 'just now';
@@ -2030,9 +2085,7 @@
 
   function formatTime(dateStr) {
     if (!dateStr) return '';
-    const str = String(dateStr).trim();
-    const d = new Date(str.includes('T') ? str : str.replace(' ', 'T') + 'Z');
-    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    return parseDate(dateStr).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   }
 
   function formatNow() {
@@ -2043,12 +2096,17 @@
   // API layer
   // ================================================================
   const API = '/api/v1';
-  function apiKey() { return sessionStorage.getItem('sage_key') || ''; }
+  function apiKey()      { return sessionStorage.getItem('sage_key')      || ''; }
+  function apiUsername() { return sessionStorage.getItem('sage_username') || ''; }
 
   async function apiFetch(method, path, body) {
     const opts = {
       method,
-      headers: { 'Content-Type': 'application/json', 'X-Sage-Key': apiKey() },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sage-Key': apiKey(),
+        'X-Sage-Username': apiUsername(),
+      },
     };
     if (body != null) opts.body = JSON.stringify(body);
     const res = await fetch(API + path, opts);
@@ -2065,6 +2123,79 @@
   // State
   // ================================================================
   let currentSessionId = null;
+  let serverInfo = null;  // cached from /auth/info
+
+  // ================================================================
+  // Server info — load before login
+  // ================================================================
+  async function loadInfo() {
+    try {
+      const info = await apiFetch('GET', '/auth/info');
+      serverInfo = info;
+
+      // Don't pre-fill username — user should type their own credentials
+
+      document.getElementById('loginFootText').textContent =
+        info.storage.includes('supabase') ? 'Connected to Supabase cloud' : 'Running locally on your machine';
+
+      document.getElementById('loginMetaText').textContent =
+        `v${info.version} · ${info.model}`;
+
+      document.getElementById('userInput').focus();
+    } catch {
+      document.getElementById('loginFootText').textContent = 'Could not reach Sage — is the server running?';
+      document.getElementById('userInput').focus();
+    }
+  }
+
+  function applyInfoToUI(info) {
+    if (!info) return;
+    const letter = (info.username || 'U')[0].toUpperCase();
+
+    // Sidebar
+    const sideModel = document.getElementById('sideModelLabel');
+    if (sideModel) sideModel.textContent = info.model;
+    const sideStatus = document.getElementById('sideStatusLabel');
+    if (sideStatus) sideStatus.textContent = 'connected';
+    const sideUsername = document.getElementById('sideUsername');
+    if (sideUsername) sideUsername.textContent = info.username || 'local user';
+    const sideStorage = document.getElementById('sideStorage');
+    if (sideStorage) sideStorage.textContent = info.storage.includes('supabase') ? '☁ supabase' : '~/sage';
+    const sideAvatar = document.getElementById('sideAvatar');
+    if (sideAvatar) sideAvatar.textContent = letter;
+
+    // Topbar avatar
+    const topAvatar = document.getElementById('topAvatar');
+    if (topAvatar) topAvatar.textContent = letter;
+
+    // Privacy footer
+    const privacyDetail = document.getElementById('privacyDetail');
+    if (privacyDetail) {
+      if (info.storage.includes('supabase')) {
+        privacyDetail.innerHTML = `Sessions and facts stored in <code>Supabase Postgres</code>. Embeddings in <code>pgvector</code>. Data lives in your Supabase project — no third party has access beyond what you configured.`;
+      } else {
+        privacyDetail.innerHTML = `Facts and habits in <code>~/sage/data/registry.db</code>. Embeddings in <code>~/sage/data/chroma/</code>. No cloud sync, no telemetry, no third party reads this.`;
+      }
+    }
+  }
+
+  // ================================================================
+  // Auth tab switching
+  // ================================================================
+  document.getElementById('tabLogin')?.addEventListener('click', () => {
+    document.getElementById('tabLogin').classList.add('active');
+    document.getElementById('tabSignup').classList.remove('active');
+    document.getElementById('loginForm').style.display = '';
+    document.getElementById('signupForm').style.display = 'none';
+    document.getElementById('userInput').focus();
+  });
+  document.getElementById('tabSignup')?.addEventListener('click', () => {
+    document.getElementById('tabSignup').classList.add('active');
+    document.getElementById('tabLogin').classList.remove('active');
+    document.getElementById('signupForm').style.display = '';
+    document.getElementById('loginForm').style.display = 'none';
+    document.getElementById('signupUser').focus();
+  });
 
   // ================================================================
   // Login
@@ -2086,15 +2217,21 @@
   loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     setLoginError('');
+    const username = document.getElementById('userInput').value.trim();
+    const password = pwInput.value;
+    if (!username) { setLoginError('Enter your username.'); return; }
+    if (!password)  { setLoginError('Enter your password.');  return; }
     loginBtn.disabled = true;
     loginBtn.querySelector('span').textContent = 'Checking…';
     try {
-      await apiFetch('POST', '/auth/login', { passphrase: pwInput.value });
-      sessionStorage.setItem('sage_key', pwInput.value);
+      const res = await apiFetch('POST', '/auth/login', { username, password });
+      sessionStorage.setItem('sage_key', password);
+      sessionStorage.setItem('sage_username', res.username);
       await enterChat();
     } catch (err) {
-      setLoginError(err.status === 401 ? 'Incorrect passphrase.' : 'Could not reach Sage — is the server running?');
-      pwInput.select();
+      setLoginError(err.status === 401 ? 'Incorrect username or password.' : 'Could not reach Sage — is the server running?');
+      pwInput.value = '';
+      pwInput.focus();
     } finally {
       loginBtn.disabled = false;
       loginBtn.querySelector('span').textContent = 'Enter Sage';
@@ -2102,9 +2239,48 @@
   });
 
   // ================================================================
+  // Sign up
+  // ================================================================
+  document.getElementById('signupForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('signupError');
+    errEl.style.display = 'none';
+    const username = document.getElementById('signupUser').value.trim();
+    const password = document.getElementById('signupPw').value;
+    const confirm  = document.getElementById('signupPw2').value;
+
+    if (username.length < 3) { errEl.textContent = 'Username must be at least 3 characters.'; errEl.style.display = 'block'; return; }
+    if (password.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = 'block'; return; }
+    if (password !== confirm) { errEl.textContent = 'Passwords do not match.'; errEl.style.display = 'block'; return; }
+
+    const btn = document.getElementById('signupBtn');
+    btn.disabled = true;
+    btn.querySelector('span').textContent = 'Creating…';
+    try {
+      const res = await apiFetch('POST', '/auth/signup', { username, password });
+      sessionStorage.setItem('sage_key', password);
+      sessionStorage.setItem('sage_username', res.username);
+      await enterChat();
+    } catch (err) {
+      const msg = err.status === 409 ? 'Username already taken.' :
+                  err.status === 422 ? (JSON.parse(err.message)?.detail || 'Invalid input.') :
+                  'Could not reach Sage — is the server running?';
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.querySelector('span').textContent = 'Create account';
+    }
+  });
+
+  // ================================================================
   // Enter chat — transition + load sessions
   // ================================================================
   async function enterChat() {
+    // Merge logged-in username into serverInfo before applying to UI
+    const loggedInUsername = sessionStorage.getItem('sage_username');
+    if (loggedInUsername && serverInfo) serverInfo.username = loggedInUsername;
+    applyInfoToUI(serverInfo);
     document.body.dataset.screen = 'chat';
     setTimeout(() => { document.getElementById('login').hidden = true; }, 520);
     const chatEl = document.getElementById('chat');
@@ -2429,8 +2605,9 @@
     // Avatar letter
     const letter = (p.username || 'U')[0].toUpperCase();
     document.querySelector('.hero-avatar')?.replaceChildren(document.createTextNode(letter));
-    document.querySelector('.topbar-avatar')?.replaceChildren(document.createTextNode(letter));
-    document.querySelectorAll('.user-chip .avatar').forEach(el => el.textContent = letter);
+    document.getElementById('topAvatar')?.replaceChildren(document.createTextNode(letter));
+    document.getElementById('sideAvatar') && (document.getElementById('sideAvatar').textContent = letter);
+    applyInfoToUI(serverInfo);
 
     // Name
     const nameEl = document.querySelector('.hero-name');
@@ -2655,9 +2832,7 @@
 
   function formatShortDate(dateStr) {
     if (!dateStr) return '—';
-    const str = String(dateStr).trim();
-    const d = new Date(str.includes('T') ? str : str.replace(' ','T') + 'Z');
-    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    return parseDate(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   }
 
   // ================================================================
@@ -2870,8 +3045,39 @@
     }
   });
 
-  // Initial focus
-  pwInput.focus();
+  // ================================================================
+  // Logout
+  // ================================================================
+  function logout() {
+    sessionStorage.removeItem('sage_key');
+    sessionStorage.removeItem('sage_username');
+    currentSessionId = null;
+
+    // Reset thread
+    const inner = document.querySelector('.thread-inner');
+    if (inner) inner.innerHTML = '';
+
+    // Show login, hide chat + profile
+    document.getElementById('chat').hidden = true;
+    document.getElementById('profile').hidden = true;
+    document.getElementById('login').hidden = false;
+    document.body.dataset.screen = 'login';
+
+    // Reset forms
+    document.getElementById('pwInput').value = '';
+    document.getElementById('signupPw').value = '';
+    document.getElementById('signupPw2').value = '';
+    // Switch back to login tab
+    document.getElementById('tabLogin').click();
+
+    // Re-run info load to reset login form state
+    loadInfo();
+  }
+
+  document.getElementById('logoutBtn')?.addEventListener('click', logout);
+
+  // Boot — load server info, show login screen
+  loadInfo();
 </script>
 </body>
 </html>

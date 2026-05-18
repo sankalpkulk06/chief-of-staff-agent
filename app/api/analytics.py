@@ -1,12 +1,11 @@
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.api.deps import get_registry, require_auth
-from app.storage.sqlite_registry import SQLiteRegistry
+from app.api.deps import get_current_user, get_registry
 
-router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 # SQLite %w: 0=Sunday … 6=Saturday. Remap to Mon=0 … Sun=6 for the UI.
 _DOW_REMAP = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 0: 6}
@@ -22,10 +21,11 @@ class AnalyticsOut(BaseModel):
 
 @router.get("", response_model=AnalyticsOut)
 async def get_analytics(
-    registry: SQLiteRegistry = Depends(get_registry),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
 ) -> AnalyticsOut:
     turns = []
-    for session in registry.list_sessions(limit=10000):
+    for session in registry.list_sessions(limit=10000, user_id=current_user["user_id"]):
         turns.extend(registry.get_session_turns(session["session_id"]))
     heatmap = [[0] * 24 for _ in range(7)]
     hour_counts: Dict[int, int] = {}

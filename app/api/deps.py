@@ -1,8 +1,14 @@
-from fastapi import Depends, Header, HTTPException, Request, status
+from typing import Any, Dict
 
-from app.config import get_settings
+from fastapi import Header, HTTPException, Request, status
+
 from app.core.chat_service import ChatService
-from app.storage.sqlite_registry import SQLiteRegistry
+
+_UNAUTH = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Invalid credentials",
+    headers={"WWW-Authenticate": "Basic"},
+)
 
 
 def get_chat_service(request: Request) -> ChatService:
@@ -12,17 +18,28 @@ def get_chat_service(request: Request) -> ChatService:
     return svc
 
 
-def get_registry(request: Request) -> SQLiteRegistry:
-    svc = get_chat_service(request)
-    return svc.get_registry()
+def get_registry(request: Request) -> Any:
+    registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Registry not initialised")
+    return registry
 
 
-def require_auth(x_sage_key: str = Header(default="")) -> None:
-    passphrase = get_settings().sage_passphrase
-    if not passphrase:
-        return  # auth disabled when no passphrase configured
-    if x_sage_key != passphrase:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing X-Sage-Key header",
-        )
+def get_current_user(
+    request: Request,
+    x_sage_username: str = Header(default=""),
+    x_sage_key: str = Header(default=""),
+) -> Dict[str, str]:
+    """Validate username + password on every authenticated request."""
+    registry = get_registry(request)
+    if not x_sage_username or not x_sage_key:
+        raise _UNAUTH
+    user = registry.verify_password(x_sage_username, x_sage_key)
+    if user is None:
+        raise _UNAUTH
+    return user  # {"user_id": "...", "username": "..."}
+
+
+def require_auth(user: Dict = None) -> None:
+    """Kept for router-level dependency declarations; real auth is in get_current_user."""
+    pass
