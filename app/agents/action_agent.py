@@ -49,10 +49,21 @@ class ActionAgent:
         original_question: str,
         history: List[dict[str, Any]],
         previous_results: Optional[List[AgentResult]] = None,
+        user_id: Optional[str] = None,
     ) -> AgentResult:
+        fact_svc = (
+            FactService(self._registry, user_id=user_id)
+            if user_id and self._registry
+            else self._fact_service
+        )
+        habit_svc = (
+            HabitService(self._registry, user_id=user_id)
+            if user_id and self._registry
+            else self._habit_service
+        )
         try:
             action, params = self._extract_action(task)
-            return self._dispatch(action, params, task)
+            return self._dispatch(action, params, task, fact_svc=fact_svc, habit_svc=habit_svc)
         except Exception as exc:
             return AgentResult(
                 agent="action_agent",
@@ -83,14 +94,23 @@ class ActionAgent:
             raise ValueError("No action found in extracted JSON")
         return action, params
 
-    def _dispatch(self, action: str, params: dict, task: str) -> AgentResult:
+    def _dispatch(
+        self,
+        action: str,
+        params: dict,
+        task: str,
+        fact_svc: Optional[FactService] = None,
+        habit_svc: Optional[HabitService] = None,
+    ) -> AgentResult:
+        fact_svc = fact_svc or self._fact_service
+        habit_svc = habit_svc or self._habit_service
         handlers = {
             "add_todo": self._add_todo,
-            "add_habit": self._add_habit,
-            "log_habit": self._log_habit,
-            "get_habits": self._get_habits,
-            "remember_fact": self._remember_fact,
-            "list_facts": self._list_facts,
+            "add_habit": lambda p, t: self._add_habit(p, t, habit_svc),
+            "log_habit": lambda p, t: self._log_habit(p, t, habit_svc),
+            "get_habits": lambda p, t: self._get_habits(p, t, habit_svc),
+            "remember_fact": lambda p, t: self._remember_fact(p, t, fact_svc),
+            "list_facts": lambda p, t: self._list_facts(p, t, fact_svc),
         }
         handler = handlers.get(action)
         if not handler:
@@ -120,14 +140,15 @@ class ActionAgent:
             success=True,
         )
 
-    def _add_habit(self, params: dict, task: str) -> AgentResult:
-        if not self._habit_service:
+    def _add_habit(self, params: dict, task: str, habit_svc: Optional[HabitService] = None) -> AgentResult:
+        svc = habit_svc or self._habit_service
+        if not svc:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="no_habit_service")
         name = params.get("name", "")
         if not name:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="missing habit name")
         reminder_time = params.get("reminder_time", "21:00")
-        habit = self._habit_service.add_habit(name=name, reminder_time=reminder_time)
+        habit = svc.add_habit(name=name, reminder_time=reminder_time)
         return AgentResult(
             agent="action_agent",
             task=task,
@@ -135,15 +156,16 @@ class ActionAgent:
             success=True,
         )
 
-    def _log_habit(self, params: dict, task: str) -> AgentResult:
-        if not self._habit_service:
+    def _log_habit(self, params: dict, task: str, habit_svc: Optional[HabitService] = None) -> AgentResult:
+        svc = habit_svc or self._habit_service
+        if not svc:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="no_habit_service")
         name = params.get("name", "")
         status = params.get("status", "done")
         if not name:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="missing habit name")
         try:
-            log = self._habit_service.log_habit(name=name, status=status)
+            log = svc.log_habit(name=name, status=status)
             verb = "skipped" if log.status == "skipped" else "logged as done"
             return AgentResult(
                 agent="action_agent",
@@ -154,11 +176,12 @@ class ActionAgent:
         except ValueError as exc:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error=str(exc))
 
-    def _get_habits(self, params: dict, task: str) -> AgentResult:
-        if not self._habit_service:
+    def _get_habits(self, params: dict, task: str, habit_svc: Optional[HabitService] = None) -> AgentResult:
+        svc = habit_svc or self._habit_service
+        if not svc:
             return AgentResult(agent="action_agent", task=task, output="No habits configured.", success=True)
         from datetime import date
-        summaries = self._habit_service.get_weekly_summary()
+        summaries = svc.get_weekly_summary()
         if not summaries:
             return AgentResult(agent="action_agent", task=task, output="No habits tracked yet.", success=True)
         week = date.today().strftime("Week of %b %-d, %Y")
@@ -169,14 +192,15 @@ class ActionAgent:
             lines.append(f"• {s.habit.name}: {s.days_done}/7 days | {streak} | {logged}")
         return AgentResult(agent="action_agent", task=task, output="\n".join(lines), success=True)
 
-    def _remember_fact(self, params: dict, task: str) -> AgentResult:
-        if not self._fact_service:
+    def _remember_fact(self, params: dict, task: str, fact_svc: Optional[FactService] = None) -> AgentResult:
+        svc = fact_svc or self._fact_service
+        if not svc:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="no_fact_service")
         fact = params.get("fact", "")
         category = params.get("category", "personal")
         if not fact:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="missing fact")
-        self._fact_service.remember(content=fact, category=category)
+        svc.remember(content=fact, category=category)
         return AgentResult(
             agent="action_agent",
             task=task,
@@ -184,12 +208,13 @@ class ActionAgent:
             success=True,
         )
 
-    def _list_facts(self, params: dict, task: str) -> AgentResult:
-        if not self._fact_service:
+    def _list_facts(self, params: dict, task: str, fact_svc: Optional[FactService] = None) -> AgentResult:
+        svc = fact_svc or self._fact_service
+        if not svc:
             return AgentResult(agent="action_agent", task=task, output="No facts configured.", success=True)
         category = params.get("category", "all")
         filter_cat = None if category == "all" else category
-        facts = self._fact_service.list_facts(category=filter_cat)
+        facts = svc.list_facts(category=filter_cat)
         if not facts:
             return AgentResult(agent="action_agent", task=task, output=f"No {category} facts saved yet.", success=True)
         lines = [f"Your {category} facts:"]

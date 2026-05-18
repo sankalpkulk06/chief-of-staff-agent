@@ -231,7 +231,7 @@ class AgentRunner:
                 if top_score > self._rag_fallback_threshold and self._research is not None:
                     result = self._research.execute(step.task, question, history, agent_results)
             else:
-                result = agent.execute(step.task, question, history, agent_results)
+                result = agent.execute(step.task, question, history, agent_results, user_id=user_id)
 
             agent_results.append(result)
 
