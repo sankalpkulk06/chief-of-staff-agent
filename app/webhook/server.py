@@ -94,6 +94,7 @@ async def lifespan(app: FastAPI):
                 settings.your_whatsapp_number,
             )
 
+    app.state.schedule_todo_callback = schedule_created_todo
     _chat_service = create_chat_service(schedule_todo_callback=schedule_created_todo)
     _habit_service = _chat_service.get_habit_service() or HabitService(_registry)
 

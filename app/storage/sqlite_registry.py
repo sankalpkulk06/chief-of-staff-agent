@@ -736,4 +736,6 @@ class SQLiteRegistry:
     def _format_datetime(value: Optional[datetime]) -> Optional[str]:
         if value is None:
             return None
+        if value.tzinfo is not None:
+            value = value.astimezone().replace(tzinfo=None)
         return value.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")

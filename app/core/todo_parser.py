@@ -31,6 +31,22 @@ def parse_due_date(raw: Optional[str], now: Optional[datetime] = None) -> Option
     if value == "tomorrow night":
         return (today + timedelta(days=1)).replace(hour=21)
 
+    relative_day = None
+    if re.search(r"\btoday\b", value):
+        relative_day = today
+    elif re.search(r"\btomorrow\b", value):
+        relative_day = today + timedelta(days=1)
+
+    if relative_day is not None:
+        time_text = re.sub(r"\b(today|tomorrow)\b", "", value).strip()
+        time_text = re.sub(r"^(at|by|on)\s+", "", time_text).strip()
+        time_text = re.sub(r"\s+(at|by|on)$", "", time_text).strip()
+        if time_text:
+            try:
+                return date_parser.parse(time_text, fuzzy=True, default=relative_day)
+            except (ValueError, TypeError, OverflowError):
+                return relative_day
+
     try:
         default = today
         parsed = date_parser.parse(value, fuzzy=True, default=default)

@@ -23,6 +23,12 @@ class CreateTodoRequest(BaseModel):
     due_at: Optional[str] = None  # ISO 8601 string, e.g. "2026-05-20T09:00:00"
 
 
+def _parse_due_at(value: str) -> datetime:
+    # Browsers send toISOString() values with a trailing Z. Python 3.9's
+    # fromisoformat does not accept Z, so normalize it to an explicit UTC offset.
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def _serialize(row: dict) -> TodoOut:
     return TodoOut(
         id=str(row["id"]),
@@ -55,7 +61,7 @@ async def create_todo(
     due_at: Optional[datetime] = None
     if body.due_at:
         try:
-            due_at = datetime.fromisoformat(body.due_at)
+            due_at = _parse_due_at(body.due_at)
         except ValueError:
             raise HTTPException(status_code=422, detail="due_at must be ISO 8601 format")
 

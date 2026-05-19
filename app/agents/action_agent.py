@@ -2,6 +2,7 @@
 import json
 import re
 import uuid
+from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from app.agents.base import AgentResult
@@ -84,6 +85,7 @@ class ActionAgent:
             return self._dispatch(
                 row["action_type"], row["action_payload"], row["action_type"],
                 fact_svc=fact_svc, habit_svc=habit_svc,
+                user_id=user_id,
                 hitl_bypass=True,
             )
         except Exception as exc:
@@ -149,6 +151,7 @@ class ActionAgent:
 
         handlers = {
             "add_todo": lambda p, t: self._add_todo(p, t, user_id=user_id),
+            "list_todos": lambda p, t: self._list_todos(p, t, user_id=user_id),
             "add_habit": lambda p, t: self._add_habit(p, t, habit_svc),
             "log_habit": lambda p, t: self._log_habit(p, t, habit_svc),
             "get_habits": lambda p, t: self._get_habits(p, t, habit_svc),
@@ -205,6 +208,62 @@ class ActionAgent:
             output=f"Added reminder: {todo_task}{due_str}.",
             success=True,
         )
+
+    def _list_todos(self, params: dict, task: str, user_id: Optional[str] = None) -> AgentResult:
+        if not self._registry:
+            return AgentResult(agent="action_agent", task=task, output="No reminders configured.", success=True)
+
+        scope = str(params.get("scope") or "").lower()
+        if not scope and "today" in task.lower():
+            scope = "today"
+
+        todos = self._registry.list_todos(user_id=user_id or "")
+        if scope == "today":
+            today = date.today()
+            todos = [todo for todo in todos if self._todo_due_date(todo.get("due_at")) == today]
+
+        if not todos:
+            label = "today" if scope == "today" else "pending"
+            return AgentResult(agent="action_agent", task=task, output=f"No {label} reminders or tasks.", success=True)
+
+        label = "Today's reminders and tasks" if scope == "today" else "Pending reminders and tasks"
+        lines = [f"{label}:"]
+        for todo in todos[:20]:
+            title = str(todo.get("title", "")).strip() or "Untitled"
+            due = self._format_due(todo.get("due_at"))
+            lines.append(f"• {title}{due}")
+        return AgentResult(agent="action_agent", task=task, output="\n".join(lines), success=True)
+
+    @staticmethod
+    def _todo_due_date(value: Any) -> Optional[date]:
+        due_at = ActionAgent._coerce_datetime(value)
+        return due_at.date() if due_at else None
+
+    @staticmethod
+    def _format_due(value: Any) -> str:
+        due_at = ActionAgent._coerce_datetime(value)
+        if not due_at:
+            return ""
+        today = date.today()
+        if due_at.date() == today:
+            label = due_at.strftime("%-I:%M %p")
+        elif due_at.date() == today + timedelta(days=1):
+            label = due_at.strftime("tomorrow at %-I:%M %p")
+        else:
+            label = due_at.strftime("%b %-d at %-I:%M %p")
+        return f" — due {label}"
+
+    @staticmethod
+    def _coerce_datetime(value: Any) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            return value.astimezone().replace(tzinfo=None) if value.tzinfo is not None else value
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00").replace(" ", "T"))
+        except ValueError:
+            return None
+        return parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo is not None else parsed
 
     def _add_habit(self, params: dict, task: str, habit_svc: Optional[HabitService] = None) -> AgentResult:
         svc = habit_svc or self._habit_service
@@ -287,4 +346,3 @@ class ActionAgent:
         for f in facts[:20]:
             lines.append(f"• {f.content} ({f.category})")
         return AgentResult(agent="action_agent", task=task, output="\n".join(lines), success=True)
-

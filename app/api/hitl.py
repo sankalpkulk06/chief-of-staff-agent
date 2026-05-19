@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.agents.action_agent import ActionAgent
@@ -17,6 +17,7 @@ class ResolveRequest(BaseModel):
 
 @router.post("/{hitl_id}/resolve")
 def resolve_hitl(
+    request: Request,
     hitl_id: str,
     body: ResolveRequest,
     registry: Any = Depends(get_registry),
@@ -44,7 +45,11 @@ def resolve_hitl(
         specs = agent_model_specs(settings)
         chat_provider = create_chat_provider(settings, specs["action_agent"])
 
-        agent = ActionAgent(chat_provider=chat_provider, registry=registry)
+        agent = ActionAgent(
+            chat_provider=chat_provider,
+            registry=registry,
+            schedule_todo_callback=getattr(request.app.state, "schedule_todo_callback", None),
+        )
         result = agent.execute_approved(hitl_id, current_user["user_id"])
         registry.resolve_hitl_request(hitl_id, "approved")
         return {"status": "approved", "output": result.output, "success": result.success}

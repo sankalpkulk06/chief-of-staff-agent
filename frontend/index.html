@@ -3255,7 +3255,8 @@
 
   function formatDueDate(dueDateStr) {
     if (!dueDateStr) return null;
-    const d = new Date(dueDateStr);
+    const normalized = String(dueDateStr).trim().replace(' ', 'T');
+    const d = new Date(normalized);
     if (isNaN(d)) return null;
     const now = new Date();
     const overdue = d < now;

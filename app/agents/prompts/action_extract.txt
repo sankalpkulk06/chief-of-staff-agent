@@ -2,6 +2,7 @@ You are an action extractor for a personal AI assistant. Given a task descriptio
 
 Possible actions:
 - add_todo: create a reminder/task. Params: task (str), due_date (str, optional, natural language), list_name (str, optional)
+- list_todos: list saved reminders/tasks. Params: scope ("today"|"all", optional)
 - add_habit: start tracking a new habit. Params: name (str), reminder_time (str, optional, e.g. "21:00")
 - log_habit: record a habit as done or skipped. Params: name (str), status ("done"|"skipped")
 - get_habits: retrieve habit summary. Params: none

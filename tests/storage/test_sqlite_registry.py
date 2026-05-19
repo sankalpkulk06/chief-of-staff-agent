@@ -1,5 +1,5 @@
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.schemas.chunk import DocumentChunk
 from app.schemas.document import ParsedDocument
@@ -91,6 +91,19 @@ def test_todo_queries_exclude_completed_and_notified(tmp_path):
 
         assert [todo["id"] for todo in due_soon] == [due_todo["id"]]
         assert {todo["id"] for todo in pending} == {due_todo["id"], future_todo["id"]}
+    finally:
+        registry.close()
+
+
+def test_create_todo_stores_aware_due_at_as_local_wall_time(tmp_path):
+    registry = SQLiteRegistry(db_path=tmp_path / "registry.db")
+    try:
+        aware_due = datetime(2026, 5, 20, 5, 30, tzinfo=timezone.utc)
+        expected_local = aware_due.astimezone().replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+
+        todo = registry.create_todo("Call dad", due_at=aware_due)
+
+        assert todo["due_at"] == expected_local
     finally:
         registry.close()
 
