@@ -71,40 +71,55 @@ class EmailService:
 
         return build("gmail", "v1", credentials=creds), refreshed
 
-    def get_oauth_url(self, redirect_uri: str, state: str) -> str:
-        """Generate a Google OAuth consent URL for the web flow."""
-        from google_auth_oauthlib.flow import Flow
+    def _web_config(self) -> Dict:
+        return self._client_secrets.get("web", self._client_secrets)
 
-        flow = Flow.from_client_config(
-            self._client_secrets,
-            scopes=GMAIL_READONLY_SCOPE,
+    def get_oauth_url(self, redirect_uri: str, state: str) -> str:
+        """Generate a Google OAuth consent URL (no PKCE — server-side flow)."""
+        from requests_oauthlib import OAuth2Session
+
+        cfg = self._web_config()
+        session = OAuth2Session(
+            client_id=cfg["client_id"],
+            scope=GMAIL_READONLY_SCOPE,
             redirect_uri=redirect_uri,
+            state=state,
         )
-        # Disable PKCE — we use a client secret (server-side flow), so PKCE
-        # is not needed and causes "Missing code verifier" on exchange.
-        flow.code_verifier = None
-        flow.oauth2session.code_challenge_method = None
-        auth_url, _ = flow.authorization_url(
+        auth_url, _ = session.authorization_url(
+            "https://accounts.google.com/o/oauth2/auth",
             access_type="offline",
             prompt="consent",
-            state=state,
         )
         return auth_url
 
     def exchange_code(self, code: str, redirect_uri: str, state: str) -> Dict:
-        """Exchange an OAuth authorization code for a token dict."""
-        from google_auth_oauthlib.flow import Flow
+        """Exchange an auth code for a token dict using requests_oauthlib directly."""
+        import os
+        from requests_oauthlib import OAuth2Session
 
-        flow = Flow.from_client_config(
-            self._client_secrets,
-            scopes=GMAIL_READONLY_SCOPE,
+        # Allow http for local dev
+        os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
+        cfg = self._web_config()
+        session = OAuth2Session(
+            client_id=cfg["client_id"],
             redirect_uri=redirect_uri,
             state=state,
         )
-        flow.code_verifier = None
-        flow.oauth2session.code_challenge_method = None
-        flow.fetch_token(code=code)
-        return json.loads(flow.credentials.to_json())
+        token = session.fetch_token(
+            "https://oauth2.googleapis.com/token",
+            client_secret=cfg["client_secret"],
+            code=code,
+        )
+        # Normalise to the format google.oauth2.credentials.Credentials expects
+        return {
+            "token": token.get("access_token"),
+            "refresh_token": token.get("refresh_token"),
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": cfg["client_id"],
+            "client_secret": cfg["client_secret"],
+            "scopes": GMAIL_READONLY_SCOPE,
+        }
 
     # ------------------------------------------------------------------
     # Fetch & triage
