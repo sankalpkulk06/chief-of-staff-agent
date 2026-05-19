@@ -2442,6 +2442,15 @@
           label = `✗ Action failed — ${data.output || 'unknown error'}`;
         }
         container.innerHTML = `<span class="hitl-done">${escapeHtml(label)}</span>`;
+        if (data.final_reply) {
+          const wrap = container.closest('.msg.assistant');
+          if (wrap) {
+            const combined = document.createElement('div');
+            combined.className = 'bubble';
+            combined.innerHTML = renderMarkdown(data.final_reply);
+            container.insertAdjacentElement('afterend', combined);
+          }
+        }
       } else if (res.status === 410) {
         container.innerHTML = `<span class="hitl-error">⚠ Expired — action was not taken</span>`;
       } else if (res.status === 409) {

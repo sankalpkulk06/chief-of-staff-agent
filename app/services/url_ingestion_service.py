@@ -86,10 +86,10 @@ class URLIngestionService:
     def already_ingested(self, url: str, user_id: str) -> bool:
         return self._registry.is_url_ingested(url, user_id=user_id)
 
-    def list_url_sources(self) -> list[dict]:
-        return self._registry.list_url_sources()
+    def list_url_sources(self, user_id: str = "") -> list[dict]:
+        return self._registry.list_url_sources(user_id=user_id)
 
-    def ingest(self, url: str, user_id: str) -> URLIngestionResult:
+    def ingest(self, url: str, user_id: str = "") -> URLIngestionResult:
         if self.already_ingested(url, user_id=user_id):
             return URLIngestionResult(
                 success=True,

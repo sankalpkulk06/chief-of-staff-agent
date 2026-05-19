@@ -161,7 +161,7 @@ class PostgresRegistry:
     # Documents
     # ------------------------------------------------------------------
 
-    def upsert_document(self, document_id: str, document: ParsedDocument, user_id: str) -> None:
+    def upsert_document(self, document_id: str, document: ParsedDocument, user_id: str = "") -> None:
         metadata_json = json.dumps(document.metadata, sort_keys=True)
         with self._cursor() as cur:
             cur.execute(
@@ -248,7 +248,7 @@ class PostgresRegistry:
             )
         self._commit()
 
-    def is_url_ingested(self, source_url: str, user_id: str) -> bool:
+    def is_url_ingested(self, source_url: str, user_id: str = "") -> bool:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT 1 FROM documents WHERE source_url = %s AND source_type = 'url' AND user_id = %s LIMIT 1",
@@ -256,7 +256,7 @@ class PostgresRegistry:
             )
             return cur.fetchone() is not None
 
-    def list_url_sources(self, user_id: str) -> List[Dict[str, object]]:
+    def list_url_sources(self, user_id: str = "") -> List[Dict[str, object]]:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT document_id, file_name, source_url, ingested_at FROM documents WHERE source_type = 'url' AND user_id = %s ORDER BY ingested_at DESC",
@@ -264,7 +264,7 @@ class PostgresRegistry:
             )
             return [dict(r) for r in cur.fetchall()]
 
-    def list_all_sources(self, user_id: str) -> List[Dict[str, object]]:
+    def list_all_sources(self, user_id: str = "") -> List[Dict[str, object]]:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT document_id, file_name, source_path, source_type, source_url, ingested_at FROM documents WHERE user_id = %s ORDER BY ingested_at DESC, created_at DESC",
@@ -322,7 +322,7 @@ class PostgresRegistry:
             cur.execute("DELETE FROM chat_sessions WHERE session_id = %s", (session_id,))
         self._commit()
 
-    def get_or_create_named_session(self, name: str, user_id: str) -> str:
+    def get_or_create_named_session(self, name: str, user_id: str = "") -> str:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT session_id FROM named_sessions WHERE name = %s AND user_id = %s",
@@ -698,6 +698,24 @@ class PostgresRegistry:
             from datetime import timezone
             data["expires_at"] = expires.replace(tzinfo=timezone.utc)
         return data
+
+    def attach_hitl_context(self, id: str, context: Dict[str, object]) -> None:
+        import json as _json
+        row = self.get_hitl_request(id)
+        if not row:
+            return
+        payload = row.get("action_payload") or {}
+        if isinstance(payload, str):
+            payload = _json.loads(payload)
+        if not isinstance(payload, dict):
+            payload = {}
+        payload["__hitl_context"] = context
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE hitl_requests SET action_payload = %s::jsonb WHERE id = %s",
+                (_json.dumps(payload), id),
+            )
+        self._commit()
 
     def resolve_hitl_request(self, id: str, status: str) -> None:
         with self._cursor() as cur:

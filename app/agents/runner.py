@@ -1,9 +1,10 @@
 """AgentRunner — executes the orchestrator's plan and collects results."""
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from app.agents.base import AgentResult, AgentStep, OrchestratorPlan
 from app.agents.action_agent import ActionAgent
-from app.agents.base import AgentResult, OrchestratorPlan
 from app.agents.conversational_agent import ConversationalAgent
 from app.agents.email_agent import EmailAgent
 from app.agents.orchestrator import OrchestratorAgent
@@ -90,6 +91,8 @@ class AgentRunner:
         rag_top_k: int = 5,
         rag_fallback_threshold: float = 0.5,
         security_agent: Optional[SecurityAgent] = None,
+        parallelism_enabled: bool = True,
+        max_parallel_workers: int = 3,
     ):
         self._default_chat_provider = chat_provider
         self._agent_chat_providers = agent_chat_providers or {}
@@ -106,6 +109,8 @@ class AgentRunner:
         self._rag_top_k = rag_top_k
         self._rag_fallback_threshold = rag_fallback_threshold
         self._security_agent = security_agent
+        self._parallelism_enabled = parallelism_enabled
+        self._max_parallel_workers = max(1, max_parallel_workers)
 
         self._rebuild_agents()
 
@@ -178,12 +183,17 @@ class AgentRunner:
         response_style: Optional[str] = None,
         top_k: Optional[int] = None,
         user_id: Optional[str] = None,
-        trace_callback: Optional[Callable[[str, str, str], None]] = None,
+        trace_callback: Optional[Callable[..., None]] = None,
     ) -> RunResult:
-        def _trace(event_type: str, status: str, message: str) -> None:
+        def _trace(event_type: str, status: str, message: str, metadata: Optional[dict] = None) -> None:
             if trace_callback is not None:
                 try:
-                    trace_callback(event_type, status, message)
+                    trace_callback(event_type, status, message, metadata or {})
+                except TypeError:
+                    try:
+                        trace_callback(event_type, status, message)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -228,90 +238,98 @@ class AgentRunner:
         plan.steps = [s for s in plan.steps if s.agent in self._VALID_AGENTS]
         # Guard: cap total steps to prevent runaway multi-step plans
         plan.steps = plan.steps[:self._MAX_STEPS]
+        plan.steps = self._normalize_plan_steps(plan.steps)
 
         step_count = len(plan.steps)
         _trace("orchestrator", "complete", f"{step_count} step{'s' if step_count != 1 else ''} planned")
 
-        # 2. Execute steps sequentially; pass previous outputs as context
+        # 2. Execute dependency batches. Independent read steps in one batch can
+        # run concurrently; dependent, write, and synthesis steps run alone.
         agent_results: List[AgentResult] = []
-        for step in plan.steps:
-            agent = self._resolve_agent(step.agent)
-            if agent is None:
-                _trace(step.agent, "error", f"Agent not available")
-                agent_results.append(AgentResult(
-                    agent=step.agent,
-                    task=step.task,
-                    output="",
-                    success=False,
-                    error=f"Agent '{step.agent}' is not available (missing service).",
-                ))
-                continue
+        pending_hitl: Optional[AgentResult] = None
+        pending_hitl_step_id: Optional[str] = None
+        batches = (
+            plan.execution_batches(max_parallel=self._max_parallel_workers)
+            if self._parallelism_enabled
+            else [[step] for step in plan.steps]
+        )
+        for batch_index, batch in enumerate(batches, 1):
+            batch_id = f"batch_{batch_index}"
+            if pending_hitl is not None:
+                batch = [
+                    step
+                    for step in batch
+                    if step.mode != "synthesize"
+                    and not (
+                        pending_hitl_step_id is not None
+                        and pending_hitl_step_id in step.depends_on
+                    )
+                ]
+                if not batch:
+                    continue
 
-            _trace(step.agent, "running", step.task[:80])
-
-            if step.agent == "conversational":
-                result = self._conversational.execute(
-                    task=step.task,
-                    original_question=question,
-                    history=history,
-                    previous_results=agent_results,
-                    response_style=response_style,
-                    user_id=user_id,
+            if len(batch) > 1:
+                _trace(
+                    "batch",
+                    "running",
+                    f"Running {len(batch)} independent steps",
+                    {"batch_id": batch_id, "step_ids": [step.id for step in batch]},
                 )
-            elif step.agent == "email_agent":
-                result = self._email.execute(
-                    task=step.task,
-                    original_question=question,
-                    history=history,
-                    previous_results=agent_results,
-                    user_id=user_id,
-                    response_style=response_style,
+
+            batch_results = self._execute_batch(
+                batch=batch,
+                batch_id=batch_id,
+                question=question,
+                history=history,
+                previous_results=agent_results,
+                response_style=response_style,
+                top_k=top_k,
+                user_id=user_id,
+                trace=_trace,
+            )
+            agent_results.extend(batch_results)
+
+            hitl_result = next(
+                (result for result in batch_results if result.metadata.get("hitl_pending")),
+                None,
+            )
+            if hitl_result is not None:
+                pending_hitl = hitl_result
+                pending_hitl_step_id = hitl_result.metadata.get("step_id")
+                _trace(hitl_result.agent, "waiting", "Waiting for your approval")
+
+        if pending_hitl is not None:
+            continuation_results = [
+                result
+                for result in agent_results
+                if result is not pending_hitl
+                and result.success
+                and result.output
+                and not result.metadata.get("hitl_pending")
+            ]
+            continuation_output = ""
+            if continuation_results:
+                continuation_output = self._orchestrator.synthesize(
+                    question,
+                    continuation_results,
+                    history,
+                    user_facts=self._user_facts_for(user_id),
                 )
-            elif step.agent == "rag_agent":
-                original_top_k = self._rag._top_k
-                if top_k is not None:
-                    self._rag._top_k = top_k
-                result = agent.execute(step.task, question, history, agent_results, user_id=user_id)
-                self._rag._top_k = original_top_k
-
-                top_score = result.metadata.get("top_score", 1.0)
-                chunks_found = result.metadata.get("chunks_found", 0)
-                # Fallback to web when: no chunks at all, OR chunks were retrieved but
-                # the best match has poor cosine distance (> 0.65 means likely irrelevant).
-                # The second condition catches the case where the vector store returns
-                # top-K results but none are about the requested topic.
-                poor_match = top_score > 0.65
-                if (chunks_found == 0 or poor_match) and self._research is not None:
-                    _trace("rag_agent", "fallback", "Low relevance in documents, searching the web")
-                    result = self._research.execute(step.task, question, history, agent_results)
-                    result.metadata["triggered_by_rag_fallback"] = True
-            else:
-                result = agent.execute(step.task, question, history, agent_results, user_id=user_id)
-
-            if result.success:
-                chunks_found = result.metadata.get("chunks_found")
-                if chunks_found is not None:
-                    _trace(step.agent, "complete", f"Retrieved {chunks_found} chunk{'s' if chunks_found != 1 else ''}")
-                else:
-                    _trace(step.agent, "complete", "Done")
-            else:
-                _trace(step.agent, "error", (result.error or "failed")[:80])
-
-            agent_results.append(result)
-
-            # Stop immediately if a HITL gate was triggered — don't run further
-            # steps or synthesize, as subsequent agents would produce output that
-            # makes the reply sound like the action already completed.
-            if result.metadata.get("hitl_pending"):
-                _trace("action_agent", "waiting", "Waiting for your approval")
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                return RunResult(
-                    output=result.output,
-                    plan=plan,
-                    agent_results=agent_results,
-                    latency_ms=latency_ms,
-                    security_flags=_security_flags,
+                self._attach_hitl_context(
+                    pending_hitl.metadata.get("hitl_id"),
+                    continuation_output,
                 )
+            output_parts = [pending_hitl.output]
+            if continuation_output:
+                output_parts.append(continuation_output)
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            return RunResult(
+                output="\n\n".join(output_parts),
+                plan=plan,
+                agent_results=agent_results,
+                latency_ms=latency_ms,
+                security_flags=_security_flags,
+            )
 
         if len(agent_results) == 1 and agent_results[0].agent in {"research_agent", "rag_agent"}:
             final_output = agent_results[0].output
@@ -334,16 +352,7 @@ class AgentRunner:
         # 3. Synthesize — inject stored user facts for persona-aware replies.
         # Create a per-request FactService scoped to the actual user, not the startup default.
         _trace("synthesis", "running", "Synthesizing results")
-        user_facts: Optional[str] = None
-        if self._registry and user_id:
-            per_request_facts = FactService(self._registry, user_id=user_id)
-            facts = per_request_facts.list_facts()
-            if facts:
-                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
-        elif self._fact_service:
-            facts = self._fact_service.list_facts()
-            if facts:
-                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
+        user_facts = self._user_facts_for(user_id)
         final_output = self._orchestrator.synthesize(question, agent_results, history, user_facts=user_facts)
 
         # Security: output scrub — redact secrets before the reply reaches the caller
@@ -376,6 +385,194 @@ class AgentRunner:
                 if contexts:
                     return {"question": question, "contexts": contexts}
         return None
+
+    def _user_facts_for(self, user_id: Optional[str]) -> Optional[str]:
+        user_facts: Optional[str] = None
+        if self._registry and user_id:
+            per_request_facts = FactService(self._registry, user_id=user_id)
+            facts = per_request_facts.list_facts()
+            if facts:
+                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
+        elif self._fact_service:
+            facts = self._fact_service.list_facts()
+            if facts:
+                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
+        return user_facts
+
+    def _attach_hitl_context(self, hitl_id: Optional[str], continuation_output: str) -> None:
+        if not hitl_id or not continuation_output or not self._registry:
+            return
+        attach = getattr(self._registry, "attach_hitl_context", None)
+        if attach is None:
+            return
+        try:
+            attach(hitl_id, {"continuation_output": continuation_output})
+        except Exception:
+            pass
+
+    def _execute_batch(
+        self,
+        batch: list[AgentStep],
+        batch_id: str,
+        question: str,
+        history: List[dict[str, Any]],
+        previous_results: List[AgentResult],
+        response_style: Optional[str],
+        top_k: Optional[int],
+        user_id: Optional[str],
+        trace: Callable[[str, str, str, Optional[dict]], None],
+    ) -> list[AgentResult]:
+        if len(batch) == 1:
+            step = batch[0]
+            return [
+                self._execute_step(
+                    step=step,
+                    batch_id=batch_id,
+                    question=question,
+                    history=history,
+                    previous_results=list(previous_results),
+                    response_style=response_style,
+                    top_k=top_k,
+                    user_id=user_id,
+                    trace=trace,
+                )
+            ]
+
+        results_by_step_id: dict[str, AgentResult] = {}
+        with ThreadPoolExecutor(max_workers=min(len(batch), self._max_parallel_workers)) as executor:
+            futures = {
+                executor.submit(
+                    self._execute_step,
+                    step,
+                    batch_id,
+                    question,
+                    list(history),
+                    list(previous_results),
+                    response_style,
+                    top_k,
+                    user_id,
+                    trace,
+                ): step
+                for step in batch
+            }
+            for future in as_completed(futures):
+                step = futures[future]
+                try:
+                    results_by_step_id[step.id] = future.result()
+                except Exception as exc:
+                    results_by_step_id[step.id] = AgentResult(
+                        agent=step.agent,
+                        task=step.task,
+                        output="",
+                        success=False,
+                        error=f"Agent failed: {exc}",
+                    )
+
+        return [results_by_step_id[step.id] for step in batch]
+
+    def _execute_step(
+        self,
+        step: AgentStep,
+        batch_id: str,
+        question: str,
+        history: List[dict[str, Any]],
+        previous_results: List[AgentResult],
+        response_style: Optional[str],
+        top_k: Optional[int],
+        user_id: Optional[str],
+        trace: Callable[[str, str, str, Optional[dict]], None],
+    ) -> AgentResult:
+        metadata = {
+            "step_id": step.id,
+            "batch_id": batch_id,
+            "parallel_group": step.parallel_group,
+            "agent": step.agent,
+        }
+        agent = self._resolve_agent(step.agent)
+        if agent is None:
+            trace(step.agent, "error", "Agent not available", metadata)
+            return AgentResult(
+                agent=step.agent,
+                task=step.task,
+                output="",
+                success=False,
+                error=f"Agent '{step.agent}' is not available (missing service).",
+            )
+
+        trace(step.agent, "running", step.task[:80], metadata)
+
+        if step.agent == "conversational":
+            result = self._conversational.execute(
+                task=step.task,
+                original_question=question,
+                history=history,
+                previous_results=previous_results,
+                response_style=response_style,
+                user_id=user_id,
+            )
+        elif step.agent == "email_agent":
+            result = self._email.execute(
+                task=step.task,
+                original_question=question,
+                history=history,
+                previous_results=previous_results,
+                user_id=user_id,
+                response_style=response_style,
+            )
+        elif step.agent == "rag_agent":
+            original_top_k = self._rag._top_k
+            if top_k is not None:
+                self._rag._top_k = top_k
+            try:
+                result = agent.execute(step.task, question, history, previous_results, user_id=user_id)
+            finally:
+                self._rag._top_k = original_top_k
+
+            top_score = result.metadata.get("top_score", 1.0)
+            chunks_found = result.metadata.get("chunks_found", 0)
+            poor_match = top_score > 0.65
+            if (chunks_found == 0 or poor_match) and self._research is not None:
+                trace("rag_agent", "fallback", "Low relevance in documents, searching the web", metadata)
+                result = self._research.execute(step.task, question, history, previous_results)
+                result.metadata["triggered_by_rag_fallback"] = True
+        else:
+            result = agent.execute(step.task, question, history, previous_results, user_id=user_id)
+
+        if result.success:
+            chunks_found = result.metadata.get("chunks_found")
+            if chunks_found is not None:
+                trace(step.agent, "complete", f"Retrieved {chunks_found} chunk{'s' if chunks_found != 1 else ''}", metadata)
+            else:
+                trace(step.agent, "complete", "Done", metadata)
+        else:
+            trace(step.agent, "error", (result.error or "failed")[:80], metadata)
+        result.metadata.setdefault("step_id", step.id)
+        result.metadata.setdefault("batch_id", batch_id)
+        result.metadata.setdefault("parallel_group", step.parallel_group)
+        return result
+
+    @staticmethod
+    def _normalize_plan_steps(steps: List[AgentStep]) -> List[AgentStep]:
+        seen_ids: set[str] = set()
+        for i, step in enumerate(steps, 1):
+            if not step.id or step.id in seen_ids:
+                step.id = f"step_{i}"
+            seen_ids.add(step.id)
+            if not step.mode:
+                step.mode = "synthesize" if step.agent == "conversational" else "read"
+
+        valid_ids = {step.id for step in steps}
+        for i, step in enumerate(steps):
+            step.depends_on = [
+                dep for dep in step.depends_on if dep in valid_ids and dep != step.id
+            ]
+            if step.agent == "conversational":
+                step.mode = "synthesize"
+            if step.mode == "synthesize" and not step.depends_on:
+                step.depends_on = [
+                    prior.id for prior in steps[:i] if prior.mode != "synthesize"
+                ]
+        return steps
 
     def _resolve_agent(self, agent_name: str):
         return {

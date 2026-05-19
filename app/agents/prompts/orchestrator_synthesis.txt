@@ -52,6 +52,8 @@ COMPOUND (multiple agents ran):
 → Address each part of the request in the same order the user asked.
 → Use a short line break between topics if needed — do not add section headers.
 → Do not introduce each section — just flow naturally from one to the next.
+→ Preserve every successful independent result; one topic should not hide another.
+→ If one part failed but another succeeded, answer the successful part and mention the gap briefly only if it affects the user.
 
 CONVERSATIONAL (greetings, acknowledgements, simple facts):
 → Keep it short. One to three sentences max.

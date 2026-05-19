@@ -85,6 +85,8 @@ class Settings(BaseModel):
     max_history_turns: int = Field(default=20, gt=0)
     llm_timeout_seconds: int = Field(default=30, gt=0)
     llm_max_retries: int = Field(default=3, gt=0)
+    agent_parallelism_enabled: bool = True
+    agent_parallelism_max_workers: int = Field(default=3, gt=0)
 
     ragas_enabled: bool = True
 

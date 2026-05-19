@@ -77,10 +77,18 @@ class TraceBroker:
             yield event
         self._slots.pop(trace_id, None)
 
-    def make_callback(self, trace_id: str) -> Callable[[str, str, str], None]:
+    def make_callback(self, trace_id: str) -> Callable[..., None]:
         """Return a thread-safe callback suitable for passing into AgentRunner.run()."""
-        def _cb(event_type: str, status: str, message: str) -> None:
-            self.publish_sync(trace_id, TraceEvent(type=event_type, status=status, message=message))
+        def _cb(event_type: str, status: str, message: str, metadata: Optional[dict] = None) -> None:
+            self.publish_sync(
+                trace_id,
+                TraceEvent(
+                    type=event_type,
+                    status=status,
+                    message=message,
+                    metadata=metadata or {},
+                ),
+            )
         return _cb
 
     async def _cleanup_loop(self) -> None:
