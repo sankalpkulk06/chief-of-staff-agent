@@ -12,6 +12,7 @@ from app.core.habit_service import HabitService
 from app.core.ingest_coordinator import IngestCoordinator
 from app.core.qa_service import QAService
 from app.ingestion.ingest_service import IngestService
+from app.config.settings import get_google_client_secrets
 from app.services.email_service import EmailService
 from app.services.news_service import NewsService
 from app.services.url_ingestion_service import URLIngestionService
@@ -131,16 +132,9 @@ def create_chat_service(
     # corrupt the retriever's connection state.
     url_ingestion_service = create_url_ingestion_service(registry, chat_provider) if settings.url_ingestion_enabled else None
 
-    # Per-user Gmail token stored under data/credentials/{user_id}/
-    try:
-        user_creds_dir = paths.user_credentials_dir(user_id)
-        email_service = EmailService(
-            credentials_dir=paths.credentials_dir,
-            account_type="personal",
-            token_dir=user_creds_dir,
-        )
-    except Exception:
-        email_service = None
+    # Gmail service — tokens are stored per-user in Supabase; client secret from env var.
+    client_secrets = get_google_client_secrets(settings)
+    email_service = EmailService(client_secrets=client_secrets) if client_secrets else None
     return ChatService(
         retriever=retriever,
         chat_provider=chat_provider,

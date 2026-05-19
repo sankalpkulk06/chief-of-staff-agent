@@ -69,6 +69,11 @@ class Settings(BaseModel):
     supabase_url: str = ""
     database_url: str = ""  # PostgreSQL DSN — set to use Supabase/Postgres instead of SQLite+ChromaDB
 
+    # Gmail OAuth — base64-encoded contents of Google OAuth credentials.json (Web app type)
+    google_client_secrets_json: str = ""
+    # Public URL of this deployment — used to build the OAuth redirect_uri
+    sage_public_url: str = ""
+
     data_dir: Optional[Path] = None
 
     # Web UI auth — set SAGE_PASSPHRASE in .env to require a passphrase on login.
@@ -120,3 +125,18 @@ class Settings(BaseModel):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings.from_env()
+
+
+def get_google_client_secrets(settings: "Settings") -> Optional[dict]:
+    """Decode and parse GOOGLE_CLIENT_SECRETS_JSON. Returns None if not configured."""
+    import base64, json as _json
+    raw = settings.google_client_secrets_json.strip()
+    if not raw:
+        return None
+    try:
+        return _json.loads(base64.b64decode(raw).decode())
+    except Exception:
+        try:
+            return _json.loads(raw)
+        except Exception:
+            return None

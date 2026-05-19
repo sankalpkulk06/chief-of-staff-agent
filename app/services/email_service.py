@@ -1,9 +1,7 @@
 """Gmail email fetching and AI triage service."""
 import json
-import os
 import re
-from pathlib import Path
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel
 
@@ -29,54 +27,91 @@ class TriagedEmail(BaseModel):
     reason: str
 
 
-class EmailService:
-    def __init__(
-        self,
-        credentials_dir: Path,
-        account_type: AccountType,
-        token_dir: Optional[Path] = None,
-    ) -> None:
-        """
-        credentials_dir: directory containing credentials.json (shared OAuth client secret)
-        token_dir: directory to store/read the user OAuth token (per-user; defaults to credentials_dir)
-        """
-        self._credentials_dir = credentials_dir
-        self._account_type = account_type
-        token_location = token_dir or credentials_dir
-        self._token_path = token_location / f"{account_type}_token.json"
-        self._client_secrets_path = credentials_dir / "credentials.json"
+class EmailNotConnectedError(Exception):
+    """Raised when no OAuth token exists for the user."""
 
-    def _authenticate(self):
+
+class EmailService:
+    """
+    Gmail service backed by per-user tokens stored in Supabase.
+
+    client_secrets: the parsed contents of the Google OAuth credentials.json
+                    (type: web) — loaded from GOOGLE_CLIENT_SECRETS_JSON env var.
+    """
+
+    def __init__(self, client_secrets: Dict[str, Any], account_type: AccountType = "personal") -> None:
+        self._client_secrets = client_secrets
+        self._account_type = account_type
+
+    # ------------------------------------------------------------------
+    # Auth
+    # ------------------------------------------------------------------
+
+    def build_service(self, token_json: Dict) -> Tuple[Any, Optional[Dict]]:
+        """
+        Build a Gmail API client from a stored token dict.
+
+        Returns (service, refreshed_token_or_None).
+        refreshed_token_or_None is set when the token was refreshed and
+        the caller should persist it back to the DB.
+        """
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
 
-        if not self._client_secrets_path.exists():
-            raise FileNotFoundError(
-                f"Gmail credentials not found at {self._client_secrets_path}.\n"
-                "Download OAuth 2.0 credentials (Desktop app) from Google Cloud Console\n"
-                "and save as data/credentials/credentials.json"
-            )
+        creds = Credentials.from_authorized_user_info(token_json, GMAIL_READONLY_SCOPE)
 
-        creds = None
-        if self._token_path.exists():
-            creds = Credentials.from_authorized_user_file(str(self._token_path), GMAIL_READONLY_SCOPE)
-
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
+        refreshed: Optional[Dict] = None
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
+                refreshed = json.loads(creds.to_json())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    str(self._client_secrets_path), GMAIL_READONLY_SCOPE
-                )
-                creds = flow.run_local_server(port=0)
-            self._token_path.write_text(creds.to_json())
+                raise EmailNotConnectedError("Gmail token is invalid. Please reconnect your account.")
 
-        return build("gmail", "v1", credentials=creds)
+        return build("gmail", "v1", credentials=creds), refreshed
 
-    def fetch_recent(self, max_results: int = 20) -> List[EmailMessage]:
-        service = self._authenticate()
+    def get_oauth_url(self, redirect_uri: str, state: str) -> str:
+        """Generate a Google OAuth consent URL for the web flow."""
+        from google_auth_oauthlib.flow import Flow
+
+        flow = Flow.from_client_config(
+            self._client_secrets,
+            scopes=GMAIL_READONLY_SCOPE,
+            redirect_uri=redirect_uri,
+        )
+        auth_url, _ = flow.authorization_url(
+            access_type="offline",
+            prompt="consent",
+            state=state,
+        )
+        return auth_url
+
+    def exchange_code(self, code: str, redirect_uri: str, state: str) -> Dict:
+        """Exchange an OAuth authorization code for a token dict."""
+        from google_auth_oauthlib.flow import Flow
+
+        flow = Flow.from_client_config(
+            self._client_secrets,
+            scopes=GMAIL_READONLY_SCOPE,
+            redirect_uri=redirect_uri,
+            state=state,
+        )
+        flow.fetch_token(code=code)
+        return json.loads(flow.credentials.to_json())
+
+    # ------------------------------------------------------------------
+    # Fetch & triage
+    # ------------------------------------------------------------------
+
+    def fetch_recent(self, token_json: Dict, max_results: int = 20) -> Tuple[List[EmailMessage], Optional[Dict]]:
+        """
+        Fetch recent emails using a stored token.
+
+        Returns (emails, refreshed_token_or_None).
+        """
+        service, refreshed = self.build_service(token_json)
+
         response = (
             service.users()
             .messages()
@@ -107,7 +142,7 @@ class EmailService:
                 snippet=snippet,
             ))
 
-        return emails
+        return emails, refreshed
 
     def triage(self, emails: List[EmailMessage], chat_provider: "ChatProvider") -> List[TriagedEmail]:
         if not emails:

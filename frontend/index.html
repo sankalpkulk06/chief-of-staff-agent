@@ -1150,6 +1150,24 @@
   .profile-topbar .right { display: inline-flex; gap: 6px; align-items: center; }
   @media (max-width: 600px) { .profile-topbar { padding: 0 14px; } }
 
+  .integrations-list { display: flex; flex-direction: column; gap: 1px; }
+  .integration-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 16px; background: var(--bg-2); border-radius: var(--radius-md);
+    border: 1px solid var(--line);
+  }
+  .integration-icon { flex-shrink: 0; display: flex; align-items: center; }
+  .integration-info { flex: 1; min-width: 0; }
+  .integration-name { font-size: 14px; font-weight: 500; color: var(--text-1); }
+  .integration-status { font-size: 12px; color: var(--text-3); margin-top: 2px; font-family: var(--mono); }
+  .integration-status.connected { color: var(--ok); }
+  .btn-danger-soft {
+    background: rgba(210, 117, 117, 0.12);
+    color: var(--err);
+    border: 1px solid rgba(210, 117, 117, 0.25);
+  }
+  .btn-danger-soft:hover { background: rgba(210, 117, 117, 0.22); }
+
   .profile-shell {
     max-width: 1080px;
     margin: 0 auto;
@@ -2106,6 +2124,33 @@
         <div class="source-list"></div>
       </div>
 
+      <!-- Integrations -->
+      <div class="section" id="integrationsSection">
+        <div class="section-head">
+          <h2><span class="glyph">▍</span>Integrations</h2>
+          <span class="meta" id="integrationsMeta">loading…</span>
+        </div>
+        <div class="integrations-list">
+          <div class="integration-row" id="gmailIntegration">
+            <div class="integration-icon">
+              <svg viewBox="0 0 24 24" fill="none" width="20" height="20">
+                <rect width="24" height="24" rx="4" fill="#1a2820"/>
+                <path d="M4 8l8 5 8-5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"/>
+                <rect x="4" y="7" width="16" height="12" rx="1.5" stroke="var(--text-3)" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="integration-info">
+              <div class="integration-name">Gmail</div>
+              <div class="integration-status" id="gmailStatus">Checking…</div>
+            </div>
+            <div class="integration-action">
+              <button class="btn-sm" id="gmailConnectBtn" style="display:none" onclick="connectGmail()">Connect</button>
+              <button class="btn-sm btn-danger-soft" id="gmailDisconnectBtn" style="display:none" onclick="disconnectGmail()">Disconnect</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Privacy -->
       <div class="privacy-foot">
         <div class="lock">
@@ -2931,7 +2976,70 @@
     if (habits.status === 'fulfilled')  renderHabits(habits.value);
     if (analytics.status === 'fulfilled') renderAnalytics(analytics.value);
     if (sources.status === 'fulfilled') renderSources(sources.value);
+
+    loadEmailStatus();
   }
+
+  // ---- Gmail integration ----
+  async function loadEmailStatus() {
+    const statusEl  = document.getElementById('gmailStatus');
+    const connectBtn    = document.getElementById('gmailConnectBtn');
+    const disconnectBtn = document.getElementById('gmailDisconnectBtn');
+    const metaEl    = document.getElementById('integrationsMeta');
+    try {
+      const data = await apiFetch('GET', '/email/status');
+      if (data.connected) {
+        statusEl.textContent = 'Connected';
+        statusEl.className   = 'integration-status connected';
+        connectBtn.style.display    = 'none';
+        disconnectBtn.style.display = '';
+        if (metaEl) metaEl.textContent = '1 connected';
+      } else {
+        statusEl.textContent = 'Not connected';
+        statusEl.className   = 'integration-status';
+        connectBtn.style.display    = '';
+        disconnectBtn.style.display = 'none';
+        if (metaEl) metaEl.textContent = 'none connected';
+      }
+    } catch (_) {
+      statusEl.textContent = 'Unavailable';
+      statusEl.className   = 'integration-status';
+      if (metaEl) metaEl.textContent = '';
+    }
+  }
+
+  async function connectGmail() {
+    try {
+      const data = await apiFetch('GET', '/email/oauth/start');
+      window.location.href = data.auth_url;
+    } catch (e) {
+      showToast('Could not start Gmail connection: ' + (e.message || e));
+    }
+  }
+
+  async function disconnectGmail() {
+    if (!confirm('Disconnect Gmail? You can reconnect at any time.')) return;
+    try {
+      await apiFetch('DELETE', '/email/disconnect');
+      loadEmailStatus();
+      showToast('Gmail disconnected.');
+    } catch (e) {
+      showToast('Failed to disconnect: ' + (e.message || e));
+    }
+  }
+
+  // Show a success toast if redirected back from OAuth
+  (function checkOAuthReturn() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('email_connected') === '1') {
+      history.replaceState({}, '', window.location.pathname);
+      // Wait for auth then show toast + refresh status
+      setTimeout(() => {
+        showToast('Gmail connected successfully.');
+        loadEmailStatus();
+      }, 500);
+    }
+  })();
 
   // ---- Hero + stat row ----
   function renderProfileHero(p) {
@@ -3408,6 +3516,33 @@
   }
 
   document.getElementById('logoutBtn')?.addEventListener('click', logout);
+
+  // ---- Toast notification ----
+  function showToast(msg, duration = 3500) {
+    let el = document.getElementById('sageToast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'sageToast';
+      el.style.cssText = [
+        'position:fixed', 'bottom:28px', 'left:50%', 'transform:translateX(-50%) translateY(12px)',
+        'background:var(--bg-3)', 'color:var(--text-1)', 'border:1px solid var(--line-strong)',
+        'padding:10px 18px', 'border-radius:var(--radius-md)', 'font-size:13px',
+        'box-shadow:var(--shadow-md)', 'z-index:9999', 'opacity:0',
+        'transition:opacity 0.18s ease, transform 0.18s ease', 'pointer-events:none',
+      ].join(';');
+      document.body.appendChild(el);
+    }
+    clearTimeout(el._timer);
+    el.textContent = msg;
+    requestAnimationFrame(() => {
+      el.style.opacity = '1';
+      el.style.transform = 'translateX(-50%) translateY(0)';
+    });
+    el._timer = setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateX(-50%) translateY(12px)';
+    }, duration);
+  }
 
   // Boot — load server info, show login screen
   loadInfo();

@@ -4,16 +4,24 @@ from typing import Any, List, Optional
 
 from app.agents.base import AgentResult
 from app.providers.factory import ChatProvider
+from app.services.email_service import EmailNotConnectedError, EmailService
 
 log = logging.getLogger(__name__)
 
 
 class EmailAgent:
-    """Fetches and triages Gmail. Instantiated only when email service is available."""
+    """Fetches and triages Gmail. Reads/writes the OAuth token from the registry."""
 
-    def __init__(self, email_service: Any, chat_provider: ChatProvider, assistant_name: str = "Sage"):
+    def __init__(
+        self,
+        email_service: EmailService,
+        chat_provider: ChatProvider,
+        registry: Any,
+        assistant_name: str = "Sage",
+    ):
         self._email = email_service
         self._provider = chat_provider
+        self._registry = registry
         self._assistant_name = assistant_name
 
     def execute(
@@ -25,32 +33,53 @@ class EmailAgent:
         user_id: Optional[str] = None,
         response_style: Optional[str] = None,
     ) -> AgentResult:
-        try:
-            emails = self._email.fetch_recent()
-        except FileNotFoundError:
+        if not user_id:
             return AgentResult(
-                agent="email_agent",
-                task=task,
+                agent="email_agent", task=task,
+                output="I need to know who you are to fetch your email.",
+                success=False, error="no_user_id",
+            )
+
+        token_json = self._registry.get_email_token(user_id, "personal")
+        if not token_json:
+            return AgentResult(
+                agent="email_agent", task=task,
                 output=(
-                    "Gmail credentials not found. Run `sage email-personal` from the CLI "
-                    "first to authorise access."
+                    "Your Gmail account isn't connected yet. "
+                    "Go to **Settings → Connect Gmail** to link your account."
                 ),
-                success=False,
-                error="credentials_not_found",
+                success=False, error="not_connected",
+            )
+
+        try:
+            emails, refreshed_token = self._email.fetch_recent(token_json)
+        except EmailNotConnectedError as exc:
+            return AgentResult(
+                agent="email_agent", task=task,
+                output=(
+                    "Your Gmail token has expired or been revoked. "
+                    "Go to **Settings → Connect Gmail** to reconnect."
+                ),
+                success=False, error=str(exc),
             )
         except Exception as exc:
+            log.error("EmailAgent: fetch failed: %s", exc, exc_info=True)
             return AgentResult(
-                agent="email_agent",
-                task=task,
+                agent="email_agent", task=task,
                 output=f"Failed to fetch emails: {exc}",
-                success=False,
-                error=str(exc),
+                success=False, error=str(exc),
             )
+
+        # Persist refreshed token if Google rotated it
+        if refreshed_token:
+            try:
+                self._registry.upsert_email_token(user_id, refreshed_token)
+            except Exception as exc:
+                log.warning("EmailAgent: failed to persist refreshed token: %s", exc)
 
         if not emails:
             return AgentResult(
-                agent="email_agent",
-                task=task,
+                agent="email_agent", task=task,
                 output="Your inbox is empty — nothing to report.",
                 success=True,
             )
@@ -59,11 +88,9 @@ class EmailAgent:
             triaged = self._email.triage(emails, self._provider)
         except Exception as exc:
             return AgentResult(
-                agent="email_agent",
-                task=task,
+                agent="email_agent", task=task,
                 output=f"Fetched {len(emails)} emails but triage failed: {exc}",
-                success=False,
-                error=str(exc),
+                success=False, error=str(exc),
             )
 
         action_items = [t for t in triaged if t.category == "action"]

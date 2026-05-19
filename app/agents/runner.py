@@ -146,6 +146,7 @@ class AgentRunner:
             EmailAgent(
                 self._email_service,
                 self._provider_for("email_agent"),
+                registry=self._registry,
                 assistant_name=self._assistant_name,
             )
             if self._email_service

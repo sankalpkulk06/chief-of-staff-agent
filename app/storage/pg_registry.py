@@ -683,6 +683,79 @@ class PostgresRegistry:
         self._commit()
 
     # ------------------------------------------------------------------
+    # Gmail OAuth tokens
+    # ------------------------------------------------------------------
+
+    def get_email_token(self, user_id: str, account_type: str = "personal") -> Optional[Dict]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT token_json FROM user_email_tokens WHERE user_id = %s AND account_type = %s",
+                (user_id, account_type),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        if row is None:
+            return None
+        token = row["token_json"]
+        return token if isinstance(token, dict) else json.loads(token)
+
+    def upsert_email_token(self, user_id: str, token_json: dict, account_type: str = "personal") -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_email_tokens (user_id, account_type, token_json, updated_at)
+                VALUES (%s, %s, %s::jsonb, NOW())
+                ON CONFLICT (user_id, account_type) DO UPDATE
+                    SET token_json = EXCLUDED.token_json, updated_at = NOW()
+                """,
+                (user_id, account_type, json.dumps(token_json)),
+            )
+        self._commit()
+
+    def delete_email_token(self, user_id: str, account_type: str = "personal") -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "DELETE FROM user_email_tokens WHERE user_id = %s AND account_type = %s",
+                (user_id, account_type),
+            )
+        self._commit()
+
+    def has_email_token(self, user_id: str, account_type: str = "personal") -> bool:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM user_email_tokens WHERE user_id = %s AND account_type = %s",
+                (user_id, account_type),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        return row is not None
+
+    # ------------------------------------------------------------------
+    # OAuth state (CSRF token for Gmail OAuth flow)
+    # ------------------------------------------------------------------
+
+    def store_oauth_state(self, state: str, user_id: str) -> None:
+        with self._cursor() as cur:
+            # Purge expired states lazily
+            cur.execute("DELETE FROM oauth_states WHERE expires_at < NOW()")
+            cur.execute(
+                "INSERT INTO oauth_states (state, user_id) VALUES (%s, %s) ON CONFLICT (state) DO NOTHING",
+                (state, user_id),
+            )
+        self._commit()
+
+    def pop_oauth_state(self, state: str) -> Optional[str]:
+        """Validate and consume a state token. Returns user_id or None if invalid/expired."""
+        with self._cursor() as cur:
+            cur.execute(
+                "DELETE FROM oauth_states WHERE state = %s AND expires_at > NOW() RETURNING user_id",
+                (state,),
+            )
+            row = cur.fetchone()
+        self._commit()
+        return row["user_id"] if row else None
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
