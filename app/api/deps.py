@@ -7,7 +7,7 @@ from app.core.chat_service import ChatService
 _UNAUTH = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="Invalid credentials",
-    headers={"WWW-Authenticate": "Basic"},
+    # No WWW-Authenticate header — prevents the browser native Basic Auth prompt
 )
 
 

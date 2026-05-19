@@ -3033,11 +3033,14 @@
     const params = new URLSearchParams(window.location.search);
     if (params.get('email_connected') === '1') {
       history.replaceState({}, '', window.location.pathname);
-      // Wait for auth then show toast + refresh status
-      setTimeout(() => {
-        showToast('Gmail connected successfully.');
-        loadEmailStatus();
-      }, 500);
+      // Only show toast + refresh if already logged in
+      if (apiKey() && apiUsername()) {
+        setTimeout(() => {
+          showToast('Gmail connected successfully.');
+          loadEmailStatus();
+        }, 800);
+      }
+      // If not logged in yet, the profile load after login will pick it up
     }
   })();
 
