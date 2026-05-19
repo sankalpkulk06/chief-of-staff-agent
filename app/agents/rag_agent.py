@@ -1,6 +1,8 @@
 """RAG agent — searches the user's personal documents and answers from them."""
+import json
 import logging
-from typing import Any, List, Optional
+import re
+from typing import Any, Dict, List, Optional
 
 from app.agents.base import AgentResult
 from app.agents.prompts import load
@@ -10,6 +12,53 @@ from app.retrieval.retriever import Retriever
 log = logging.getLogger(__name__)
 
 _SYSTEM = load("rag")
+
+_FILTER_EXTRACT_SYSTEM = """\
+You extract metadata filters from a document search task.
+
+Given the task and recent conversation, identify:
+- "file_name": exact filename if the user refers to a specific file (e.g. "README.md", "notes.txt"). Use null if not mentioned or unclear.
+- "query": the cleaned semantic search query — what the user actually wants to know, without filler like "search_documents:" or filename references.
+
+Respond with ONLY valid JSON:
+{"query": "...", "file_name": "..." or null}
+
+Examples:
+task: "search_documents: summarize README.md"
+→ {"query": "summarize README.md", "file_name": "README.md"}
+
+task: "search_documents: give me a summary of the doc (README.md was uploaded)"
+→ {"query": "summary of the document", "file_name": "README.md"}
+
+task: "search_documents: key points in the document on Sage Personal AI Assistant"
+→ {"query": "key points Sage Personal AI Assistant", "file_name": null}
+
+task: "search_documents: what did I save about machine learning"
+→ {"query": "machine learning notes", "file_name": null}
+
+task: "search_documents: title of the README file"
+→ {"query": "title of README", "file_name": "README.md"}
+"""
+
+
+def _extract_filters(task: str, provider: OllamaChatProvider) -> Dict[str, Any]:
+    """Ask the LLM to pull a semantic query and optional file_name filter from the task."""
+    try:
+        response = provider.chat([
+            {"role": "system", "content": _FILTER_EXTRACT_SYSTEM},
+            {"role": "user", "content": f"task: \"{task}\""},
+        ])
+        cleaned = re.sub(r"```(?:json)?", "", response).strip().rstrip("`").strip()
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            return {
+                "query": data.get("query") or task,
+                "file_name": data.get("file_name") or None,
+            }
+    except Exception as exc:
+        log.debug("Filter extraction failed, falling back to raw task: %s", exc)
+    return {"query": task, "file_name": None}
 
 
 def _format_chunks(chunks: list) -> str:
@@ -51,17 +100,41 @@ class RAGAgent:
         user_id: Optional[str] = None,
     ) -> AgentResult:
         try:
-            retrieval = self._retriever.retrieve(question=task, top_k=self._top_k, user_id=user_id)
+            # Let the LLM identify the semantic query and any metadata filters
+            # (e.g. file_name) so the vector store can apply hard WHERE clauses
+            # rather than letting filename noise pollute the embedding search.
+            filters = _extract_filters(task, self._provider)
+            query = filters["query"]
+            file_name = filters.get("file_name")
+
             log.debug(
-                "RAG retrieve: task=%r top_k=%s user_id=%r chunks=%d",
-                task[:80], self._top_k, user_id, len(retrieval.chunks),
+                "RAG retrieve: query=%r file_name=%r user_id=%r top_k=%s",
+                query[:80], file_name, user_id, self._top_k,
             )
+
+            retrieval = self._retriever.retrieve(
+                question=query,
+                top_k=self._top_k,
+                user_id=user_id,
+                file_name=file_name,
+            )
+
+            if not retrieval.chunks:
+                # If a file_name filter was applied and returned nothing, retry
+                # without the filter — the filename may have been guessed wrong.
+                if file_name:
+                    log.debug("RAG: no chunks with file_name=%r, retrying without filter", file_name)
+                    retrieval = self._retriever.retrieve(
+                        question=query,
+                        top_k=self._top_k,
+                        user_id=user_id,
+                    )
 
             if not retrieval.chunks:
                 return AgentResult(
                     agent="rag_agent",
                     task=task,
-                    output=f"Nothing in your saved documents covers '{task}'. Want me to search the web instead?",
+                    output=f"Nothing in your saved documents covers '{original_question}'. Want me to search the web instead?",
                     success=True,
                     metadata={"chunks_found": 0, "top_score": 1.0},
                 )
@@ -71,7 +144,7 @@ class RAGAgent:
                 _SYSTEM
                 .replace("{assistant_name}", self._assistant_name)
                 .replace("{document_chunks}", document_chunks)
-                .replace("{user_query}", task)
+                .replace("{user_query}", original_question)
             )
 
             messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
