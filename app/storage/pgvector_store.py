@@ -1,14 +1,18 @@
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 import psycopg2
+import psycopg2.extensions
 import psycopg2.extras
 from psycopg2.extras import RealDictCursor
 
 from app.schemas.chunk import DocumentChunk
 from app.storage.chroma_store import ChromaVectorRecord
+
+log = logging.getLogger(__name__)
 
 
 class PgVectorStore:
@@ -17,15 +21,26 @@ class PgVectorStore:
     def __init__(self, database_url: str, embedding_dimension: int = 768):
         self._database_url = database_url
         self._embedding_dimension = embedding_dimension
-        self._conn = psycopg2.connect(database_url, cursor_factory=RealDictCursor)
-        self._conn.autocommit = False
+        self._conn = self._new_connection()
+
+    def _new_connection(self) -> psycopg2.extensions.connection:
+        conn = psycopg2.connect(self._database_url, cursor_factory=RealDictCursor)
+        conn.autocommit = False
+        return conn
 
     def _cursor(self):
         try:
-            self._conn.isolation_level
+            tx_status = self._conn.get_transaction_status()
+            if tx_status == psycopg2.extensions.TRANSACTION_STATUS_INERROR:
+                log.warning("PgVectorStore: connection in error state — rolling back and reconnecting")
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    self._conn = self._new_connection()
+            elif tx_status == psycopg2.extensions.TRANSACTION_STATUS_UNKNOWN:
+                self._conn = self._new_connection()
         except psycopg2.InterfaceError:
-            self._conn = psycopg2.connect(self._database_url, cursor_factory=RealDictCursor)
-            self._conn.autocommit = False
+            self._conn = self._new_connection()
         return self._conn.cursor()
 
     @property
@@ -75,51 +90,58 @@ class PgVectorStore:
         for embedding in embeddings:
             self._validate_embedding(embedding)
 
-        with self._cursor() as cur:
-            for chunk, embedding in zip(chunks, embeddings):
-                metadata: Dict[str, object] = {
-                    "document_id": chunk.document_id,
-                    "chunk_index": chunk.chunk_index,
-                    "source_path": chunk.source_path.as_posix(),
-                    "file_name": chunk.file_name,
-                    "token_count": chunk.token_count,
-                    "char_start": chunk.char_start,
-                    "char_end": chunk.char_end,
-                }
-                metadata.update(chunk.metadata)
+        try:
+            with self._cursor() as cur:
+                for chunk, embedding in zip(chunks, embeddings):
+                    metadata: Dict[str, object] = {
+                        "document_id": chunk.document_id,
+                        "chunk_index": chunk.chunk_index,
+                        "source_path": chunk.source_path.as_posix(),
+                        "file_name": chunk.file_name,
+                        "token_count": chunk.token_count,
+                        "char_start": chunk.char_start,
+                        "char_end": chunk.char_end,
+                    }
+                    metadata.update(chunk.metadata)
 
-                # Upsert the chunk row first (in case it doesn't exist yet)
-                cur.execute(
-                    """
-                    INSERT INTO chunks (
-                        chunk_id, document_id, chunk_index, text, token_count,
-                        char_start, char_end, source_path, file_name,
-                        document_checksum_sha256, metadata_json
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (chunk_id) DO UPDATE SET
-                        text       = EXCLUDED.text,
-                        updated_at = NOW()
-                    """,
-                    (
-                        chunk.chunk_id, chunk.document_id, chunk.chunk_index, chunk.text,
-                        chunk.token_count, chunk.char_start, chunk.char_end,
-                        chunk.source_path.as_posix(), chunk.file_name,
-                        chunk.document_checksum_sha256,
-                        json.dumps(chunk.metadata, sort_keys=True),
-                    ),
-                )
+                    # Upsert the chunk row first (in case it doesn't exist yet)
+                    cur.execute(
+                        """
+                        INSERT INTO chunks (
+                            chunk_id, document_id, chunk_index, text, token_count,
+                            char_start, char_end, source_path, file_name,
+                            document_checksum_sha256, metadata_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (chunk_id) DO UPDATE SET
+                            text       = EXCLUDED.text,
+                            updated_at = NOW()
+                        """,
+                        (
+                            chunk.chunk_id, chunk.document_id, chunk.chunk_index, chunk.text,
+                            chunk.token_count, chunk.char_start, chunk.char_end,
+                            chunk.source_path.as_posix(), chunk.file_name,
+                            chunk.document_checksum_sha256,
+                            json.dumps(chunk.metadata, sort_keys=True),
+                        ),
+                    )
 
-                # Upsert the embedding
-                vector_str = "[" + ",".join(str(v) for v in embedding) + "]"
-                cur.execute(
-                    """
-                    INSERT INTO chunk_embeddings (chunk_id, embedding)
-                    VALUES (%s, %s::extensions.vector)
-                    ON CONFLICT (chunk_id) DO UPDATE SET embedding = EXCLUDED.embedding
-                    """,
-                    (chunk.chunk_id, vector_str),
-                )
-        self._conn.commit()
+                    # Upsert the embedding
+                    vector_str = "[" + ",".join(str(v) for v in embedding) + "]"
+                    cur.execute(
+                        """
+                        INSERT INTO chunk_embeddings (chunk_id, embedding)
+                        VALUES (%s, %s::extensions.vector)
+                        ON CONFLICT (chunk_id) DO UPDATE SET embedding = EXCLUDED.embedding
+                        """,
+                        (chunk.chunk_id, vector_str),
+                    )
+            self._conn.commit()
+        except Exception:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            raise
 
     def query_similar(
         self,
@@ -186,10 +208,20 @@ class PgVectorStore:
             LIMIT %s
         """
 
-        with self._cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
+        try:
+            with self._cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+            self._conn.commit()
+        except Exception as exc:
+            log.error("PgVectorStore.query_similar failed (where=%r): %s", where, exc, exc_info=True)
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            raise
 
+        log.debug("PgVectorStore.query_similar: returned %d rows (where=%r)", len(rows), where)
         records: List[ChromaVectorRecord] = []
         for row in rows:
             metadata = row["metadata_json"] or {}

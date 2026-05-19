@@ -96,6 +96,7 @@ class RAGAgent:
             )
 
         except Exception as exc:
+            log.error("RAGAgent: retrieval failed: %s", exc, exc_info=True)
             return AgentResult(
                 agent="rag_agent",
                 task=task,

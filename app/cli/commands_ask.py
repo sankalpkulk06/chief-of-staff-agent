@@ -112,10 +112,10 @@ def create_chat_service(
 ) -> ChatService:
     settings = get_settings()
     paths = settings.resolve_paths()
-    shared_vector_store = create_vector_store(settings.database_url, paths.chroma_dir, settings.embedding_dimension)
+    retrieval_vector_store = create_vector_store(settings.database_url, paths.chroma_dir, settings.embedding_dimension)
     retriever = Retriever(
         embeddings_provider=create_embeddings_provider(settings),
-        vector_store=shared_vector_store,
+        vector_store=retrieval_vector_store,
         metadata_registry=create_registry(settings.database_url, paths.sqlite_db_path),
         default_top_k=settings.retrieval_top_k,
     )
@@ -127,7 +127,9 @@ def create_chat_service(
 
     web_search_service = create_web_search_service()
     habit_service = HabitService(registry, user_id=user_id)
-    url_ingestion_service = create_url_ingestion_service(registry, chat_provider, shared_vector_store) if settings.url_ingestion_enabled else None
+    # URL ingestion gets its own vector store connection so a failed write can't
+    # corrupt the retriever's connection state.
+    url_ingestion_service = create_url_ingestion_service(registry, chat_provider) if settings.url_ingestion_enabled else None
 
     # Per-user Gmail token stored under data/credentials/{user_id}/
     try:
