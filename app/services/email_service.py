@@ -80,6 +80,10 @@ class EmailService:
             scopes=GMAIL_READONLY_SCOPE,
             redirect_uri=redirect_uri,
         )
+        # Disable PKCE — we use a client secret (server-side flow), so PKCE
+        # is not needed and causes "Missing code verifier" on exchange.
+        flow.code_verifier = None
+        flow.oauth2session.code_challenge_method = None
         auth_url, _ = flow.authorization_url(
             access_type="offline",
             prompt="consent",
@@ -97,6 +101,8 @@ class EmailService:
             redirect_uri=redirect_uri,
             state=state,
         )
+        flow.code_verifier = None
+        flow.oauth2session.code_challenge_method = None
         flow.fetch_token(code=code)
         return json.loads(flow.credentials.to_json())
 
