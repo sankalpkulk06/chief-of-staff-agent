@@ -608,6 +608,32 @@ class PostgresRegistry:
             cur.execute("DELETE FROM nudge_context WHERE phone_number = %s", (phone_number,))
         self._commit()
 
+    def set_whatsapp_hitl_context(self, phone_number: str, hitl_id: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO whatsapp_hitl_context (phone_number, hitl_id, sent_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (phone_number) DO UPDATE SET hitl_id = EXCLUDED.hitl_id, sent_at = NOW()
+                """,
+                (phone_number, hitl_id),
+            )
+        self._commit()
+
+    def get_whatsapp_hitl_context(self, phone_number: str) -> Optional[str]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT hitl_id FROM whatsapp_hitl_context WHERE phone_number = %s AND sent_at >= NOW() - INTERVAL '10 minutes'",
+                (phone_number,),
+            )
+            row = cur.fetchone()
+        return row["hitl_id"] if row else None
+
+    def clear_whatsapp_hitl_context(self, phone_number: str) -> None:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM whatsapp_hitl_context WHERE phone_number = %s", (phone_number,))
+        self._commit()
+
     # ------------------------------------------------------------------
     # User settings
     # ------------------------------------------------------------------

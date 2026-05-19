@@ -118,6 +118,15 @@ class SQLiteRegistry:
             )
         """)
 
+        # whatsapp_hitl_context — pending HITL approval awaiting yes/no from WhatsApp
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS whatsapp_hitl_context (
+                phone_number TEXT PRIMARY KEY,
+                hitl_id      TEXT NOT NULL,
+                sent_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
     def close(self) -> None:
         self._connection.close()
 
@@ -628,6 +637,31 @@ class SQLiteRegistry:
 
     def clear_nudge_context(self, phone_number: str) -> None:
         self._connection.execute("DELETE FROM nudge_context WHERE phone_number = ?", (phone_number,))
+        self._connection.commit()
+
+    def set_whatsapp_hitl_context(self, phone_number: str, hitl_id: str) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO whatsapp_hitl_context (phone_number, hitl_id, sent_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(phone_number) DO UPDATE SET hitl_id = excluded.hitl_id, sent_at = excluded.sent_at
+            """,
+            (phone_number, hitl_id, self._format_datetime(datetime.now())),
+        )
+        self._connection.commit()
+
+    def get_whatsapp_hitl_context(self, phone_number: str) -> Optional[str]:
+        expires_after = self._format_datetime(datetime.now() - timedelta(minutes=10))
+        row = self._connection.execute(
+            "SELECT hitl_id FROM whatsapp_hitl_context WHERE phone_number = ? AND sent_at >= ?",
+            (phone_number, expires_after),
+        ).fetchone()
+        return row["hitl_id"] if row else None
+
+    def clear_whatsapp_hitl_context(self, phone_number: str) -> None:
+        self._connection.execute(
+            "DELETE FROM whatsapp_hitl_context WHERE phone_number = ?", (phone_number,)
+        )
         self._connection.commit()
 
     # ------------------------------------------------------------------

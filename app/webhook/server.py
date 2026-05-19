@@ -208,9 +208,27 @@ async def webhook(
         return Response(content="", media_type="application/xml")
 
     phone = From
-
-    pending_habit_id = _registry.get_nudge_context(phone)
     body_lower = Body.strip().lower()
+
+    # HITL approval — check before habit nudge so yes/no isn't swallowed by habit logic
+    pending_hitl_id = _registry.get_whatsapp_hitl_context(phone)
+    if pending_hitl_id:
+        if body_lower in ("yes", "y", "approve", "confirm"):
+            reply = _resolve_hitl_whatsapp(pending_hitl_id, approved=True)
+        elif body_lower in ("no", "n", "reject", "cancel"):
+            reply = _resolve_hitl_whatsapp(pending_hitl_id, approved=False)
+        else:
+            reply = None  # not a yes/no — fall through to normal chat
+
+        if reply is not None:
+            _registry.clear_whatsapp_hitl_context(phone)
+            if _whatsapp_service:
+                _safe_send(phone, reply)
+            _registry.update_whatsapp_last_active(phone)
+            return Response(content="", media_type="application/xml")
+
+    # Habit nudge fast-reply
+    pending_habit_id = _registry.get_nudge_context(phone)
     if pending_habit_id and body_lower in REPLY_MAP and _habit_service:
         status = REPLY_MAP[body_lower]
         habit = _habit_service.get_habit_by_id(pending_habit_id)
@@ -233,6 +251,11 @@ async def webhook(
     )
     reply = result.answer
 
+    # If the agent raised a HITL request, store it so the next yes/no resolves it
+    if result.hitl_pending and result.hitl_id:
+        _registry.set_whatsapp_hitl_context(phone, result.hitl_id)
+        reply = f"{reply}\n\nReply *yes* to confirm or *no* to cancel."
+
     if _whatsapp_service:
         _safe_send(phone, reply)
     else:
@@ -246,6 +269,45 @@ async def webhook(
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+def _resolve_hitl_whatsapp(hitl_id: str, approved: bool) -> str:
+    from datetime import datetime, timezone
+    from app.providers.factory import create_chat_provider, agent_model_specs
+
+    row = _registry.get_hitl_request(hitl_id)
+    if not row:
+        return "That approval request no longer exists."
+    if row["status"] != "pending":
+        return "That request has already been resolved."
+    expires_at = row.get("expires_at")
+    if expires_at and datetime.now(timezone.utc) > expires_at:
+        _registry.resolve_hitl_request(hitl_id, "expired")
+        return "That request expired — action was not taken."
+
+    if not approved:
+        context = (row.get("action_payload") or {}).get("__hitl_context") or {}
+        _registry.resolve_hitl_request(hitl_id, "rejected")
+        continuation = context.get("continuation_output", "")
+        return f"Rejected — action was not taken.{chr(10) + chr(10) + continuation if continuation else ''}"
+
+    settings = get_settings()
+    specs = agent_model_specs(settings)
+    chat_provider = create_chat_provider(settings, specs["action_agent"])
+    from app.agents.action_agent import ActionAgent
+    agent = ActionAgent(
+        chat_provider=chat_provider,
+        registry=_registry,
+        schedule_todo_callback=None,
+    )
+    context = (row.get("action_payload") or {}).get("__hitl_context") or {}
+    result = agent.execute_approved(hitl_id, row["user_id"])
+    _registry.resolve_hitl_request(hitl_id, "approved")
+    continuation = context.get("continuation_output", "")
+    reply = result.output or "Done."
+    if continuation:
+        reply = f"{reply}\n\n{continuation}"
+    return reply
 
 
 def _safe_send(to: str, body: str) -> bool:
