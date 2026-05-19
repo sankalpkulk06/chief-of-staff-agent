@@ -486,7 +486,7 @@ class PostgresRegistry:
     # WhatsApp
     # ------------------------------------------------------------------
 
-    def get_or_create_whatsapp_session(self, phone_number: str) -> str:
+    def get_or_create_whatsapp_session(self, phone_number: str, user_id: str = "") -> str:
         with self._cursor() as cur:
             cur.execute("SELECT session_id FROM whatsapp_sessions WHERE phone_number = %s", (phone_number,))
             row = cur.fetchone()
@@ -495,11 +495,11 @@ class PostgresRegistry:
         session_id = str(uuid.uuid4())
         with self._cursor() as cur:
             cur.execute(
-                "INSERT INTO whatsapp_sessions (phone_number, session_id) VALUES (%s, %s)",
-                (phone_number, session_id),
+                "INSERT INTO whatsapp_sessions (phone_number, session_id, user_id) VALUES (%s, %s, %s)",
+                (phone_number, session_id, user_id),
             )
         self._commit()
-        self.create_session(session_id=session_id, title=f"WhatsApp {phone_number}")
+        self.create_session(session_id=session_id, title=f"WhatsApp {phone_number}", user_id=user_id)
         return session_id
 
     def update_whatsapp_last_active(self, phone_number: str) -> None:

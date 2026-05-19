@@ -81,6 +81,10 @@ class SQLiteRegistry:
         if "user_id" not in _cols("named_sessions"):
             self._connection.execute("ALTER TABLE named_sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
 
+        # whatsapp_sessions
+        if "user_id" not in _cols("whatsapp_sessions"):
+            self._connection.execute("ALTER TABLE whatsapp_sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+
         # chat_turns — backfill created_at for rows inserted before the column existed
         if "created_at" not in _cols("chat_turns"):
             self._connection.execute("ALTER TABLE chat_turns ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
@@ -513,7 +517,7 @@ class SQLiteRegistry:
     # WhatsApp
     # ------------------------------------------------------------------
 
-    def get_or_create_whatsapp_session(self, phone_number: str) -> str:
+    def get_or_create_whatsapp_session(self, phone_number: str, user_id: str = "") -> str:
         row = self._connection.execute(
             "SELECT session_id FROM whatsapp_sessions WHERE phone_number = ?", (phone_number,)
         ).fetchone()
@@ -521,10 +525,10 @@ class SQLiteRegistry:
             return row["session_id"]
         session_id = str(uuid.uuid4())
         self._connection.execute(
-            "INSERT INTO whatsapp_sessions (phone_number, session_id) VALUES (?, ?)",
-            (phone_number, session_id),
+            "INSERT INTO whatsapp_sessions (phone_number, session_id, user_id) VALUES (?, ?, ?)",
+            (phone_number, session_id, user_id),
         )
-        self.create_session(session_id=session_id, title=f"WhatsApp {phone_number}")
+        self.create_session(session_id=session_id, title=f"WhatsApp {phone_number}", user_id=user_id)
         self._connection.commit()
         return session_id
 

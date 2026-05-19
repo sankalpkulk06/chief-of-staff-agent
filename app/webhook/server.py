@@ -3,9 +3,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Form, HTTPException, Response
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from twilio.request_validator import RequestValidator
 
 from app.api.router import api_router
 from app.cli.commands_ask import create_chat_service, create_news_service
@@ -22,6 +23,7 @@ _chat_service = None
 _registry = None
 _whatsapp_service: Optional[WhatsAppService] = None
 _habit_service: Optional[HabitService] = None
+_whatsapp_user_id: Optional[str] = None
 
 REPLY_MAP = {
     "done": "done",
@@ -35,9 +37,24 @@ REPLY_MAP = {
 }
 
 
+async def _validate_twilio_signature(
+    request: Request,
+    x_twilio_signature: str = Header(default=""),
+) -> None:
+    settings = get_settings()
+    if not settings.twilio_auth_token:
+        return
+    validator = RequestValidator(settings.twilio_auth_token)
+    form = await request.form()
+    params = dict(form)
+    url = str(request.url)
+    if not validator.validate(url, params, x_twilio_signature):
+        raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _chat_service, _registry, _whatsapp_service, _habit_service
+    global _chat_service, _registry, _whatsapp_service, _habit_service, _whatsapp_user_id
     settings = get_settings()
     paths = settings.resolve_paths()
     validate_runtime_configuration(settings)
@@ -60,6 +77,25 @@ async def lifespan(app: FastAPI):
             )
 
     app.state.registry = _registry
+
+    # Resolve which user owns incoming WhatsApp messages
+    if username:
+        user_row = _registry.get_user_by_username(username)
+        if user_row:
+            _whatsapp_user_id = user_row["user_id"]
+            logger.info("WhatsApp messages will be owned by user '%s' (%s)", username, _whatsapp_user_id)
+        else:
+            logger.warning(
+                "SAGE_USERNAME='%s' not found in DB — WhatsApp messages will NOT be "
+                "associated with any user. Ensure SAGE_PASSPHRASE is set so the user "
+                "is auto-seeded on startup.",
+                username,
+            )
+    else:
+        logger.warning(
+            "SAGE_USERNAME is not set — WhatsApp messages will NOT be associated with "
+            "any user. Set SAGE_USERNAME in your environment."
+        )
 
     if (
         settings.whatsapp_enabled
@@ -153,7 +189,7 @@ async def serve_frontend() -> FileResponse:
     return FileResponse(str(_frontend_index), media_type="text/html")
 
 
-@app.post("/webhook")
+@app.post("/webhook", dependencies=[Depends(_validate_twilio_signature)])
 async def webhook(
     From: Optional[str] = Form(None),
     Body: str = Form(""),
@@ -162,6 +198,14 @@ async def webhook(
 ):
     if not From:
         raise HTTPException(status_code=400, detail="Missing From field")
+
+    if not _whatsapp_user_id:
+        logger.error(
+            "Received WhatsApp message from %s but no user is configured. "
+            "Set SAGE_USERNAME and SAGE_PASSPHRASE so a user exists at startup.",
+            From,
+        )
+        return Response(content="", media_type="application/xml")
 
     phone = From
 
@@ -179,12 +223,13 @@ async def webhook(
             _registry.update_whatsapp_last_active(phone)
             return Response(content="", media_type="application/xml")
 
-    session_id = _registry.get_or_create_whatsapp_session(phone)
+    session_id = _registry.get_or_create_whatsapp_session(phone, user_id=_whatsapp_user_id)
 
     result = _chat_service.answer_in_session(
         session_id=session_id,
         question=Body,
         response_style="whatsapp",
+        user_id=_whatsapp_user_id,
     )
     reply = result.answer
 
