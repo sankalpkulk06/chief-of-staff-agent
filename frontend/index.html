@@ -825,6 +825,11 @@
   .composer textarea::placeholder { color: var(--text-4); }
   .composer .tools { display: inline-flex; align-items: center; gap: 2px; padding-bottom: 4px; }
   .composer .tools .icon-btn { width: 30px; height: 30px; }
+  .composer .tools .icon-btn.uploading {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: var(--accent-line);
+  }
   .send-btn {
     width: 32px; height: 32px;
     border-radius: 8px;
@@ -1955,9 +1960,10 @@
             <span class="key">↵</span>
           </div>
           <div class="tools">
-            <button type="button" class="icon-btn" title="Attach" aria-label="Attach">
+            <button type="button" class="icon-btn" id="attachBtn" title="Attach document" aria-label="Attach document">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11.5 7.5l-4 4a2.5 2.5 0 1 1-3.5-3.5l5-5a1.5 1.5 0 1 1 2 2l-5 5a.5.5 0 0 1-.7-.7l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
+            <input id="fileInput" type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" hidden />
             <button type="button" class="icon-btn" title="Voice note" aria-label="Voice note">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M3.5 8a4.5 4.5 0 0 0 9 0M8 12.5V14" stroke-linecap="round"/></svg>
             </button>
@@ -2279,6 +2285,26 @@
     };
     if (body != null) opts.body = JSON.stringify(body);
     const res = await fetch(API + path, opts);
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      const err = new Error(text);
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  }
+
+  async function apiUpload(path, file) {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(API + path, {
+      method: 'POST',
+      headers: {
+        'X-Sage-Key': apiKey(),
+        'X-Sage-Username': apiUsername(),
+      },
+      body: form,
+    });
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
       const err = new Error(text);
@@ -2626,6 +2652,8 @@
   // ================================================================
   const ta      = document.getElementById('composerInput');
   const sendBtn = document.getElementById('sendBtn');
+  const attachBtn = document.getElementById('attachBtn');
+  const fileInput = document.getElementById('fileInput');
 
   function autosize() {
     ta.style.height = 'auto';
@@ -2639,6 +2667,68 @@
   document.getElementById('composer')?.addEventListener('submit', (e) => {
     e.preventDefault(); handleSend();
   });
+
+  attachBtn?.addEventListener('click', () => fileInput?.click());
+  fileInput?.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (file) handleFileUpload(file);
+    fileInput.value = '';
+  });
+
+  async function handleFileUpload(file) {
+    if (!currentSessionId || !threadInner) return;
+
+    document.getElementById('typingMsg')?.remove();
+
+    const u = document.createElement('div');
+    u.className = 'msg msg-user';
+    u.innerHTML = `<div class="bubble">Attached ${escapeHtml(file.name)}</div>`;
+    threadInner.appendChild(u);
+
+    const typingEl = document.createElement('div');
+    typingEl.className = 'msg msg-sage';
+    typingEl.innerHTML = `<div class="avatar-s">S</div><div class="typing"><span></span><span></span><span></span></div>`;
+    threadInner.appendChild(typingEl);
+
+    attachBtn?.classList.add('uploading');
+    if (attachBtn) attachBtn.disabled = true;
+    scrollThreadToBottom();
+
+    try {
+      const data = await apiUpload(`/sessions/${currentSessionId}/upload`, file);
+      const replyEl = document.createElement('div');
+      replyEl.className = 'msg msg-sage';
+      replyEl.innerHTML = `
+        <div class="avatar-s">S</div>
+        <div class="bubble-wrap">
+          <div class="bubble">${renderMarkdown(data.reply)}</div>
+          <div class="msg-meta">
+            <span>${formatNow()}</span>
+            <span class="sources">· indexed · ${data.latency_ms}ms</span>
+          </div>
+        </div>`;
+      typingEl.replaceWith(replyEl);
+      loadProfile().catch(() => {});
+    } catch (err) {
+      const detail = (() => {
+        try { return JSON.parse(err.message).detail; } catch { return ''; }
+      })();
+      const errEl = document.createElement('div');
+      errEl.className = 'msg msg-sage';
+      errEl.innerHTML = `
+        <div class="avatar-s">S</div>
+        <div class="bubble-wrap">
+          <div class="bubble" style="color:var(--err)">
+            ${escapeHtml(detail || 'Could not upload that document. Supported files: .txt, .md, .pdf.')}
+          </div>
+        </div>`;
+      typingEl.replaceWith(errEl);
+    } finally {
+      attachBtn?.classList.remove('uploading');
+      if (attachBtn) attachBtn.disabled = false;
+      scrollThreadToBottom();
+    }
+  }
 
   async function handleSend() {
     const v = ta.value.trim();

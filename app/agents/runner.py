@@ -255,7 +255,7 @@ class AgentRunner:
                     security_flags=_security_flags,
                 )
 
-        if len(agent_results) == 1 and agent_results[0].agent == "research_agent":
+        if len(agent_results) == 1 and agent_results[0].agent in {"research_agent", "rag_agent"}:
             final_output = agent_results[0].output
             if self._security_agent is not None:
                 final_output = self._security_agent.check_output(

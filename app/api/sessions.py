@@ -1,15 +1,26 @@
 import time
 import uuid
+import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from app.api.deps import get_chat_service, get_current_user, get_registry
+from app.config import get_settings
 from app.core.chat_service import ChatService
+from app.core.ingest_coordinator import IngestCoordinator
+from app.ingestion.chunker import Chunker, ChunkingConfig
+from app.ingestion.ingest_service import IngestService
+from app.parsers.router import ParserRouter
+from app.providers.factory import create_embeddings_provider
 from app.providers.ollama_embeddings import OllamaProviderError
+from app.storage.factory import create_vector_store
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # Response models
@@ -67,6 +78,61 @@ class PatchSessionRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+
+
+def _safe_upload_name(filename: str) -> str:
+    name = Path(filename or "upload.txt").name
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    return safe or "upload.txt"
+
+
+def _build_ingest_coordinator(registry: Any) -> IngestCoordinator:
+    settings = get_settings()
+    paths = settings.resolve_paths()
+    parser_router = ParserRouter()
+    return IngestCoordinator(
+        ingest_service=IngestService(
+            parser_router=parser_router,
+            chunker=Chunker(
+                ChunkingConfig(
+                    chunk_size=settings.chunk_size,
+                    chunk_overlap=settings.chunk_overlap,
+                )
+            ),
+        ),
+        embeddings_provider=create_embeddings_provider(settings),
+        registry=registry,
+        vector_store=create_vector_store(
+            settings.database_url,
+            paths.chroma_dir,
+            settings.embedding_dimension,
+        ),
+        supported_extensions=parser_router.supported_extensions,
+    )
+
+
+def _record_upload_exchange(
+    registry: Any,
+    session_id: str,
+    filename: str,
+    reply: str,
+) -> None:
+    history = registry.get_session_turns(session_id)
+    turn_index = len(history)
+    registry.append_turn(
+        session_id=session_id,
+        turn_id=str(uuid.uuid4()),
+        role="user",
+        content=f"Uploaded document: {filename}",
+        turn_index=turn_index,
+    )
+    registry.append_turn(
+        session_id=session_id,
+        turn_id=str(uuid.uuid4()),
+        role="assistant",
+        content=reply,
+        turn_index=turn_index + 1,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -241,4 +307,96 @@ async def chat(
         latency_ms=latency_ms,
         hitl_pending=result.hitl_pending,
         hitl_id=result.hitl_id,
+    )
+
+
+@router.post("/{session_id}/upload", response_model=ChatResponse)
+async def upload_document(
+    session_id: str,
+    file: UploadFile = File(...),
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
+) -> ChatResponse:
+    filename = _safe_upload_name(file.filename or "upload")
+    suffix = Path(filename).suffix.lower()
+    parser_router = ParserRouter()
+    if suffix not in parser_router.supported_extensions:
+        supported = ", ".join(parser_router.supported_extensions)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported file type '{suffix or '(none)'}'. Supported: {supported}",
+        )
+
+    registry.create_session(session_id=session_id, title="", user_id=current_user["user_id"])
+
+    settings = get_settings()
+    paths = settings.resolve_paths()
+    upload_dir = paths.data_dir / "uploads" / current_user["user_id"] / uuid.uuid4().hex
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stored_path = upload_dir / filename
+
+    t0 = time.monotonic()
+    total = 0
+    try:
+        with stored_path.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="Upload is too large. Max file size is 25 MB.",
+                    )
+                out.write(chunk)
+
+        coordinator = _build_ingest_coordinator(registry)
+        try:
+            summary = coordinator.ingest(stored_path, user_id=current_user["user_id"])
+        finally:
+            vector_store = getattr(coordinator, "_vector_store", None)
+            close = getattr(vector_store, "close", None)
+            if callable(close):
+                close()
+    except HTTPException:
+        if stored_path.exists():
+            stored_path.unlink()
+        raise
+    except OllamaProviderError as exc:
+        if stored_path.exists():
+            stored_path.unlink()
+        raise HTTPException(status_code=503, detail=f"Embedding provider failed: {exc}") from exc
+    except Exception as exc:
+        if stored_path.exists():
+            stored_path.unlink()
+        raise HTTPException(status_code=500, detail=f"Upload ingestion failed: {exc}") from exc
+
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    if summary.files_processed:
+        reply = (
+            f"Uploaded and indexed `{filename}`. "
+            f"Created {summary.chunks_created} chunk"
+            f"{'' if summary.chunks_created == 1 else 's'} in the knowledge base."
+        )
+    elif summary.files_skipped and summary.warnings:
+        reply = f"`{filename}` was already indexed, so I skipped re-ingesting it."
+    else:
+        detail = "; ".join(summary.errors or summary.warnings) or "No chunks were created."
+        reply = f"I couldn't index `{filename}`. {detail}"
+
+    _record_upload_exchange(registry, session_id, filename, reply)
+
+    return ChatResponse(
+        reply=reply,
+        sources=[],
+        steps=[
+            StepOut(
+                agent="ingest",
+                task=f"upload document: {filename}",
+                success=summary.files_processed > 0 or summary.files_skipped > 0,
+                error="; ".join(summary.errors) if summary.errors else None,
+            )
+        ],
+        latency_ms=latency_ms,
     )

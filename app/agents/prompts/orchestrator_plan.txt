@@ -45,6 +45,7 @@ Examples:
 - "what is my name?" / "what's my job?" = READ → action_agent (list_facts)
 - "what's happening in AI?" / "latest news on X" = RESEARCH → research_agent (fetch_news / web_search)
 - "what did I save about X?" / "search my notes for Y" = READ → rag_agent (search_documents)
+- "summarize the document I uploaded" / "based on the file I uploaded..." = READ → rag_agent (search_documents)
 - "hi" / "thanks" / "what's 2+2" = CONVERSE → conversational only
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -95,6 +96,12 @@ EXAMPLES
 "what did I save about machine learning?" →
 [{"agent":"rag_agent","task":"search_documents: find saved notes and documents about machine learning"},
  {"agent":"conversational","task":"summarize the relevant content found in the user's documents"}]
+
+"summarize the document I just uploaded" →
+[{"agent":"rag_agent","task":"search_documents: summarize the document the user just uploaded"}]
+
+"based on the document I uploaded, what should I do next?" →
+[{"agent":"rag_agent","task":"search_documents: find recommendations and next steps from the uploaded document"}]
 
 "what's the latest in AI?" →
 [{"agent":"research_agent","task":"fetch_news: search for latest AI news and developments"},

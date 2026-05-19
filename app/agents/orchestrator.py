@@ -22,6 +22,16 @@ _FAST_PATH_STARTS = frozenset([
 ])
 
 
+def _friendly_failure(errors: str) -> str:
+    detail = errors.lower()
+    if "429" in detail or "rate_limit" in detail or "quota" in detail or "tokens per day" in detail:
+        return (
+            "The chat model is rate-limited right now. This happened during answer generation, "
+            "not during document chunking or embedding. Try again in a few minutes or switch models."
+        )
+    return "I ran into some trouble completing your request. Try again in a moment."
+
+
 class OrchestratorAgent:
     """Plans the multi-agent execution and synthesizes the final reply."""
 
@@ -70,7 +80,7 @@ class OrchestratorAgent:
 
         if not successful:
             failed_errors = "; ".join(r.error or "unknown error" for r in results if not r.success)
-            return f"I ran into some trouble completing your request: {failed_errors}"
+            return _friendly_failure(failed_errors)
 
         # Only skip synthesis when there was genuinely a single planned step.
         # If multiple steps were planned but only one succeeded, we still want
@@ -109,6 +119,42 @@ class OrchestratorAgent:
           "find info on X and also check news about Y"
         """
         q = question.lower()
+
+        # Uploaded/saved document follow-ups should go straight to RAG.
+        # This avoids routing "the document I just uploaded" to general chat,
+        # where the model cannot search the indexed chunks.
+        _doc_refs = {
+            "document",
+            "uploaded",
+            "upload",
+            "file",
+            "notes.txt",
+            "pdf",
+            "saved docs",
+            "knowledge base",
+        }
+        _doc_actions = {
+            "summarize",
+            "summary",
+            "what is this about",
+            "what should i do",
+            "key points",
+            "takeaways",
+            "based on",
+            "according to",
+            "what does it say",
+            "find",
+        }
+        if any(ref in q for ref in _doc_refs) and any(action in q for action in _doc_actions):
+            return OrchestratorPlan(
+                steps=[
+                    AgentStep(
+                        agent="rag_agent",
+                        task=f"search_documents: {question}",
+                    )
+                ],
+                reasoning="uploaded/saved document question — search indexed user documents",
+            )
 
         # Detect: web-search intent + news intent in the same message
         _search_words = {"search", "look up", "find", "what is", "explain", "tell me about", "google"}
