@@ -1,6 +1,6 @@
 # Sage — Complete System Review
 
-**Last updated:** May 19, 2026  
+**Last updated:** May 19, 2026 (evening)  
 **Branch:** main  
 **Live URL:** https://sage-2607286466.us-central1.run.app  
 **Purpose:** Full reference for the Wipro FDE assignment review — agents, pipeline, security, storage, deployment.
@@ -580,6 +580,7 @@ Key Cloud Run settings:
 - `--memory 2Gi` — required for sentence-transformers model load
 - `--timeout 300` — allows cold-start model initialization
 - `--allow-unauthenticated` — auth handled at app layer
+- `--min-instances 1` — keeps one container always warm; eliminates the 20-30s cold-start hang on first request (~$15/month)
 
 ### GitHub Actions (CI/CD)
 
@@ -759,7 +760,7 @@ resolved_at     TIMESTAMPTZ
 
 | Limitation | Details |
 |------------|---------|
-| **Cold start latency** | First request after Cloud Run scales to zero takes ~20-30s for sentence-transformers to initialize. |
+| **Cold start latency** | ~~First request after Cloud Run scales to zero takes ~20-30s.~~ Fixed — `--min-instances 1` keeps one container always warm. |
 | **Gmail OAuth in Testing mode** | Only manually-added test users can connect Gmail until the app is verified by Google. |
 
 ---
@@ -776,7 +777,7 @@ resolved_at     TIMESTAMPTZ
 | Assignment report | Not built | |
 | Parallel agent execution | Not built | |
 | RAG reranker / hybrid BM25+vector | Not built | |
-| `--min-instances 1` for warm Cloud Run | Not configured | Costs ~$15/month |
+| `--min-instances 1` for warm Cloud Run | ✅ Done | Applied live + in deploy.yml |
 | HITL expiry background cleanup | Not built | Expired rows accumulate |
 | HITL on WhatsApp | Not built | WhatsApp path bypasses HITL |
 | Gmail verification (Google) | Not submitted | App is in Testing mode — only approved test users can connect |
