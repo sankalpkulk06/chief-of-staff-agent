@@ -108,91 +108,14 @@ class OrchestratorAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_recent_upload(history: List[dict[str, Any]]) -> Optional[str]:
-        """Return the filename of the most recently uploaded document, if any."""
-        import re as _re
-        for turn in reversed(history[-10:]):
-            if turn.get("role") == "user":
-                m = _re.search(r"Uploaded document:\s*(\S+)", turn.get("content", ""))
-                if m:
-                    return m.group(1)
-        return None
-
-    @staticmethod
     def _rule_based_plan(question: str, history: Optional[List[dict[str, Any]]] = None) -> Optional["OrchestratorPlan"]:
         """
-        Detect compound requests that small models reliably fail to split.
-        Returns a plan if a rule fires, None to fall through to LLM planning.
-
-        Handles patterns like:
-          "search for X and tell me the news about Y"
-          "what is X and what's the news on Y"
-          "find info on X and also check news about Y"
+        Detect compound requests that LLMs reliably fail to split correctly.
+        Kept narrow — only catches the web-search + news compound pattern.
+        Document/RAG routing is intentionally left to the LLM so it can use
+        conversation context (e.g. a recent upload) to understand implicit intent.
         """
         q = question.lower()
-
-        # Uploaded/saved document follow-ups should go straight to RAG.
-        # This avoids routing "the document I just uploaded" to general chat,
-        # where the model cannot search the indexed chunks.
-        _doc_refs = {
-            "document",
-            "doc",
-            "uploaded",
-            "upload",
-            "file",
-            "notes.txt",
-            ".md",
-            ".pdf",
-            ".txt",
-            "pdf",
-            "readme",
-            "saved docs",
-            "knowledge base",
-            "you indexed",
-            "i shared",
-            "i sent",
-        }
-        _doc_actions = {
-            "summarize",
-            "summary",
-            "title",
-            "explain",
-            "tell me about",
-            "what is this about",
-            "what is in",
-            "what's in",
-            "what should i do",
-            "key points",
-            "main points",
-            "takeaways",
-            "based on",
-            "according to",
-            "what does it say",
-            "what does it cover",
-            "find",
-            "search",
-            "overview",
-            "highlights",
-        }
-        if any(ref in q for ref in _doc_refs) and any(action in q for action in _doc_actions):
-            task = question
-            # If the question is implicitly about a recently-uploaded file (no explicit
-            # filename mentioned), surface the filename from session history so the
-            # retriever can target it.
-            has_explicit_filename = any(ext in q for ext in (".md", ".pdf", ".txt", ".docx"))
-            if not has_explicit_filename and history:
-                recent_file = OrchestratorAgent._extract_recent_upload(history)
-                if recent_file and recent_file.lower() not in q:
-                    task = f"{question} (referring to the uploaded file: {recent_file})"
-            return OrchestratorPlan(
-                steps=[
-                    AgentStep(
-                        agent="rag_agent",
-                        task=f"search_documents: {task}",
-                    )
-                ],
-                reasoning="uploaded/saved document question — search indexed user documents",
-            )
 
         # Detect: web-search intent + news intent in the same message
         _search_words = {"search", "look up", "find", "what is", "explain", "tell me about", "google"}

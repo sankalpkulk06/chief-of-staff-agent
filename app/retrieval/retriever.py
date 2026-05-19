@@ -110,10 +110,5 @@ class Retriever:
 
     @staticmethod
     def _extract_file_name(question: str) -> Optional[str]:
-        # Prefer explicit filename with extension (e.g. "README.md", "notes.txt")
         match = re.search(r"\b([A-Za-z0-9][A-Za-z0-9._-]*\.(?:txt|md|pdf|docx?))\b", question)
-        if match:
-            return match.group(1)
-        # Also check the parenthetical hint injected by the orchestrator
-        hint = re.search(r"referring to the uploaded file:\s*(\S+)", question)
-        return hint.group(1) if hint else None
+        return match.group(1) if match else None

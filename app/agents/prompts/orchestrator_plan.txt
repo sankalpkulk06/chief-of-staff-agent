@@ -17,6 +17,9 @@ action_agent — manages ALL personal user data (read AND write)
 rag_agent — searches ONLY the user's own saved documents and uploaded files
   • search_documents(query) — semantic search over personal notes, files, and articles
   • Use ONLY when the user references something they saved, uploaded, or ingested
+  • IMPORTANT: use conversation history to resolve implicit references. If the user says
+    "the doc", "the file", "it", "that", "what I shared" — look back at the chat to find
+    what document they mean and name it explicitly in the task.
 
 research_agent — retrieves live external information from the web
   • web_search(query) — general web search (how-to, tutorials, facts, products)
@@ -102,6 +105,21 @@ EXAMPLES
 
 "based on the document I uploaded, what should I do next?" →
 [{"agent":"rag_agent","task":"search_documents: find recommendations and next steps from the uploaded document"}]
+
+[history shows: "Uploaded document: README.md"] + "give me a summary of the doc" →
+[{"agent":"rag_agent","task":"search_documents: summarize README.md — the document the user just uploaded"}]
+
+[history shows: "Uploaded document: notes.pdf"] + "what's the main point of it?" →
+[{"agent":"rag_agent","task":"search_documents: find the main point of notes.pdf"}]
+
+"what is the title of the README file I uploaded?" →
+[{"agent":"rag_agent","task":"search_documents: find the title of README.md"}]
+
+"give me the key takeaways from the doc on Sage Personal AI Assistant" →
+[{"agent":"rag_agent","task":"search_documents: key takeaways from the Sage Personal AI Assistant document"}]
+
+"do I have any notes on machine learning?" →
+[{"agent":"rag_agent","task":"search_documents: find saved notes or documents about machine learning"}]
 
 "what's the latest in AI?" →
 [{"agent":"research_agent","task":"fetch_news: search for latest AI news and developments"},
