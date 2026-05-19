@@ -53,7 +53,8 @@ class ActionAgent:
             else self._habit_service
         )
         try:
-            action, params = self._extract_action(task)
+            habit_names = [h.name for h in habit_svc._get_all_active()] if habit_svc else []
+            action, params = self._extract_action(task, habit_names=habit_names)
             return self._dispatch(
                 action, params, task,
                 fact_svc=fact_svc, habit_svc=habit_svc,
@@ -91,9 +92,14 @@ class ActionAgent:
 
     # ------------------------------------------------------------------
 
-    def _extract_action(self, task: str) -> tuple[str, dict]:
+    def _extract_action(self, task: str, habit_names: Optional[list] = None) -> tuple[str, dict]:
+        if habit_names:
+            habits_context = "Existing habits (use exact name when logging): " + ", ".join(f'"{n}"' for n in habit_names)
+        else:
+            habits_context = ""
+        system = _EXTRACT_SYSTEM.replace("{habits_context}", habits_context)
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": _EXTRACT_SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": f"Task: {task}"},
         ]
         response = self._provider.chat(messages=messages)

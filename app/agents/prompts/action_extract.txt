@@ -8,5 +8,9 @@ Possible actions:
 - remember_fact: save a personal or work fact. Params: fact (str), category ("personal"|"work")
 - list_facts: list stored facts. Params: category ("personal"|"work"|"all")
 
+{habits_context}
+
+For log_habit: if the user's phrasing loosely matches an existing habit name, use the exact stored habit name — not the user's wording. E.g. "I read 10 pages of a book" → name: "read 10 pages" (if that habit exists).
+
 Output ONLY valid JSON:
 {"action": "action_name", "params": {...}}
