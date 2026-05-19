@@ -272,8 +272,13 @@ class AgentRunner:
 
                 top_score = result.metadata.get("top_score", 1.0)
                 chunks_found = result.metadata.get("chunks_found", 0)
-                if chunks_found == 0 and top_score > self._rag_fallback_threshold and self._research is not None:
-                    _trace("rag_agent", "fallback", "No chunks found, escalating to web search")
+                # Fallback to web when: no chunks at all, OR chunks were retrieved but
+                # the best match has poor cosine distance (> 0.65 means likely irrelevant).
+                # The second condition catches the case where the vector store returns
+                # top-K results but none are about the requested topic.
+                poor_match = top_score > 0.65
+                if (chunks_found == 0 or poor_match) and self._research is not None:
+                    _trace("rag_agent", "fallback", "Low relevance in documents, searching the web")
                     result = self._research.execute(step.task, question, history, agent_results)
             else:
                 result = agent.execute(step.task, question, history, agent_results, user_id=user_id)

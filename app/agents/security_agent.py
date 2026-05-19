@@ -301,7 +301,9 @@ class SecurityAgent:
                 result = json.loads(match.group())
                 inject = bool(result.get("inject", False))
                 confidence = str(result.get("confidence", "low")).lower()
-                return inject and confidence in {"high", "medium"}
+                # Only block on high confidence — medium has too many false positives
+                # on benign queries that contain words like "check", "summarize", etc.
+                return inject and confidence == "high"
         except Exception as exc:
             log.warning("SecurityAgent: LLM injection check failed: %s", exc)
         return False
