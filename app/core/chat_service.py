@@ -429,7 +429,7 @@ class ChatService:
 
         if lowered == "/todo" or lowered.startswith("/todo "):
             args = command[len("/todo"):].strip()
-            return self._todo_command(args, response_style=response_style)
+            return self._todo_command(args, response_style=response_style, user_id=effective_uid)
 
         if lowered == "/apple-reminder" or lowered.startswith("/apple-reminder "):
             return self._style_status("Apple Reminders integration has been removed. Use /todo instead.", "ℹ️", response_style)
@@ -534,13 +534,13 @@ class ChatService:
         due_str = f" due {due_at.strftime('%a, %b %d at %I:%M%p')}" if due_at else ""
         return self._style_status(f"Added Sage reminder: {todo['title']}{due_str}.", "✅", response_style)
 
-    def _todo_command(self, args: str, response_style: Optional[str] = None) -> str:
+    def _todo_command(self, args: str, response_style: Optional[str] = None, user_id: Optional[str] = None) -> str:
         if not args:
             return self._style_status("Usage: /todo <task> [#list] [@due-date]", "📝", response_style)
         task, list_name, due_at = self._parse_task_list_and_due_date(args)
         if not task:
             return self._style_status("Usage: /todo <task> [#list] [@due-date]", "📝", response_style)
-        todo = self._registry.create_todo(title=task, list_name=list_name, due_at=due_at)
+        todo = self._registry.create_todo(title=task, list_name=list_name, due_at=due_at, user_id=user_id or self._user_id)
         if due_at and self._schedule_todo_callback:
             self._schedule_todo_callback(todo)
         due_str = f" due {due_at.strftime('%a, %b %d at %I:%M%p')}" if due_at else ""

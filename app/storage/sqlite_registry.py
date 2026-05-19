@@ -487,6 +487,28 @@ class SQLiteRegistry:
         )
         self._connection.commit()
 
+    def list_todos(self, user_id: str = "") -> List[Dict[str, object]]:
+        rows = self._connection.execute(
+            """
+            SELECT * FROM todos
+            WHERE user_id = ? AND completed_at IS NULL
+            ORDER BY
+                CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,
+                due_at ASC,
+                created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_todo(self, todo_id: str, user_id: str = "") -> bool:
+        cur = self._connection.execute(
+            "DELETE FROM todos WHERE id = ? AND user_id = ?",
+            (todo_id, user_id),
+        )
+        self._connection.commit()
+        return cur.rowcount > 0
+
     # ------------------------------------------------------------------
     # WhatsApp
     # ------------------------------------------------------------------

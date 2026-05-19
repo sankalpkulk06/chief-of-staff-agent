@@ -148,7 +148,7 @@ class ActionAgent:
             )
 
         handlers = {
-            "add_todo": self._add_todo,
+            "add_todo": lambda p, t: self._add_todo(p, t, user_id=user_id),
             "add_habit": lambda p, t: self._add_habit(p, t, habit_svc),
             "log_habit": lambda p, t: self._log_habit(p, t, habit_svc),
             "get_habits": lambda p, t: self._get_habits(p, t, habit_svc),
@@ -189,13 +189,13 @@ class ActionAgent:
             return f"save {category} fact: {fact}"
         return f"perform action: {action}"
 
-    def _add_todo(self, params: dict, task: str) -> AgentResult:
+    def _add_todo(self, params: dict, task: str, user_id: Optional[str] = None) -> AgentResult:
         if not self._registry:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="no_registry")
         todo_task = params.get("task", task)
         list_name = params.get("list_name")
         due_at = parse_due_date(params.get("due_date", ""))
-        todo = self._registry.create_todo(title=todo_task, list_name=list_name, due_at=due_at)
+        todo = self._registry.create_todo(title=todo_task, list_name=list_name, due_at=due_at, user_id=user_id or "")
         if due_at and self._schedule_todo_callback:
             self._schedule_todo_callback(todo)
         due_str = f" due {due_at.strftime('%a, %b %d at %I:%M%p')}" if due_at else ""

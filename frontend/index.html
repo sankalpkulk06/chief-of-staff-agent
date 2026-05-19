@@ -1626,6 +1626,99 @@
   }
   .panel .panel-title .hint { color: var(--text-4); text-transform: none; letter-spacing: 0; font-size: 10.5px; }
 
+  /* Todos section */
+  .todo-add-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .todo-add-form input {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .todo-add-form input:focus { border-color: var(--accent-line); }
+  .todo-add-form .inp-title { flex: 1 1 180px; min-width: 120px; }
+  .todo-add-form .inp-due   { width: 150px; flex-shrink: 0; color: var(--text-3); }
+  .todo-add-form .inp-due::-webkit-calendar-picker-indicator { filter: invert(0.5); cursor: pointer; }
+  .todo-add-form .btn-add-todo {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .todo-add-form .btn-add-todo:hover { opacity: 0.85; }
+  .todo-add-form .btn-add-todo:disabled { opacity: 0.4; cursor: default; }
+  .todo-list { display: flex; flex-direction: column; gap: 4px; }
+  .todo-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    transition: border-color 0.15s;
+  }
+  .todo-row:hover { border-color: var(--accent-line); }
+  .todo-row.completing { opacity: 0.4; transition: opacity 0.2s; }
+  .todo-check {
+    width: 16px; height: 16px; flex-shrink: 0;
+    border: 1.5px solid var(--text-4);
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .todo-check:hover { border-color: var(--accent); }
+  .todo-title {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .todo-due {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-4);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .todo-due.overdue { color: #D85A30; }
+  .todo-list-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+    background: var(--bg-3);
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .todo-del {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-4); padding: 2px 4px; border-radius: 3px;
+    font-size: 14px; line-height: 1; flex-shrink: 0;
+    transition: color 0.15s;
+  }
+  .todo-del:hover { color: #D85A30; }
+
   .heatmap {
     display: grid;
     grid-template-columns: 22px repeat(24, 1fr);
@@ -2117,6 +2210,22 @@
           <span class="meta">last 7 days · ▦ done · ▢ skip · ◌ future</span>
         </div>
         <div class="habits-card" id="habitsCard">
+          <!-- rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Todos & Reminders -->
+      <div class="section" id="todosSection">
+        <div class="section-head">
+          <h2><span class="glyph">▍</span>Reminders &amp; todos</h2>
+          <span class="meta" id="todosMeta">loading…</span>
+        </div>
+        <form class="todo-add-form" id="todoAddForm" onsubmit="return false;">
+          <input class="inp-title" id="todoTitleInput" type="text" placeholder="New reminder or task…" maxlength="200" autocomplete="off" />
+          <input class="inp-due" id="todoDueInput" type="datetime-local" title="Due date (optional)" />
+          <button class="btn-add-todo" id="todoAddBtn" type="button">+ Add</button>
+        </form>
+        <div class="todo-list" id="todoList">
           <!-- rendered by JS -->
         </div>
       </div>
@@ -3123,12 +3232,13 @@
 
   async function loadProfile() {
     // Fire all requests in parallel
-    const [profile, facts, habits, analytics, sources] = await Promise.allSettled([
+    const [profile, facts, habits, analytics, sources, todosRes] = await Promise.allSettled([
       apiFetch('GET', '/profile'),
       apiFetch('GET', '/facts'),
       apiFetch('GET', '/habits'),
       apiFetch('GET', '/analytics'),
       apiFetch('GET', '/sources'),
+      apiFetch('GET', '/todos'),
     ]);
 
     if (profile.status === 'fulfilled') renderProfileHero(profile.value);
@@ -3136,9 +3246,150 @@
     if (habits.status === 'fulfilled')  renderHabits(habits.value);
     if (analytics.status === 'fulfilled') renderAnalytics(analytics.value);
     if (sources.status === 'fulfilled') renderSources(sources.value);
+    if (todosRes.status === 'fulfilled') renderTodos(todosRes.value);
 
     loadEmailStatus();
   }
+
+  // ---- Todos / Reminders ----
+
+  function formatDueDate(dueDateStr) {
+    if (!dueDateStr) return null;
+    const d = new Date(dueDateStr);
+    if (isNaN(d)) return null;
+    const now = new Date();
+    const overdue = d < now;
+    const opts = { month: 'short', day: 'numeric' };
+    if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dateStr = d.toLocaleDateString([], opts);
+    return { label: `${dateStr} · ${timeStr}`, overdue };
+  }
+
+  function renderTodos(todos) {
+    const list = document.getElementById('todoList');
+    const meta = document.getElementById('todosMeta');
+    if (!list) return;
+    if (meta) meta.textContent = todos.length ? `${todos.length} pending` : 'none pending';
+
+    if (!todos.length) {
+      list.innerHTML = '<div style="padding:12px 0;color:var(--text-4);font-size:13px;">No pending reminders. Add one above or say "remind me to…" in chat.</div>';
+      return;
+    }
+    list.innerHTML = todos.map(t => {
+      const due = formatDueDate(t.due_at);
+      const dueHtml = due
+        ? `<span class="todo-due${due.overdue ? ' overdue' : ''}">${escapeHtml(due.label)}</span>`
+        : `<span class="todo-due">no due date</span>`;
+      const tagHtml = t.list_name
+        ? `<span class="todo-list-tag">#${escapeHtml(t.list_name)}</span>`
+        : '';
+      return `
+        <div class="todo-row" id="todo-${escapeHtml(t.id)}">
+          <div class="todo-check" title="Mark complete" onclick="completeTodo('${escapeHtml(t.id)}')"></div>
+          <span class="todo-title">${escapeHtml(t.title)}</span>
+          ${tagHtml}
+          ${dueHtml}
+          <button class="todo-del" title="Delete" onclick="deleteTodo('${escapeHtml(t.id)}')">✕</button>
+        </div>`;
+    }).join('');
+  }
+
+  async function completeTodo(id) {
+    const row = document.getElementById(`todo-${id}`);
+    if (row) row.classList.add('completing');
+    try {
+      await apiFetch('PATCH', `/todos/${id}/complete`);
+      if (row) {
+        row.style.transition = 'opacity 0.3s, max-height 0.3s';
+        row.style.opacity = '0';
+        row.style.maxHeight = '0';
+        row.style.overflow = 'hidden';
+        setTimeout(() => row.remove(), 300);
+      }
+      const meta = document.getElementById('todosMeta');
+      const remaining = document.querySelectorAll('#todoList .todo-row').length - 1;
+      if (meta) meta.textContent = remaining > 0 ? `${remaining} pending` : 'none pending';
+      if (remaining === 0) setTimeout(() => renderTodos([]), 350);
+    } catch (e) {
+      if (row) row.classList.remove('completing');
+      showToast('Could not complete todo: ' + (e.message || e));
+    }
+  }
+
+  async function deleteTodo(id) {
+    const row = document.getElementById(`todo-${id}`);
+    if (row) row.classList.add('completing');
+    try {
+      await apiFetch('DELETE', `/todos/${id}`);
+      if (row) {
+        row.style.transition = 'opacity 0.3s, max-height 0.3s';
+        row.style.opacity = '0';
+        row.style.maxHeight = '0';
+        row.style.overflow = 'hidden';
+        setTimeout(() => row.remove(), 300);
+      }
+      const meta = document.getElementById('todosMeta');
+      const remaining = document.querySelectorAll('#todoList .todo-row').length - 1;
+      if (meta) meta.textContent = remaining > 0 ? `${remaining} pending` : 'none pending';
+      if (remaining === 0) setTimeout(() => renderTodos([]), 350);
+    } catch (e) {
+      if (row) row.classList.remove('completing');
+      showToast('Could not delete todo: ' + (e.message || e));
+    }
+  }
+
+  async function addTodo() {
+    const titleEl = document.getElementById('todoTitleInput');
+    const dueEl = document.getElementById('todoDueInput');
+    const btn = document.getElementById('todoAddBtn');
+    const title = titleEl?.value.trim();
+    if (!title) { titleEl?.focus(); return; }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+    try {
+      const body = { title };
+      if (dueEl?.value) body.due_at = new Date(dueEl.value).toISOString();
+      const created = await apiFetch('POST', '/todos', body);
+      if (titleEl) titleEl.value = '';
+      if (dueEl) dueEl.value = '';
+
+      // Prepend new row into list
+      const list = document.getElementById('todoList');
+      const emptyMsg = list?.querySelector('div[style]');
+      if (emptyMsg) emptyMsg.remove();
+
+      const due = formatDueDate(created.due_at);
+      const dueHtml = due
+        ? `<span class="todo-due${due.overdue ? ' overdue' : ''}">${escapeHtml(due.label)}</span>`
+        : `<span class="todo-due">no due date</span>`;
+      const row = document.createElement('div');
+      row.className = 'todo-row';
+      row.id = `todo-${created.id}`;
+      row.innerHTML = `
+        <div class="todo-check" title="Mark complete" onclick="completeTodo('${escapeHtml(created.id)}')"></div>
+        <span class="todo-title">${escapeHtml(created.title)}</span>
+        ${dueHtml}
+        <button class="todo-del" title="Delete" onclick="deleteTodo('${escapeHtml(created.id)}')">✕</button>`;
+      list?.prepend(row);
+
+      const meta = document.getElementById('todosMeta');
+      if (meta) {
+        const count = document.querySelectorAll('#todoList .todo-row').length;
+        meta.textContent = `${count} pending`;
+      }
+      titleEl?.focus();
+    } catch (e) {
+      showToast('Could not add todo: ' + (e.message || e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '+ Add'; }
+    }
+  }
+
+  document.getElementById('todoAddBtn')?.addEventListener('click', addTodo);
+  document.getElementById('todoTitleInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') addTodo();
+  });
 
   // ---- Gmail integration ----
   async function loadEmailStatus() {

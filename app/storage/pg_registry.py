@@ -457,6 +457,31 @@ class PostgresRegistry:
             cur.execute("UPDATE todos SET completed_at = NOW() WHERE id = %s", (todo_id,))
         self._commit()
 
+    def list_todos(self, user_id: str = "") -> List[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM todos
+                WHERE user_id = %s AND completed_at IS NULL
+                ORDER BY
+                    CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,
+                    due_at ASC NULLS LAST,
+                    created_at DESC
+                """,
+                (user_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def delete_todo(self, todo_id: str, user_id: str = "") -> bool:
+        with self._cursor() as cur:
+            cur.execute(
+                "DELETE FROM todos WHERE id = %s AND user_id = %s",
+                (todo_id, user_id),
+            )
+            deleted = cur.rowcount > 0
+        self._commit()
+        return deleted
+
     # ------------------------------------------------------------------
     # WhatsApp
     # ------------------------------------------------------------------
