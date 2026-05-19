@@ -2316,8 +2316,8 @@
   // API layer
   // ================================================================
   const API = '/api/v1';
-  function apiKey()      { return sessionStorage.getItem('sage_key')      || ''; }
-  function apiUsername() { return sessionStorage.getItem('sage_username') || ''; }
+  function apiKey()      { return localStorage.getItem('sage_key')      || ''; }
+  function apiUsername() { return localStorage.getItem('sage_username') || ''; }
 
   async function apiFetch(method, path, body) {
     const opts = {
@@ -2465,8 +2465,8 @@
     loginBtn.querySelector('span').textContent = 'Checking…';
     try {
       const res = await apiFetch('POST', '/auth/login', { username, password });
-      sessionStorage.setItem('sage_key', password);
-      sessionStorage.setItem('sage_username', res.username);
+      localStorage.setItem('sage_key', password);
+      localStorage.setItem('sage_username', res.username);
       await enterChat();
     } catch (err) {
       setLoginError(err.status === 401 ? 'Incorrect username or password.' : 'Could not reach Sage — is the server running?');
@@ -2498,8 +2498,8 @@
     btn.querySelector('span').textContent = 'Creating…';
     try {
       const res = await apiFetch('POST', '/auth/signup', { username, password });
-      sessionStorage.setItem('sage_key', password);
-      sessionStorage.setItem('sage_username', res.username);
+      localStorage.setItem('sage_key', password);
+      localStorage.setItem('sage_username', res.username);
       await enterChat();
     } catch (err) {
       const msg = err.status === 409 ? 'Username already taken.' :
@@ -2518,7 +2518,7 @@
   // ================================================================
   async function enterChat() {
     // Merge logged-in username into serverInfo before applying to UI
-    const loggedInUsername = sessionStorage.getItem('sage_username');
+    const loggedInUsername = localStorage.getItem('sage_username');
     if (loggedInUsername && serverInfo) serverInfo.username = loggedInUsername;
     applyInfoToUI(serverInfo);
     document.body.dataset.screen = 'chat';
@@ -3490,8 +3490,8 @@
   // Logout
   // ================================================================
   function logout() {
-    sessionStorage.removeItem('sage_key');
-    sessionStorage.removeItem('sage_username');
+    localStorage.removeItem('sage_key');
+    localStorage.removeItem('sage_username');
     currentSessionId = null;
 
     // Reset thread
