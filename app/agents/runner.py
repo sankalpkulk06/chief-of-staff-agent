@@ -174,7 +174,15 @@ class AgentRunner:
         response_style: Optional[str] = None,
         top_k: Optional[int] = None,
         user_id: Optional[str] = None,
+        trace_callback: Optional[Callable[[str, str, str], None]] = None,
     ) -> RunResult:
+        def _trace(event_type: str, status: str, message: str) -> None:
+            if trace_callback is not None:
+                try:
+                    trace_callback(event_type, status, message)
+                except Exception:
+                    pass
+
         t0 = time.monotonic()
 
         # History truncation — prevent context window overflow on long sessions
@@ -183,6 +191,7 @@ class AgentRunner:
 
         # Security: input check — runs before orchestrator so injections never reach LLM
         if self._security_agent is not None:
+            _trace("security", "running", "Checking input safety")
             sec = self._security_agent.check_input(question, user_id=user_id or "")
             if sec.blocked:
                 latency_ms = int((time.monotonic() - t0) * 1000)
@@ -192,6 +201,7 @@ class AgentRunner:
                     rejection = "You're sending messages too quickly. Please wait a moment."
                 else:
                     rejection = "Your message was blocked due to a security policy violation."
+                _trace("security", "error", sec.reason or "blocked")
                 return RunResult(
                     output=rejection,
                     plan=OrchestratorPlan(steps=[]),
@@ -207,6 +217,7 @@ class AgentRunner:
             _security_flags = []
 
         # 1. Plan
+        _trace("orchestrator", "running", "Planning response")
         plan = self._orchestrator.plan(question, history)
 
         # Guard: strip invalid agent names (prevents orchestrator routing to itself)
@@ -214,11 +225,15 @@ class AgentRunner:
         # Guard: cap total steps to prevent runaway multi-step plans
         plan.steps = plan.steps[:self._MAX_STEPS]
 
+        step_count = len(plan.steps)
+        _trace("orchestrator", "complete", f"{step_count} step{'s' if step_count != 1 else ''} planned")
+
         # 2. Execute steps sequentially; pass previous outputs as context
         agent_results: List[AgentResult] = []
         for step in plan.steps:
             agent = self._resolve_agent(step.agent)
             if agent is None:
+                _trace(step.agent, "error", f"Agent not available")
                 agent_results.append(AgentResult(
                     agent=step.agent,
                     task=step.task,
@@ -227,6 +242,8 @@ class AgentRunner:
                     error=f"Agent '{step.agent}' is not available (missing service).",
                 ))
                 continue
+
+            _trace(step.agent, "running", step.task[:80])
 
             if step.agent == "conversational":
                 result = self._conversational.execute(
@@ -256,9 +273,19 @@ class AgentRunner:
                 top_score = result.metadata.get("top_score", 1.0)
                 chunks_found = result.metadata.get("chunks_found", 0)
                 if chunks_found == 0 and top_score > self._rag_fallback_threshold and self._research is not None:
+                    _trace("rag_agent", "fallback", "No chunks found, escalating to web search")
                     result = self._research.execute(step.task, question, history, agent_results)
             else:
                 result = agent.execute(step.task, question, history, agent_results, user_id=user_id)
+
+            if result.success:
+                chunks_found = result.metadata.get("chunks_found")
+                if chunks_found is not None:
+                    _trace(step.agent, "complete", f"Retrieved {chunks_found} chunk{'s' if chunks_found != 1 else ''}")
+                else:
+                    _trace(step.agent, "complete", "Done")
+            else:
+                _trace(step.agent, "error", (result.error or "failed")[:80])
 
             agent_results.append(result)
 
@@ -266,6 +293,7 @@ class AgentRunner:
             # steps or synthesize, as subsequent agents would produce output that
             # makes the reply sound like the action already completed.
             if result.metadata.get("hitl_pending"):
+                _trace("action_agent", "waiting", "Waiting for your approval")
                 latency_ms = int((time.monotonic() - t0) * 1000)
                 return RunResult(
                     output=result.output,
@@ -278,9 +306,11 @@ class AgentRunner:
         if len(agent_results) == 1 and agent_results[0].agent in {"research_agent", "rag_agent"}:
             final_output = agent_results[0].output
             if self._security_agent is not None:
+                _trace("output_check", "running", "Scrubbing output")
                 final_output = self._security_agent.check_output(
                     final_output, user_id=user_id or ""
                 )
+            _trace("complete", "complete", "Done")
             latency_ms = int((time.monotonic() - t0) * 1000)
             return RunResult(
                 output=final_output,
@@ -292,6 +322,7 @@ class AgentRunner:
 
         # 3. Synthesize — inject stored user facts for persona-aware replies.
         # Create a per-request FactService scoped to the actual user, not the startup default.
+        _trace("synthesis", "running", "Synthesizing results")
         user_facts: Optional[str] = None
         if self._registry and user_id:
             per_request_facts = FactService(self._registry, user_id=user_id)
@@ -306,9 +337,11 @@ class AgentRunner:
 
         # Security: output scrub — redact secrets before the reply reaches the caller
         if self._security_agent is not None:
+            _trace("output_check", "running", "Scrubbing output")
             final_output = self._security_agent.check_output(
                 final_output, user_id=user_id or ""
             )
+        _trace("complete", "complete", "Done")
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         return RunResult(

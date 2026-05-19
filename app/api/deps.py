@@ -30,11 +30,17 @@ def get_current_user(
     x_sage_username: str = Header(default=""),
     x_sage_key: str = Header(default=""),
 ) -> Dict[str, str]:
-    """Validate username + password on every authenticated request."""
+    """Validate username + password on every authenticated request.
+
+    For EventSource endpoints that can't set headers, falls back to
+    ?username=...&key=... query params.
+    """
     registry = get_registry(request)
-    if not x_sage_username or not x_sage_key:
+    username = x_sage_username or request.query_params.get("username", "")
+    key = x_sage_key or request.query_params.get("key", "")
+    if not username or not key:
         raise _UNAUTH
-    user = registry.verify_password(x_sage_username, x_sage_key)
+    user = registry.verify_password(username, key)
     if user is None:
         raise _UNAUTH
     return user  # {"user_id": "...", "username": "..."}

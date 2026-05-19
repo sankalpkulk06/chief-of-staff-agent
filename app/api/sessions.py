@@ -1,13 +1,17 @@
+import asyncio
+import json
 import time
 import uuid
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.agents.trace import broker as trace_broker
 from app.api.deps import get_chat_service, get_current_user, get_registry
 from app.config import get_settings
 from app.core.chat_service import ChatService
@@ -79,6 +83,7 @@ class PatchSessionRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    trace_id: Optional[str] = None
 
 
 def _safe_upload_name(filename: str) -> str:
@@ -235,6 +240,47 @@ async def delete_session(
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Trace endpoints — live agent event streaming
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{session_id}/trace/start")
+async def trace_start(
+    session_id: str,
+    current_user: Dict = Depends(get_current_user),
+) -> dict:
+    """Create a trace slot and return a trace_id to pass into the chat request."""
+    trace_id = uuid.uuid4().hex[:16]
+    loop = asyncio.get_event_loop()
+    trace_broker.create(trace_id, loop)
+    return {"trace_id": trace_id}
+
+
+@router.get("/{session_id}/trace/{trace_id}/stream")
+async def trace_stream(
+    session_id: str,
+    trace_id: str,
+    current_user: Dict = Depends(get_current_user),
+) -> StreamingResponse:
+    """SSE endpoint — streams TraceEvents until the pipeline completes."""
+
+    async def _generator() -> AsyncGenerator[str, None]:
+        async for event in trace_broker.subscribe(trace_id):
+            yield f"data: {json.dumps(event.to_dict())}\n\n"
+        yield "data: {\"type\":\"stream_end\"}\n\n"
+
+    return StreamingResponse(
+        _generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @router.post("/{session_id}/chat", response_model=ChatResponse)
 async def chat(
     session_id: str,
@@ -248,15 +294,34 @@ async def chat(
 
     registry.create_session(session_id=session_id, title="", user_id=current_user["user_id"])
 
+    trace_id = body.trace_id
+    trace_cb = trace_broker.make_callback(trace_id) if trace_id else None
+
     t0 = time.monotonic()
     try:
-        result = chat_service.answer_in_session(
-            session_id=session_id,
-            question=body.message,
-            response_style="web",
-            user_id=current_user["user_id"],
-        )
+        if trace_id:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: chat_service.answer_in_session(
+                    session_id=session_id,
+                    question=body.message,
+                    response_style="web",
+                    user_id=current_user["user_id"],
+                    trace_callback=trace_cb,
+                ),
+            )
+            trace_broker.complete(trace_id)
+        else:
+            result = chat_service.answer_in_session(
+                session_id=session_id,
+                question=body.message,
+                response_style="web",
+                user_id=current_user["user_id"],
+            )
     except OllamaProviderError as exc:
+        if trace_id:
+            trace_broker.complete(trace_id)
         latency_ms = int((time.monotonic() - t0) * 1000)
         detail = str(exc).lower()
         if "429" in detail or "quota" in detail or "resource_exhausted" in detail:

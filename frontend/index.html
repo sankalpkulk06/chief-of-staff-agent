@@ -764,6 +764,28 @@
   }
   .stepstream .header .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
+  /* Live trace state */
+  .stepstream.live .header .dot { animation: trace-pulse 1s ease-in-out infinite; }
+  @keyframes trace-pulse { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
+  .stepstream .step.s-running { opacity: 0.65; }
+  .stepstream .step.s-error .tag,
+  .stepstream .step.s-error .body { color: var(--err); }
+  .stepstream .step.s-waiting .tag { color: var(--act); }
+  .stepstream .step.s-fallback .tag { color: var(--thought); }
+  /* Collapsed state — hide steps, show toggle */
+  .stepstream.collapsed .step { display: none; }
+  .stepstream-toggle {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-4);
+    cursor: pointer;
+    user-select: none;
+    letter-spacing: 0.04em;
+  }
+  .stepstream-toggle:hover { color: var(--text-3); }
+  .stepstream-toggle svg { flex-shrink: 0; }
+
   /* Typing indicator */
   .typing {
     display: inline-flex; align-items: center; gap: 6px;
@@ -2775,6 +2797,37 @@
     }
   }
 
+  // Tag labels for trace event types
+  const TRACE_TAG = {
+    security:       '[Sec]',
+    orchestrator:   '[Plan]',
+    rag_agent:      '[RAG]',
+    research_agent: '[Web]',
+    action_agent:   '[Act]',
+    email_agent:    '[Mail]',
+    conversational: '[Chat]',
+    synthesis:      '[Merge]',
+    output_check:   '[Out]',
+    provider:       '[LLM]',
+    complete:       '[✓]',
+  };
+  const TRACE_CLASS = {
+    running:  't-thought s-running',
+    complete: 't-observe',
+    error:    't-thought s-error',
+    waiting:  't-act s-waiting',
+    fallback: 't-thought s-fallback',
+  };
+
+  function _makeStepRow(event) {
+    const tag = TRACE_TAG[event.type] || `[${event.type}]`;
+    const cls = TRACE_CLASS[event.status] || '';
+    const row = document.createElement('div');
+    row.className = `step ${cls}`.trim();
+    row.innerHTML = `<span class="tag">${escapeHtml(tag)}</span><span class="body">${escapeHtml(event.message)}</span>`;
+    return row;
+  }
+
   async function handleSend() {
     const v = ta.value.trim();
     if (!v || !currentSessionId) return;
@@ -2787,38 +2840,110 @@
     u.innerHTML = `<div class="bubble">${escapeHtml(v)}</div>`;
     threadInner.appendChild(u);
 
-    const typingEl = document.createElement('div');
-    typingEl.className = 'msg msg-sage';
-    typingEl.innerHTML = `<div class="avatar-s">S</div><div class="typing"><span></span><span></span><span></span></div>`;
-    threadInner.appendChild(typingEl);
-
     ta.value = '';
     autosize();
+
+    // --- Try to start a live trace ---
+    let traceId = null;
+    let es = null;
+    let tracePanel = null;
+    let traceBody = null;
+
+    const sageMsg = document.createElement('div');
+    sageMsg.className = 'msg msg-sage';
+
+    try {
+      const { trace_id } = await apiFetch('POST', `/sessions/${currentSessionId}/trace/start`);
+      traceId = trace_id;
+
+      // Build the live stepstream panel
+      tracePanel = document.createElement('div');
+      tracePanel.className = 'stepstream live';
+      tracePanel.setAttribute('aria-label', 'Agent trace');
+      tracePanel.innerHTML = `<div class="header"><span class="dot"></span><span>sage · working…</span></div>`;
+      traceBody = tracePanel; // steps go directly into the panel
+
+      sageMsg.innerHTML = `<div class="avatar-s">S</div>`;
+      const wrap = document.createElement('div');
+      wrap.className = 'bubble-wrap';
+      wrap.appendChild(tracePanel);
+      sageMsg.appendChild(wrap);
+
+      // Open SSE stream
+      const streamUrl = `/api/v1/sessions/${encodeURIComponent(currentSessionId)}/trace/${encodeURIComponent(traceId)}/stream`;
+      es = new EventSource(streamUrl + `?key=${encodeURIComponent(apiKey())}&username=${encodeURIComponent(apiUsername())}`);
+      es.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data);
+          if (event.type === 'stream_end') { es.close(); return; }
+          traceBody.appendChild(_makeStepRow(event));
+          scrollThreadToBottom();
+        } catch (_) {}
+      };
+      es.onerror = () => es.close();
+    } catch (_) {
+      // Trace start failed — fall back to plain typing indicator
+      traceId = null;
+      sageMsg.innerHTML = `<div class="avatar-s">S</div><div class="typing"><span></span><span></span><span></span></div>`;
+    }
+
+    threadInner.appendChild(sageMsg);
     scrollThreadToBottom();
 
     try {
-      const data = await apiFetch('POST', `/sessions/${currentSessionId}/chat`, { message: v });
+      const data = await apiFetch('POST', `/sessions/${currentSessionId}/chat`, { message: v, trace_id: traceId });
+
+      if (es) es.close();
 
       const srcCount = data.sources?.length || 0;
       const srcLabel = srcCount ? `· ${srcCount} source${srcCount > 1 ? 's' : ''}` : '';
 
-      const replyEl = document.createElement('div');
-      replyEl.className = 'msg msg-sage';
-      replyEl.innerHTML = `
-        <div class="avatar-s">S</div>
-        <div class="bubble-wrap">
-          <div class="bubble">${renderMarkdown(data.reply)}</div>
-          ${data.hitl_pending && data.hitl_id ? `
-          <div class="hitl-confirm" id="hitl-${escapeHtml(data.hitl_id)}">
-            <button class="btn-hitl btn-approve" onclick="resolveHitl('${escapeHtml(data.hitl_id)}', true, this)">✓ Approve</button>
-            <button class="btn-hitl btn-reject" onclick="resolveHitl('${escapeHtml(data.hitl_id)}', false, this)">✗ Reject</button>
-          </div>` : ''}
-          <div class="msg-meta">
-            <span>${formatNow()}</span>
-            <span class="sources">${srcLabel} · local · ${data.latency_ms}ms</span>
-          </div>
-        </div>`;
-      typingEl.replaceWith(replyEl);
+      const wrap = sageMsg.querySelector('.bubble-wrap') || document.createElement('div');
+      if (!sageMsg.querySelector('.bubble-wrap')) {
+        wrap.className = 'bubble-wrap';
+        sageMsg.innerHTML = '<div class="avatar-s">S</div>';
+        sageMsg.appendChild(wrap);
+      }
+
+      // Collapse the trace panel
+      if (tracePanel) {
+        tracePanel.classList.remove('live');
+        tracePanel.classList.add('collapsed');
+        const stepCount = tracePanel.querySelectorAll('.step').length;
+        const header = tracePanel.querySelector('.header');
+        if (header) header.querySelector('span:last-child').textContent = `${stepCount} step${stepCount !== 1 ? 's' : ''}`;
+
+        // Add toggle
+        const toggle = document.createElement('div');
+        toggle.className = 'stepstream-toggle';
+        toggle.innerHTML = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>show trace</span>`;
+        toggle.addEventListener('click', () => {
+          const collapsed = tracePanel.classList.toggle('collapsed');
+          toggle.querySelector('span').textContent = collapsed ? 'show trace' : 'hide trace';
+          toggle.querySelector('svg').style.transform = collapsed ? '' : 'rotate(180deg)';
+        });
+        wrap.insertBefore(toggle, wrap.querySelector('.bubble'));
+      }
+
+      // Insert the answer bubble
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = renderMarkdown(data.reply);
+      wrap.appendChild(bubble);
+
+      if (data.hitl_pending && data.hitl_id) {
+        const hid = escapeHtml(data.hitl_id);
+        const hitlEl = document.createElement('div');
+        hitlEl.className = 'hitl-confirm';
+        hitlEl.id = `hitl-${hid}`;
+        hitlEl.innerHTML = `<button class="btn-hitl btn-approve" onclick="resolveHitl('${hid}', true, this)">✓ Approve</button><button class="btn-hitl btn-reject" onclick="resolveHitl('${hid}', false, this)">✗ Reject</button>`;
+        wrap.appendChild(hitlEl);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'msg-meta';
+      meta.innerHTML = `<span>${formatNow()}</span><span class="sources">${srcLabel} · local · ${data.latency_ms}ms</span>`;
+      wrap.appendChild(meta);
 
       // Background title generation — fire and forget, update UI when resolved
       const sessionIdForTitle = currentSessionId;
@@ -2830,18 +2955,23 @@
           const sideTitle = document.querySelector(`.session-item[data-id="${sessionIdForTitle}"] .title`);
           if (sideTitle) sideTitle.textContent = title;
         })
-        .catch(() => {}); // silently swallow — title generation is best-effort
+        .catch(() => {});
     } catch (err) {
-      const errEl = document.createElement('div');
-      errEl.className = 'msg msg-sage';
-      errEl.innerHTML = `
-        <div class="avatar-s">S</div>
-        <div class="bubble-wrap">
-          <div class="bubble" style="color:var(--err)">
-            ${err.status === 401 ? 'Session expired — please refresh and log in again.' : 'No response from Sage. Is the server running?'}
-          </div>
-        </div>`;
-      typingEl.replaceWith(errEl);
+      if (es) es.close();
+      let wrap = sageMsg.querySelector('.bubble-wrap');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'bubble-wrap';
+        sageMsg.innerHTML = '<div class="avatar-s">S</div>';
+        sageMsg.appendChild(wrap);
+      }
+      const errBubble = document.createElement('div');
+      errBubble.className = 'bubble';
+      errBubble.style.color = 'var(--err)';
+      errBubble.textContent = err.status === 401
+        ? 'Session expired — please refresh and log in again.'
+        : 'No response from Sage. Is the server running?';
+      wrap.appendChild(errBubble);
     }
     scrollThreadToBottom();
   }

@@ -110,6 +110,7 @@ class ChatService:
         top_k: Optional[int] = None,
         response_style: Optional[str] = None,
         user_id: Optional[str] = None,
+        trace_callback=None,
     ) -> QAResult:
         """Answer a question within a chat session with full conversation history.
 
@@ -172,6 +173,7 @@ class ChatService:
             response_style=self._resolve_response_style(response_style),
             top_k=top_k,
             user_id=effective_uid,
+            trace_callback=trace_callback,
         )
 
         if "blocked" in run.security_flags:
