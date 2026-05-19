@@ -11,9 +11,6 @@ from typing import Dict, List, Optional
 from app.schemas.chunk import DocumentChunk
 from app.schemas.document import ParsedDocument
 
-_DEFAULT_USER = "default"
-
-
 def _hash_password(password: str) -> str:
     salt = os.urandom(16)
     key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200_000)
@@ -84,6 +81,13 @@ class SQLiteRegistry:
         if "user_id" not in _cols("named_sessions"):
             self._connection.execute("ALTER TABLE named_sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
 
+        # chat_turns — backfill created_at for rows inserted before the column existed
+        if "created_at" not in _cols("chat_turns"):
+            self._connection.execute("ALTER TABLE chat_turns ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
+        self._connection.execute(
+            "UPDATE chat_turns SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
+        )
+
         # user_settings (new table — create if missing)
         self._connection.execute("""
             CREATE TABLE IF NOT EXISTS user_settings (
@@ -141,11 +145,72 @@ class SQLiteRegistry:
             return {"user_id": user["user_id"], "username": user["username"]}
         return None
 
+    def delete_user_data(self, user_id: str) -> Dict[str, int]:
+        """Delete a user's account and all rows owned by that user."""
+        document_count = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM documents WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["count"]
+        session_count = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM chat_sessions WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["count"]
+        fact_count = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM learned_facts WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["count"]
+        habit_count = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM habits WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["count"]
+        todo_count = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM todos WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["count"]
+
+        with self._connection:
+            self._connection.execute(
+                """
+                DELETE FROM whatsapp_sessions
+                WHERE session_id IN (
+                    SELECT session_id FROM chat_sessions WHERE user_id = ?
+                )
+                """,
+                (user_id,),
+            )
+            self._connection.execute(
+                """
+                DELETE FROM nudge_context
+                WHERE habit_id IN (
+                    SELECT id FROM habits WHERE user_id = ?
+                )
+                """,
+                (user_id,),
+            )
+            self._connection.execute("DELETE FROM hitl_requests WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM security_events WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM todos WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM learned_facts WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM habits WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM named_sessions WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM chat_sessions WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM documents WHERE user_id = ?", (user_id,))
+            self._connection.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+
+        return {
+            "documents": int(document_count),
+            "sessions": int(session_count),
+            "facts": int(fact_count),
+            "habits": int(habit_count),
+            "todos": int(todo_count),
+        }
+
     # ------------------------------------------------------------------
     # Documents
     # ------------------------------------------------------------------
 
-    def upsert_document(self, document_id: str, document: ParsedDocument, user_id: str = _DEFAULT_USER) -> None:
+    def upsert_document(self, document_id: str, document: ParsedDocument, user_id: str) -> None:
         metadata_json = json.dumps(document.metadata, sort_keys=True)
         self._connection.execute(
             """
@@ -233,21 +298,21 @@ class SQLiteRegistry:
         )
         self._connection.commit()
 
-    def is_url_ingested(self, source_url: str, user_id: str = _DEFAULT_USER) -> bool:
+    def is_url_ingested(self, source_url: str, user_id: str) -> bool:
         row = self._connection.execute(
             "SELECT 1 FROM documents WHERE source_url = ? AND source_type = 'url' AND user_id = ? LIMIT 1",
             (source_url, user_id),
         ).fetchone()
         return row is not None
 
-    def list_url_sources(self, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def list_url_sources(self, user_id: str) -> List[Dict[str, object]]:
         rows = self._connection.execute(
             "SELECT document_id, file_name, source_url, ingested_at FROM documents WHERE source_type = 'url' AND user_id = ? ORDER BY ingested_at DESC",
             (user_id,),
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_all_sources(self, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def list_all_sources(self, user_id: str) -> List[Dict[str, object]]:
         rows = self._connection.execute(
             "SELECT document_id, file_name, source_path, source_type, source_url, ingested_at FROM documents WHERE user_id = ? ORDER BY ingested_at DESC, created_at DESC",
             (user_id,),
@@ -258,7 +323,7 @@ class SQLiteRegistry:
     # Sessions
     # ------------------------------------------------------------------
 
-    def create_session(self, session_id: str, title: str = "", user_id: str = _DEFAULT_USER) -> None:
+    def create_session(self, session_id: str, title: str = "", user_id: str = "") -> None:
         self._connection.execute(
             "INSERT OR IGNORE INTO chat_sessions (session_id, user_id, title) VALUES (?, ?, ?)",
             (session_id, user_id, title),
@@ -283,7 +348,7 @@ class SQLiteRegistry:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_sessions(self, limit: int = 20, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def list_sessions(self, limit: int = 20, user_id: str = "") -> List[Dict[str, object]]:
         rows = self._connection.execute(
             "SELECT session_id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
             (user_id, limit),
@@ -301,7 +366,7 @@ class SQLiteRegistry:
         self._connection.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
         self._connection.commit()
 
-    def get_or_create_named_session(self, name: str, user_id: str = _DEFAULT_USER) -> str:
+    def get_or_create_named_session(self, name: str, user_id: str) -> str:
         row = self._connection.execute(
             "SELECT session_id FROM named_sessions WHERE name = ? AND user_id = ?",
             (name, user_id),
@@ -321,14 +386,14 @@ class SQLiteRegistry:
     # Facts
     # ------------------------------------------------------------------
 
-    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user", confidence_score: float = 1.0, user_id: str = _DEFAULT_USER) -> None:
+    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user", confidence_score: float = 1.0, *, user_id: str) -> None:
         self._connection.execute(
             "INSERT OR REPLACE INTO learned_facts (fact_id, user_id, content, category, source, confidence_score) VALUES (?, ?, ?, ?, ?, ?)",
             (fact_id, user_id, content, category, source, confidence_score),
         )
         self._connection.commit()
 
-    def list_facts(self, category: Optional[str] = None, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def list_facts(self, category: Optional[str] = None, *, user_id: str) -> List[Dict[str, object]]:
         if category:
             rows = self._connection.execute(
                 "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE user_id = ? AND category = ? ORDER BY created_at DESC",
@@ -341,7 +406,7 @@ class SQLiteRegistry:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def delete_fact(self, fact_id: str, user_id: str = _DEFAULT_USER) -> None:
+    def delete_fact(self, fact_id: str, user_id: str) -> None:
         self._connection.execute(
             "DELETE FROM learned_facts WHERE fact_id = ? AND user_id = ?", (fact_id, user_id)
         )
@@ -365,7 +430,7 @@ class SQLiteRegistry:
     # Todos
     # ------------------------------------------------------------------
 
-    def create_todo(self, title: str, list_name: Optional[str] = None, due_at: Optional[datetime] = None, user_id: str = _DEFAULT_USER) -> Dict[str, object]:
+    def create_todo(self, title: str, list_name: Optional[str] = None, due_at: Optional[datetime] = None, user_id: str = "") -> Dict[str, object]:
         todo_id = str(uuid.uuid4())
         self._connection.execute(
             "INSERT INTO todos (id, user_id, title, list_name, due_at) VALUES (?, ?, ?, ?, ?)",
@@ -381,7 +446,7 @@ class SQLiteRegistry:
         row = self._connection.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
         return self._row_to_dict(row)
 
-    def get_pending_todos(self, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def get_pending_todos(self, user_id: str = "") -> List[Dict[str, object]]:
         now = self._format_datetime(datetime.now())
         rows = self._connection.execute(
             """
@@ -394,7 +459,7 @@ class SQLiteRegistry:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_todos_due_soon(self, minutes_ahead: int = 60, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def get_todos_due_soon(self, minutes_ahead: int = 60, user_id: str = "") -> List[Dict[str, object]]:
         now = datetime.now()
         cutoff = now + timedelta(minutes=minutes_ahead)
         rows = self._connection.execute(

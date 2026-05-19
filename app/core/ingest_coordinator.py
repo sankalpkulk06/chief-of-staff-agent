@@ -36,7 +36,7 @@ class IngestCoordinator:
         self._vector_store = vector_store
         self._supported_extensions = supported_extensions or [".md", ".pdf", ".txt"]
 
-    def ingest(self, input_path: Path, user_id: str = "default") -> IngestSummary:
+    def ingest(self, input_path: Path, user_id: str) -> IngestSummary:
         files = self._discover_files(input_path)
         summary = IngestSummary(files_discovered=len(files))
         if not files:
@@ -79,7 +79,8 @@ class IngestCoordinator:
         title: str,
         source_url: str,
         extra_metadata: Optional[dict] = None,
-        user_id: str = "default",
+        *,
+        user_id: str,
     ) -> Tuple[str, int]:
         """Chunk, embed, and persist scraped text from a URL.
 

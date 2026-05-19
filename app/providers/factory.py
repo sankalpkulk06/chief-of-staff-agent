@@ -6,7 +6,7 @@ from app.providers.gemini_chat import GeminiChatProvider
 from app.providers.groq_chat import GroqChatProvider
 from app.providers.huggingface_embeddings import HuggingFaceEmbeddingsProvider
 from app.providers.ollama_chat import OllamaChatProvider
-from app.providers.ollama_embeddings import OllamaEmbeddingsProvider
+from app.providers.ollama_embeddings import OllamaEmbeddingsProvider, OllamaProviderError
 
 
 class ChatProvider(Protocol):
@@ -23,6 +23,23 @@ class EmbeddingsProvider(Protocol):
 
     def embed_query(self, text: str) -> list[float]:
         ...
+
+
+class FallbackChatProvider:
+    """Try a primary chat provider, then a fallback provider if it fails."""
+
+    def __init__(self, primary: ChatProvider, fallback: ChatProvider):
+        self._primary = primary
+        self._fallback = fallback
+
+    def generate(self, prompt: str) -> str:
+        return self.chat(messages=[{"role": "user", "content": prompt}])
+
+    def chat(self, messages: list[dict]) -> str:
+        try:
+            return self._primary.chat(messages)
+        except OllamaProviderError:
+            return self._fallback.chat(messages)
 
 
 @dataclass(frozen=True)
@@ -69,12 +86,22 @@ def create_chat_provider(settings: Settings, spec: Union[str, ModelSpec]) -> Cha
         )
 
     if model_spec.provider == "gemini":
-        return GeminiChatProvider(
+        primary = GeminiChatProvider(
             api_key=settings.gemini_api_key,
             model=model_spec.model,
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
         )
+        if settings.groq_api_key:
+            fallback = GroqChatProvider(
+                api_key=settings.groq_api_key,
+                base_url=settings.groq_base_url,
+                model=settings.groq_chat_model,
+                timeout_seconds=settings.llm_timeout_seconds,
+                max_retries=settings.llm_max_retries,
+            )
+            return FallbackChatProvider(primary=primary, fallback=fallback)
+        return primary
 
     raise ValueError(f"Unsupported chat provider '{model_spec.provider}'. Use: ollama, groq, gemini.")
 

@@ -25,6 +25,15 @@ _EMAIL_TRIGGERS = {
 }
 _EMAIL_ACTION_WORDS = {"check", "any", "show", "read", "triage", "fetch", "get", "what", "action", "gmail"}
 
+_HISTORY_INJECTION_PATTERNS = [
+    re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
+    re.compile(r"you\s+are\s+now\b", re.IGNORECASE),
+    re.compile(r"forget\s+everything", re.IGNORECASE),
+    re.compile(r"\[SYSTEM\]", re.IGNORECASE),
+    re.compile(r"\boverride\s*:", re.IGNORECASE),
+    re.compile(r"\bDAN\b"),
+]
+
 
 def _is_email_request(text: str) -> bool:
     t = text.lower().strip()
@@ -35,6 +44,10 @@ def _is_email_request(text: str) -> bool:
     if ("email" in t or "inbox" in t or "gmail" in t) and any(w in t for w in _EMAIL_ACTION_WORDS):
         return True
     return False
+
+
+def _looks_like_history_injection(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _HISTORY_INJECTION_PATTERNS)
 
 
 class ChatService:
@@ -77,6 +90,7 @@ class ChatService:
         retriever: Retriever,
         chat_provider: OllamaChatProvider,
         registry: Any,
+        user_id: str,
         agent_chat_providers: Optional[dict[str, Any]] = None,
         agent_model_specs: Optional[dict[str, str]] = None,
         fact_service: Optional[FactService] = None,
@@ -90,7 +104,6 @@ class ChatService:
         max_prompt_chunks: int = 5,
         assistant_name: str = "Sage",
         enable_tools: bool = True,
-        user_id: str = "default",
         rag_fallback_distance_threshold: float = 0.5,
         security_agent: Optional[SecurityAgent] = None,
     ):
@@ -267,6 +280,18 @@ class ChatService:
             top_k=top_k,
             user_id=effective_uid,
         )
+
+        if "blocked" in run.security_flags:
+            retrieval = RetrievalResult(question=question, chunks=[], top_k=0)
+            return QAResult(
+                question=question,
+                answer=run.output,
+                sources=[],
+                retrieval=retrieval,
+                prompt="",
+                sources_used=False,
+                steps=run.steps_summary,
+            )
 
         # Collect citations from agent results for the QAResult
         web_sources = [
@@ -890,7 +915,20 @@ class ChatService:
             List of dicts with "role" and "content" keys
         """
         turns = self._registry.get_session_turns(session_id)
-        return [{"role": turn["role"], "content": turn["content"]} for turn in turns]
+        history = []
+        skip_next_assistant = False
+        for turn in turns:
+            role = turn["role"]
+            content = turn["content"]
+            if role == "user" and _looks_like_history_injection(content):
+                skip_next_assistant = True
+                continue
+            if role == "assistant" and skip_next_assistant:
+                skip_next_assistant = False
+                continue
+            skip_next_assistant = False
+            history.append({"role": role, "content": content})
+        return history
 
     def get_fact_service(self) -> Optional[FactService]:
         """Get the fact service for external use."""

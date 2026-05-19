@@ -205,6 +205,33 @@ class PgVectorStore:
             )
         return records
 
+    def delete_user_records(self, user_id: str, document_ids: Optional[Sequence[str]] = None) -> None:
+        """Delete embeddings for documents owned by a user."""
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM chunk_embeddings
+                WHERE chunk_id IN (
+                    SELECT c.chunk_id
+                    FROM chunks c
+                    JOIN documents d ON d.document_id = c.document_id
+                    WHERE d.user_id = %s
+                )
+                """,
+                (user_id,),
+            )
+            if document_ids:
+                cur.execute(
+                    """
+                    DELETE FROM chunk_embeddings
+                    WHERE chunk_id IN (
+                        SELECT chunk_id FROM chunks WHERE document_id = ANY(%s)
+                    )
+                    """,
+                    (list(document_ids),),
+                )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()
 

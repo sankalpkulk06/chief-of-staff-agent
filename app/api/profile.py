@@ -1,10 +1,12 @@
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user, get_registry
+from app.config import get_settings
 from app.core.analytics_service import AnalyticsService
+from app.storage.factory import create_vector_store
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -20,6 +22,16 @@ class ProfileOut(BaseModel):
     longest_streak_habit: str
     total_docs: int
     total_chunks: int
+
+
+class DeleteProfileRequest(BaseModel):
+    username: str
+    password: str
+
+
+class DeleteProfileOut(BaseModel):
+    ok: bool
+    deleted: Dict[str, int]
 
 
 @router.get("", response_model=ProfileOut)
@@ -62,3 +74,46 @@ async def get_profile(
         total_docs=total_docs,
         total_chunks=total_chunks,
     )
+
+
+@router.delete("", response_model=DeleteProfileOut)
+async def delete_profile(
+    body: DeleteProfileRequest,
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
+) -> DeleteProfileOut:
+    username = body.username.strip()
+    if username != current_user["username"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Username does not match the signed-in profile",
+        )
+
+    verified = registry.verify_password(username, body.password)
+    if verified is None or verified["user_id"] != current_user["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+        )
+
+    user_id = current_user["user_id"]
+    document_ids = [row["document_id"] for row in registry.list_all_sources(user_id=user_id)]
+
+    settings = get_settings()
+    paths = settings.resolve_paths()
+    vector_store = create_vector_store(
+        settings.database_url,
+        paths.chroma_dir,
+        settings.embedding_dimension,
+    )
+    try:
+        delete_vectors = getattr(vector_store, "delete_user_records", None)
+        if callable(delete_vectors):
+            delete_vectors(user_id=user_id, document_ids=document_ids)
+    finally:
+        close = getattr(vector_store, "close", None)
+        if callable(close):
+            close()
+
+    deleted = registry.delete_user_data(user_id=user_id)
+    return DeleteProfileOut(ok=True, deleted=deleted)

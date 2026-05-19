@@ -108,3 +108,16 @@ class ChromaStore:
             )
         return records
 
+    def delete_user_records(self, user_id: str, document_ids: Optional[Sequence[str]] = None) -> None:
+        """Delete vector records owned by a user.
+
+        Chunks written by current ingestion include user_id in metadata. The
+        document_id fallback covers older records that may only have document
+        ownership in the registry metadata.
+        """
+        if user_id:
+            self._collection.delete(where={"user_id": user_id})
+
+        for document_id in document_ids or []:
+            if document_id:
+                self._collection.delete(where={"document_id": document_id})

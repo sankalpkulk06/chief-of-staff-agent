@@ -5,6 +5,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from app.agents.base import AgentResult
+from app.agents.prompts import load
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
@@ -13,20 +14,7 @@ from app.storage.sqlite_registry import SQLiteRegistry
 
 _WRITE_ACTIONS = {"add_todo", "add_habit", "log_habit", "remember_fact"}
 
-_EXTRACT_SYSTEM = """\
-You are an action extractor for a personal AI assistant. \
-Given a task description, output JSON identifying the action and its parameters.
-
-Possible actions:
-- add_todo: create a reminder/task. Params: task (str), due_date (str, optional, natural language), list_name (str, optional)
-- add_habit: start tracking a new habit. Params: name (str), reminder_time (str, optional, e.g. "21:00")
-- log_habit: record a habit as done or skipped. Params: name (str), status ("done"|"skipped")
-- get_habits: retrieve habit summary. Params: none
-- remember_fact: save a personal or work fact. Params: fact (str), category ("personal"|"work")
-- list_facts: list stored facts. Params: category ("personal"|"work"|"all")
-
-Output ONLY valid JSON:
-{"action": "action_name", "params": {...}}"""
+_EXTRACT_SYSTEM = load("action_extract")
 
 
 class ActionAgent:
@@ -136,7 +124,7 @@ class ActionAgent:
             hitl_id = str(uuid.uuid4())
             self._registry.create_hitl_request(
                 id=hitl_id,
-                user_id=user_id or "default",
+                user_id=user_id or "",
                 action_type=action,
                 action_payload=params,
             )

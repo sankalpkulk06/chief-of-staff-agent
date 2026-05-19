@@ -55,7 +55,7 @@ def create_qa_service() -> QAService:
     return QAService(retriever=retriever, chat_provider=chat_provider)
 
 
-def create_fact_service(user_id: str = "default") -> FactService:
+def create_fact_service(user_id: str) -> FactService:
     settings = get_settings()
     paths = settings.resolve_paths()
     registry = create_registry(settings.database_url, paths.sqlite_db_path)
@@ -108,7 +108,7 @@ def create_analytics_service() -> AnalyticsService:
 
 def create_chat_service(
     schedule_todo_callback: Optional[Callable[[dict[str, Any]], None]] = None,
-    user_id: str = "default",
+    user_id: str = "",
 ) -> ChatService:
     settings = get_settings()
     paths = settings.resolve_paths()

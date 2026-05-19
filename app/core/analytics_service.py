@@ -39,7 +39,7 @@ class AnalyticsService:
     def __init__(self, registry: Any):
         self._registry = registry
 
-    def get_analytics(self, user_id: str = "default") -> AnalyticsStats:
+    def get_analytics(self, user_id: str) -> AnalyticsStats:
         """Generate comprehensive analytics about usage patterns."""
         sessions = self._registry.list_sessions(limit=10000, user_id=user_id)
         all_turns = self._get_all_turns(sessions)

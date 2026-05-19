@@ -112,7 +112,12 @@ class AgentRunner:
         )
 
         self._rag = (
-            RAGAgent(self._retriever, self._provider_for("rag_agent"), top_k=self._rag_top_k)
+            RAGAgent(
+                self._retriever,
+                self._provider_for("rag_agent"),
+                top_k=self._rag_top_k,
+                assistant_name=self._assistant_name,
+            )
             if self._retriever
             else None
         )
@@ -132,6 +137,7 @@ class AgentRunner:
             self._provider_for("conversational"),
             self._assistant_name,
             self._fact_service,
+            registry=self._registry,
         )
 
     def set_agent_provider(self, agent_name: str, provider: Any, model_spec: str) -> None:
@@ -166,7 +172,7 @@ class AgentRunner:
 
         # Security: input check — runs before orchestrator so injections never reach LLM
         if self._security_agent is not None:
-            sec = self._security_agent.check_input(question, user_id=user_id or "default")
+            sec = self._security_agent.check_input(question, user_id=user_id or "")
             if sec.blocked:
                 latency_ms = int((time.monotonic() - t0) * 1000)
                 if sec.reason == "length_exceeded":
@@ -219,6 +225,7 @@ class AgentRunner:
                     history=history,
                     previous_results=agent_results,
                     response_style=response_style,
+                    user_id=user_id,
                 )
             elif step.agent == "rag_agent":
                 original_top_k = self._rag._top_k
@@ -248,13 +255,39 @@ class AgentRunner:
                     security_flags=_security_flags,
                 )
 
-        # 3. Synthesize
-        final_output = self._orchestrator.synthesize(question, agent_results, history)
+        if len(agent_results) == 1 and agent_results[0].agent == "research_agent":
+            final_output = agent_results[0].output
+            if self._security_agent is not None:
+                final_output = self._security_agent.check_output(
+                    final_output, user_id=user_id or ""
+                )
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            return RunResult(
+                output=final_output,
+                plan=plan,
+                agent_results=agent_results,
+                latency_ms=latency_ms,
+                security_flags=_security_flags,
+            )
+
+        # 3. Synthesize — inject stored user facts for persona-aware replies.
+        # Create a per-request FactService scoped to the actual user, not the startup default.
+        user_facts: Optional[str] = None
+        if self._registry and user_id:
+            per_request_facts = FactService(self._registry, user_id=user_id)
+            facts = per_request_facts.list_facts()
+            if facts:
+                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
+        elif self._fact_service:
+            facts = self._fact_service.list_facts()
+            if facts:
+                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
+        final_output = self._orchestrator.synthesize(question, agent_results, history, user_facts=user_facts)
 
         # Security: output scrub — redact secrets before the reply reaches the caller
         if self._security_agent is not None:
             final_output = self._security_agent.check_output(
-                final_output, user_id=user_id or "default"
+                final_output, user_id=user_id or ""
             )
 
         latency_ms = int((time.monotonic() - t0) * 1000)

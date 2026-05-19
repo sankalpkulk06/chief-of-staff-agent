@@ -1245,7 +1245,84 @@
     transition: background 140ms, color 140ms, border-color 140ms;
   }
   .btn-sm:hover { background: var(--bg-3); color: var(--text-1); border-color: var(--line-strong); }
+  .btn-sm.danger { color: #e0a0a0; border-color: rgba(210,117,117,0.24); }
+  .btn-sm.danger:hover { background: rgba(210,117,117,0.10); color: #f0c0c0; border-color: rgba(210,117,117,0.42); }
   .btn-sm svg { width: 12px; height: 12px; }
+
+  .danger-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(5, 8, 7, 0.68);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+  }
+  .danger-modal {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    z-index: 41;
+    width: min(420px, calc(100vw - 32px));
+    transform: translate(-50%, -48%) scale(0.98);
+    opacity: 0;
+    pointer-events: none;
+    background: var(--bg-2);
+    border: 1px solid rgba(210,117,117,0.28);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 18px;
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+  body[data-delete-profile="open"] .danger-modal-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  body[data-delete-profile="open"] .danger-modal {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  .danger-modal h2 {
+    margin: 0 0 6px;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .danger-modal p {
+    margin: 0 0 14px;
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .danger-modal .fields {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .danger-modal .pw-field { height: 42px; }
+  .danger-modal .error {
+    min-height: 18px;
+    color: var(--err);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    margin-bottom: 12px;
+  }
+  .danger-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .danger-actions .delete-confirm {
+    background: rgba(210,117,117,0.14);
+    border-color: rgba(210,117,117,0.42);
+    color: #f0c0c0;
+  }
+  .danger-actions .delete-confirm:hover {
+    background: rgba(210,117,117,0.22);
+  }
 
   /* ----- Stat row ----- */
   .stat-row {
@@ -1909,6 +1986,10 @@
         </div>
       </div>
       <div class="right">
+        <button class="btn-sm danger" id="profDelete" title="Delete profile">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M6 4V2.5h4V4M5 6v7M8 6v7M11 6v7M4 4l.5 10h7L12 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Delete
+        </button>
         <button class="btn-sm" id="profExport" title="Export profile data">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Export
@@ -2033,6 +2114,28 @@
   </section>
 </div>
 
+<!-- ============ DELETE PROFILE CONFIRMATION ============ -->
+<div class="danger-modal-backdrop" id="deleteProfileBackdrop"></div>
+<div class="danger-modal" role="dialog" aria-modal="true" aria-labelledby="deleteProfileTitle" aria-hidden="true">
+  <h2 id="deleteProfileTitle">Delete profile</h2>
+  <p>This permanently removes this user, facts, habits, chats, documents, and indexed chunks.</p>
+  <div class="fields">
+    <div class="pw-field">
+      <span class="prompt">user</span>
+      <input id="deleteProfileUser" type="text" placeholder="Username" autocomplete="username" />
+    </div>
+    <div class="pw-field">
+      <span class="prompt">pass</span>
+      <input id="deleteProfilePw" type="password" placeholder="Password" autocomplete="current-password" />
+    </div>
+  </div>
+  <div class="error" id="deleteProfileError"></div>
+  <div class="danger-actions">
+    <button class="btn-sm" id="deleteProfileCancel">Cancel</button>
+    <button class="btn-sm delete-confirm" id="deleteProfileConfirm">Delete profile</button>
+  </div>
+</div>
+
 <!-- ============ COMMAND PALETTE / HELP ============ -->
 <div class="palette-backdrop" id="palBackdrop"></div>
 <div class="palette-shell" aria-hidden="true">
@@ -2080,11 +2183,13 @@
   }
 
   function parseDate(dateStr) {
-    if (!dateStr) return new Date(NaN);
+    if (!dateStr || dateStr === 'None' || dateStr === 'null') return new Date(NaN);
     const str = String(dateStr).trim();
-    // Normalise space separator → T; only append Z if no tz offset present
+    // Normalise space separator → T
     const iso = str.replace(' ', 'T');
-    return new Date(/[Z+\-]\d*$/.test(iso) ? iso : iso + 'Z');
+    // Only append Z if no tz offset (Z, +HH:MM, -HH:MM) is already present
+    const hasTz = /[Z]$/.test(iso) || /[+-]\d{2}:\d{2}$/.test(iso);
+    return new Date(hasTz ? iso : iso + 'Z');
   }
 
   function formatRelative(dateStr) {
@@ -2104,7 +2209,9 @@
 
   function formatTime(dateStr) {
     if (!dateStr) return '';
-    return parseDate(dateStr).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const d = parseDate(dateStr);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   }
 
   function formatNow() {
@@ -2648,6 +2755,75 @@
     const orig = btn.innerHTML;
     btn.innerHTML = '<span style="font-family:var(--mono);font-size:11px;color:var(--ok);">✓ wrote ~/sage-export.json</span>';
     setTimeout(() => { btn.innerHTML = orig; }, 1800);
+  });
+
+  const deleteProfileModal = document.querySelector('.danger-modal');
+  const deleteProfileUser = document.getElementById('deleteProfileUser');
+  const deleteProfilePw = document.getElementById('deleteProfilePw');
+  const deleteProfileError = document.getElementById('deleteProfileError');
+  const deleteProfileConfirm = document.getElementById('deleteProfileConfirm');
+
+  function openDeleteProfile() {
+    if (deleteProfileError) deleteProfileError.textContent = '';
+    if (deleteProfileUser) deleteProfileUser.value = '';
+    if (deleteProfilePw) deleteProfilePw.value = '';
+    document.body.dataset.deleteProfile = 'open';
+    deleteProfileModal?.setAttribute('aria-hidden', 'false');
+    setTimeout(() => deleteProfileUser?.focus(), 60);
+  }
+
+  function closeDeleteProfile() {
+    delete document.body.dataset.deleteProfile;
+    deleteProfileModal?.setAttribute('aria-hidden', 'true');
+    if (deleteProfilePw) deleteProfilePw.value = '';
+  }
+
+  async function confirmDeleteProfile() {
+    const username = deleteProfileUser?.value.trim() || '';
+    const password = deleteProfilePw?.value || '';
+    if (!username) { if (deleteProfileError) deleteProfileError.textContent = 'Enter your username.'; return; }
+    if (!password) { if (deleteProfileError) deleteProfileError.textContent = 'Enter your password.'; return; }
+
+    const btn = deleteProfileConfirm;
+    const original = btn?.innerHTML;
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = 'Deleting…';
+    }
+    if (deleteProfileError) deleteProfileError.textContent = '';
+
+    try {
+      await apiFetch('DELETE', '/profile', { username, password });
+      closeDeleteProfile();
+      logout();
+    } catch (err) {
+      if (deleteProfileError) {
+        deleteProfileError.textContent = err.status === 401
+          ? 'Username or password did not match this profile.'
+          : 'Could not delete profile. Try again.';
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }
+    }
+  }
+
+  document.getElementById('profDelete')?.addEventListener('click', openDeleteProfile);
+  document.getElementById('deleteProfileBackdrop')?.addEventListener('click', closeDeleteProfile);
+  document.getElementById('deleteProfileCancel')?.addEventListener('click', closeDeleteProfile);
+  deleteProfileConfirm?.addEventListener('click', confirmDeleteProfile);
+  deleteProfilePw?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') confirmDeleteProfile();
+  });
+  deleteProfileUser?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') deleteProfilePw?.focus();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.body.dataset.deleteProfile === 'open') {
+      closeDeleteProfile();
+    }
   });
 
   async function loadProfile() {

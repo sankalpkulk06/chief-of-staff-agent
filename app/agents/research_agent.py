@@ -3,8 +3,11 @@ import re
 from typing import Any, List, Optional
 
 from app.agents.base import AgentResult
+from app.agents.prompts import load
 from app.providers.ollama_chat import OllamaChatProvider
 from app.services.news_service import NewsService
+from app.services.news_service import NewsArticle
+from app.services.web_search_service import SearchResult
 from app.services.web_search_service import WebSearchService
 
 # Strips LLM meta-language so the actual search term reaches the API.
@@ -49,10 +52,46 @@ def _clean_query(task: str) -> str:
     q = q.rstrip("?.!").strip()
     return q or task
 
-_SUMMARIZE_SYSTEM = """\
-You are a research assistant for a personal AI called Sage. \
-Summarize the following search results clearly and concisely. \
-Cite sources by title. Only include what is actually in the results."""
+_SUMMARIZE_SYSTEM = load("research_summarize")
+
+
+def _field(name: str, value: Optional[str]) -> str:
+    return f"{name}: {value.strip() if value else 'Not provided'}"
+
+
+def _format_news_articles(articles: List[NewsArticle]) -> str:
+    blocks = []
+    for i, article in enumerate(articles, 1):
+        blocks.append(
+            "\n".join(
+                [
+                    f"Result {i}",
+                    _field("Title", article.title),
+                    _field("Source", article.source),
+                    _field("URL", article.url),
+                    _field("Published", article.published),
+                    _field("Snippet", article.snippet),
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def _format_web_results(results: List[SearchResult]) -> str:
+    blocks = []
+    for i, result in enumerate(results, 1):
+        blocks.append(
+            "\n".join(
+                [
+                    f"Result {i}",
+                    _field("Title", result.title),
+                    _field("URL", result.url),
+                    _field("Published", result.published_date),
+                    _field("Snippet", result.snippet),
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
 
 
 class ResearchAgent:
@@ -125,11 +164,7 @@ class ResearchAgent:
                     success=True,
                 )
 
-            # Build a text block for the LLM to summarize.
-            lines = []
-            for i, a in enumerate(articles[:6], 1):
-                lines.append(f"[{i}] {a.title} ({a.source})\n{a.snippet or a.url}")
-            articles_text = "\n\n".join(lines)
+            articles_text = _format_news_articles(articles[:6])
 
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": _SUMMARIZE_SYSTEM},
@@ -169,7 +204,7 @@ class ResearchAgent:
                     success=True,
                 )
 
-            formatted = self._web_search.format_for_context(results)
+            formatted = _format_web_results(results)
 
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": _SUMMARIZE_SYSTEM},

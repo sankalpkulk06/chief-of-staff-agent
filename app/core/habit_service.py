@@ -49,7 +49,7 @@ def _parse_reminder_time(raw: str) -> str:
 
 
 class HabitService:
-    def __init__(self, registry: SQLiteRegistry, user_id: str = "default"):
+    def __init__(self, registry: SQLiteRegistry, user_id: str = ""):
         self._db = getattr(registry, "_connection", None) or getattr(registry, "_conn")
         self._is_postgres = hasattr(registry, "_conn")
         self._user_id = user_id

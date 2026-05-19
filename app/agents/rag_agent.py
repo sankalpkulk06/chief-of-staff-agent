@@ -2,28 +2,45 @@
 import logging
 from typing import Any, List, Optional
 
-
 from app.agents.base import AgentResult
+from app.agents.prompts import load
 from app.providers.ollama_chat import OllamaChatProvider
 from app.retrieval.retriever import Retriever
 
 log = logging.getLogger(__name__)
 
-_SYSTEM = """\
-You are a document assistant for a personal AI called Sage. \
-The user has saved personal documents, notes, and articles. \
-Answer the question using ONLY the document excerpts provided below. \
-Cite sources naturally (e.g. "According to your note on X..."). \
-If the excerpts do not contain the answer, say so clearly."""
+_SYSTEM = load("rag")
+
+
+def _format_chunks(chunks: list) -> str:
+    if not chunks:
+        return "No relevant documents found."
+    parts = []
+    for i, chunk in enumerate(chunks, 1):
+        source = chunk.file_name or chunk.source_path or chunk.document_id or "unknown"
+        score = getattr(chunk, "score", 0.0)
+        parts.append(
+            f"[{i}] Source: {source}\n"
+            f"    Relevance: {score:.2f}\n"
+            f"    Content: {chunk.text.strip()[:600]}"
+        )
+    return "\n\n".join(parts)
 
 
 class RAGAgent:
     """Retrieves relevant document chunks and generates a grounded answer."""
 
-    def __init__(self, retriever: Retriever, chat_provider: OllamaChatProvider, top_k: int = 5):
+    def __init__(
+        self,
+        retriever: Retriever,
+        chat_provider: OllamaChatProvider,
+        top_k: int = 5,
+        assistant_name: str = "Sage",
+    ):
         self._retriever = retriever
         self._provider = chat_provider
         self._top_k = top_k
+        self._assistant_name = assistant_name
 
     def execute(
         self,
@@ -35,32 +52,29 @@ class RAGAgent:
     ) -> AgentResult:
         try:
             retrieval = self._retriever.retrieve(question=task, top_k=self._top_k, user_id=user_id)
-            log.debug("RAG retrieve: task=%r top_k=%s user_id=%r chunks=%d", task[:80], self._top_k, user_id, len(retrieval.chunks))
+            log.debug(
+                "RAG retrieve: task=%r top_k=%s user_id=%r chunks=%d",
+                task[:80], self._top_k, user_id, len(retrieval.chunks),
+            )
 
             if not retrieval.chunks:
                 return AgentResult(
                     agent="rag_agent",
                     task=task,
-                    output=(
-                        "I searched your saved documents but couldn't find anything relevant "
-                        f"to '{task}'."
-                    ),
+                    output=f"Nothing in your saved documents covers '{task}'. Want me to search the web instead?",
                     success=True,
                     metadata={"chunks_found": 0, "top_score": 1.0},
                 )
 
-            # Build a cited context block.
-            chunk_lines = []
-            for i, chunk in enumerate(retrieval.chunks, 1):
-                source = chunk.file_name or chunk.source_path or chunk.document_id or "unknown"
-                chunk_lines.append(f"[{i}] {source}\n{chunk.text.strip()[:600]}")
-            context = "\n\n".join(chunk_lines)
+            document_chunks = _format_chunks(retrieval.chunks)
+            system = (
+                _SYSTEM
+                .replace("{assistant_name}", self._assistant_name)
+                .replace("{document_chunks}", document_chunks)
+                .replace("{user_query}", task)
+            )
 
-            messages: list[dict[str, Any]] = [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": f"Task: {task}\n\nDocument excerpts:\n{context}\n\nAnswer:"},
-            ]
-
+            messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
             answer = self._provider.chat(messages=messages)
 
             citations = [

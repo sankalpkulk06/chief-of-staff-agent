@@ -408,8 +408,8 @@ def _prompt_auth(registry: SQLiteRegistry, console: Console) -> dict:
     """Show login/signup menu and return the authenticated user dict."""
     import sys
     if not sys.stdin.isatty():
-        # Non-interactive (tests, pipes): use anonymous default user
-        return {"user_id": "default", "username": "default"}
+        # Non-interactive mode requires authentication — cannot proceed without a real user
+        raise typer.Exit(code=1)
 
     console.print()
     console.print("[bold cyan]Welcome to Sage[/bold cyan]")
@@ -567,7 +567,7 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             continue
         if lowered == "/analytics":
             analytics_service = create_analytics_service()
-            stats = analytics_service.get_analytics()
+            stats = analytics_service.get_analytics(user_id=user_id)
             _print_analytics_dashboard(stats)
             continue
         if lowered.startswith("/topk "):

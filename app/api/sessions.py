@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_chat_service, get_current_user, get_registry
 from app.core.chat_service import ChatService
+from app.providers.ollama_embeddings import OllamaProviderError
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -181,12 +182,36 @@ async def chat(
     registry.create_session(session_id=session_id, title="", user_id=current_user["user_id"])
 
     t0 = time.monotonic()
-    result = chat_service.answer_in_session(
-        session_id=session_id,
-        question=body.message,
-        response_style="web",
-        user_id=current_user["user_id"],
-    )
+    try:
+        result = chat_service.answer_in_session(
+            session_id=session_id,
+            question=body.message,
+            response_style="web",
+            user_id=current_user["user_id"],
+        )
+    except OllamaProviderError as exc:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        detail = str(exc).lower()
+        if "429" in detail or "quota" in detail or "resource_exhausted" in detail:
+            reply = (
+                "The model provider is rate-limited or out of quota right now. "
+                "Wait a bit and retry, or switch Sage to another chat model."
+            )
+        else:
+            reply = "The model provider failed while generating a response. Try again in a moment."
+        return ChatResponse(
+            reply=reply,
+            sources=[],
+            steps=[
+                StepOut(
+                    agent="provider",
+                    task="generate response",
+                    success=False,
+                    error=str(exc).splitlines()[0][:240],
+                )
+            ],
+            latency_ms=latency_ms,
+        )
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     sources = [

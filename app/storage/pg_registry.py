@@ -35,9 +35,6 @@ def _connect(database_url: str) -> psycopg2.extensions.connection:
 from app.schemas.chunk import DocumentChunk
 from app.schemas.document import ParsedDocument
 
-_DEFAULT_USER = "default"
-
-
 def _hash_password(password: str) -> str:
     salt = os.urandom(16)
     key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200_000)
@@ -106,11 +103,65 @@ class PostgresRegistry:
             return {"user_id": user["user_id"], "username": user["username"]}
         return None
 
+    def delete_user_data(self, user_id: str) -> Dict[str, int]:
+        """Delete a user's account and all rows owned by that user."""
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM documents WHERE user_id = %s) AS documents,
+                    (SELECT COUNT(*) FROM chat_sessions WHERE user_id = %s) AS sessions,
+                    (SELECT COUNT(*) FROM learned_facts WHERE user_id = %s) AS facts,
+                    (SELECT COUNT(*) FROM habits WHERE user_id = %s) AS habits,
+                    (SELECT COUNT(*) FROM todos WHERE user_id = %s) AS todos
+                """,
+                (user_id, user_id, user_id, user_id, user_id),
+            )
+            counts = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """
+                DELETE FROM whatsapp_sessions
+                WHERE session_id IN (
+                    SELECT session_id FROM chat_sessions WHERE user_id = %s
+                )
+                """,
+                (user_id,),
+            )
+            cur.execute(
+                """
+                DELETE FROM nudge_context
+                WHERE habit_id IN (
+                    SELECT id FROM habits WHERE user_id = %s
+                )
+                """,
+                (user_id,),
+            )
+            cur.execute("DELETE FROM hitl_requests WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM security_events WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM user_settings WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM todos WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM learned_facts WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM habits WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM named_sessions WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM chat_sessions WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM documents WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+
+        self._commit()
+        return {
+            "documents": int(counts.get("documents", 0)),
+            "sessions": int(counts.get("sessions", 0)),
+            "facts": int(counts.get("facts", 0)),
+            "habits": int(counts.get("habits", 0)),
+            "todos": int(counts.get("todos", 0)),
+        }
+
     # ------------------------------------------------------------------
     # Documents
     # ------------------------------------------------------------------
 
-    def upsert_document(self, document_id: str, document: ParsedDocument, user_id: str = _DEFAULT_USER) -> None:
+    def upsert_document(self, document_id: str, document: ParsedDocument, user_id: str) -> None:
         metadata_json = json.dumps(document.metadata, sort_keys=True)
         with self._cursor() as cur:
             cur.execute(
@@ -197,7 +248,7 @@ class PostgresRegistry:
             )
         self._commit()
 
-    def is_url_ingested(self, source_url: str, user_id: str = _DEFAULT_USER) -> bool:
+    def is_url_ingested(self, source_url: str, user_id: str) -> bool:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT 1 FROM documents WHERE source_url = %s AND source_type = 'url' AND user_id = %s LIMIT 1",
@@ -205,7 +256,7 @@ class PostgresRegistry:
             )
             return cur.fetchone() is not None
 
-    def list_url_sources(self, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def list_url_sources(self, user_id: str) -> List[Dict[str, object]]:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT document_id, file_name, source_url, ingested_at FROM documents WHERE source_type = 'url' AND user_id = %s ORDER BY ingested_at DESC",
@@ -213,7 +264,7 @@ class PostgresRegistry:
             )
             return [dict(r) for r in cur.fetchall()]
 
-    def list_all_sources(self, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def list_all_sources(self, user_id: str) -> List[Dict[str, object]]:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT document_id, file_name, source_path, source_type, source_url, ingested_at FROM documents WHERE user_id = %s ORDER BY ingested_at DESC, created_at DESC",
@@ -225,7 +276,7 @@ class PostgresRegistry:
     # Sessions
     # ------------------------------------------------------------------
 
-    def create_session(self, session_id: str, title: str = "", user_id: str = _DEFAULT_USER) -> None:
+    def create_session(self, session_id: str, title: str = "", user_id: str = "") -> None:
         with self._cursor() as cur:
             cur.execute(
                 "INSERT INTO chat_sessions (session_id, user_id, title) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
@@ -252,7 +303,7 @@ class PostgresRegistry:
             )
             return [dict(r) for r in cur.fetchall()]
 
-    def list_sessions(self, limit: int = 20, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def list_sessions(self, limit: int = 20, user_id: str = "") -> List[Dict[str, object]]:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT session_id, title, created_at, updated_at FROM chat_sessions WHERE user_id = %s ORDER BY updated_at DESC LIMIT %s",
@@ -271,7 +322,7 @@ class PostgresRegistry:
             cur.execute("DELETE FROM chat_sessions WHERE session_id = %s", (session_id,))
         self._commit()
 
-    def get_or_create_named_session(self, name: str, user_id: str = _DEFAULT_USER) -> str:
+    def get_or_create_named_session(self, name: str, user_id: str) -> str:
         with self._cursor() as cur:
             cur.execute(
                 "SELECT session_id FROM named_sessions WHERE name = %s AND user_id = %s",
@@ -294,7 +345,7 @@ class PostgresRegistry:
     # Facts
     # ------------------------------------------------------------------
 
-    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user", confidence_score: float = 1.0, user_id: str = _DEFAULT_USER) -> None:
+    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user", confidence_score: float = 1.0, *, user_id: str) -> None:
         with self._cursor() as cur:
             cur.execute(
                 """
@@ -310,7 +361,7 @@ class PostgresRegistry:
             )
         self._commit()
 
-    def list_facts(self, category: Optional[str] = None, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def list_facts(self, category: Optional[str] = None, *, user_id: str) -> List[Dict[str, object]]:
         with self._cursor() as cur:
             if category:
                 cur.execute(
@@ -324,7 +375,7 @@ class PostgresRegistry:
                 )
             return [dict(r) for r in cur.fetchall()]
 
-    def delete_fact(self, fact_id: str, user_id: str = _DEFAULT_USER) -> None:
+    def delete_fact(self, fact_id: str, user_id: str) -> None:
         with self._cursor() as cur:
             cur.execute("DELETE FROM learned_facts WHERE fact_id = %s AND user_id = %s", (fact_id, user_id))
         self._commit()
@@ -350,7 +401,7 @@ class PostgresRegistry:
     # Todos
     # ------------------------------------------------------------------
 
-    def create_todo(self, title: str, list_name: Optional[str] = None, due_at: Optional[datetime] = None, user_id: str = _DEFAULT_USER) -> Dict[str, object]:
+    def create_todo(self, title: str, list_name: Optional[str] = None, due_at: Optional[datetime] = None, user_id: str = "") -> Dict[str, object]:
         todo_id = str(uuid.uuid4())
         with self._cursor() as cur:
             cur.execute(
@@ -369,7 +420,7 @@ class PostgresRegistry:
             row = cur.fetchone()
         return dict(row) if row else None
 
-    def get_pending_todos(self, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def get_pending_todos(self, user_id: str = "") -> List[Dict[str, object]]:
         with self._cursor() as cur:
             cur.execute(
                 """
@@ -382,7 +433,7 @@ class PostgresRegistry:
             )
             return [dict(r) for r in cur.fetchall()]
 
-    def get_todos_due_soon(self, minutes_ahead: int = 60, user_id: str = _DEFAULT_USER) -> List[Dict[str, object]]:
+    def get_todos_due_soon(self, minutes_ahead: int = 60, user_id: str = "") -> List[Dict[str, object]]:
         cutoff = datetime.now() + timedelta(minutes=minutes_ahead)
         with self._cursor() as cur:
             cur.execute(

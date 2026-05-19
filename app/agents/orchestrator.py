@@ -4,96 +4,14 @@ import re
 from typing import Any, List, Optional
 
 from app.agents.base import AgentResult, AgentStep, OrchestratorPlan
+from app.agents.prompts import load
 from app.providers.factory import ChatProvider
 
-# Descriptions shown to the orchestrator LLM so it knows what each agent can do.
-AGENT_DESCRIPTIONS = {
-    "rag_agent": (
-        "Searches the user's personal saved documents and notes using semantic search. "
-        "Use for questions about things the user has read, saved, or ingested."
-    ),
-    "research_agent": (
-        "Fetches live news and searches the web for current or factual information. "
-        "Use for questions about recent events, external facts, or anything not in the user's documents."
-    ),
-    "action_agent": (
-        "Performs actions and retrieves personal data: creates todos/reminders, logs habit completions, "
-        "adds new habits to track, lists the user's current habits and streaks, "
-        "and saves or recalls personal/work facts. "
-        "ALWAYS use this when the user asks about their own habits, goals, or saved facts. "
-        "ALWAYS use this when the user states personal information (name, job, location, preferences, "
-        "age, etc.) — save it as a fact so Sage remembers it. "
-        "Use when the user wants to DO something, retrieve their personal data, or share something about themselves."
-    ),
-    "conversational": (
-        "Handles general chat, greetings, acknowledgements, and follow-ups that don't need "
-        "documents, web search, or any action. Use AFTER action_agent when confirming what was saved."
-    ),
-}
+# Valid agent names — used to filter/validate the parsed plan.
+VALID_AGENTS = frozenset({"action_agent", "rag_agent", "research_agent", "conversational"})
 
-_PLAN_SYSTEM = """\
-You are the orchestrator of Sage, a personal AI assistant. \
-Analyze the user's request and produce a step-by-step plan using specialized agents.
-
-Available agents:
-{agent_list}
-
-Rules:
-- Choose ONLY the agents actually needed. Prefer fewer steps over more.
-- For greetings, thanks, or acknowledgements: one "conversational" step only.
-- For pure factual questions with no personal context needed: one "conversational" step only.
-- If the user shares ANY personal information (name, job, location, age, preferences, health, \
-habits, relationships): ALWAYS use action_agent first to save it as a fact, then conversational.
-- If the user mentions completing a physical or personal activity that sounds like a tracked habit \
-("I ran today", "went to the gym", "did meditation", "hit the gym", "worked out", "read today", \
-"journaled", "took a walk"): ALWAYS use action_agent to log it, then conversational to acknowledge. \
-Do NOT route these to conversational only.
-- If the user asks about their own saved notes, documents, or past information: use rag_agent.
-- If the user asks about current events, news, or external facts: use research_agent.
-- For compound requests, split into the minimum necessary steps and order them: \
-facts/actions first → research second → conversational last.
-- Each "task" field must be a self-contained instruction that makes sense without context.
-
-Examples:
-- "hi" → [conversational: greet the user]
-- "my name is John" → [action_agent: save fact user's name is John | conversational: greet John by name]
-- "I'm a software engineer at Google" → [action_agent: save facts job=software engineer company=Google | conversational: acknowledge warmly]
-- "I live in Mumbai and I'm 28" → [action_agent: save facts location=Mumbai age=28 | conversational: acknowledge]
-- "I ran 5km today" → [action_agent: log habit completion running 5km | conversational: congratulate]
-- "I went to the gym today" → [action_agent: log habit gym done | conversational: acknowledge]
-- "just got back from the gym" → [action_agent: log habit gym done | conversational: acknowledge]
-- "hit the gym this morning" → [action_agent: log habit gym done | conversational: acknowledge]
-- "I've been meditating every day this week" → [action_agent: log habit meditation completed | conversational: acknowledge streak]
-- "remind me to call mom at 5pm" → [action_agent: create todo call mom at 5pm | conversational: confirm the reminder]
-- "add reading to my habits" → [action_agent: create new habit reading | conversational: confirm habit added]
-- "what are my habits?" → [action_agent: recall habits list | conversational: present the list]
-- "what did I save about React?" → [rag_agent: search documents about React | conversational: summarize findings]
-- "catch me up on my goals" → [rag_agent: search documents about goals and objectives | conversational: summarize]
-- "what's happening in AI?" → [research_agent: search latest AI news and developments | conversational: summarize]
-- "what is the capital of France?" → [conversational: answer directly]
-- "search for LangGraph tutorials and remind me to try it" → [research_agent: search LangGraph tutorials | action_agent: create todo try LangGraph | conversational: confirm]
-- "what are my habits and what's the news in fitness?" → [action_agent: recall habits list | research_agent: search fitness news | conversational: present both]
-- "catch me up on my goals and what's happening in AI" → [rag_agent: search saved goals | research_agent: search latest AI news | conversational: summarize both]
-- "I prefer working at night" → [action_agent: save fact prefers working at night | conversational: acknowledge]
-- "I drink coffee every morning" → [action_agent: save fact drinks coffee every morning | conversational: acknowledge]
-- "I love UFC, what fights are coming up?" → [action_agent: save fact loves UFC | research_agent: search upcoming UFC fights and events | conversational: present findings]
-- "I'm into cricket, what's the latest?" → [action_agent: save fact interested in cricket | research_agent: search latest cricket news | conversational: summarize]
-- "I've been reading about stoicism, what are the latest books on it?" → [action_agent: save fact reads about stoicism | research_agent: search latest stoicism books | conversational: present results]
-- "I started learning Spanish, any tips?" → [action_agent: save fact learning Spanish | research_agent: search Spanish learning tips and resources | conversational: give advice]
-
-Respond with ONLY valid JSON — no prose before or after:
-{{
-  "reasoning": "one sentence explaining your plan",
-  "steps": [
-    {{"agent": "agent_name", "task": "specific instruction for this agent"}}
-  ]
-}}"""
-
-_SYNTHESIS_SYSTEM = """\
-You are Sage, a wise and warm personal AI assistant. \
-Multiple specialized agents have gathered information to answer the user's request. \
-Combine their outputs into a single clear, natural response. \
-Do not mention the agents or the internal process — just answer the user directly."""
+_PLAN_SYSTEM = load("orchestrator_plan")
+_SYNTHESIS_SYSTEM = load("orchestrator_synthesis")
 
 # Patterns that are obviously pure conversational — skip planning overhead.
 _FAST_PATH_STARTS = frozenset([
@@ -125,11 +43,8 @@ class OrchestratorAgent:
         if rule_plan:
             return rule_plan
 
-        agent_list = "\n".join(f"- {name}: {desc}" for name, desc in AGENT_DESCRIPTIONS.items())
-        system = _PLAN_SYSTEM.format(agent_list=agent_list)
-
         # Give the planner recent history so it understands follow-ups.
-        messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": _PLAN_SYSTEM}]
         messages.extend(history[-4:])  # last 2 turns
         messages.append({"role": "user", "content": question})
 
@@ -148,6 +63,7 @@ class OrchestratorAgent:
         original_question: str,
         results: List[AgentResult],
         history: List[dict[str, Any]],
+        user_facts: Optional[str] = None,
     ) -> str:
         """Merge multiple agent outputs into a single coherent reply."""
         successful = [r for r in results if r.success and r.output]
@@ -162,23 +78,18 @@ class OrchestratorAgent:
         if len(results) == 1 and len(successful) == 1:
             return successful[0].output
 
-        context_parts = []
-        for r in successful:
-            context_parts.append(f"[{r.agent} — task: {r.task}]\n{r.output}")
-        combined = "\n\n---\n\n".join(context_parts)
+        agent_results = "\n\n---\n\n".join(
+            f"[{r.agent} — {r.task}]\n{r.output}" for r in successful
+        )
+        system = (
+            _SYNTHESIS_SYSTEM
+            .replace("{agent_results}", agent_results)
+            .replace("{user_facts}", user_facts or "No personal facts stored yet.")
+        )
 
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": _SYNTHESIS_SYSTEM},
-        ]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
         messages.extend(history[-4:])
-        messages.append({
-            "role": "user",
-            "content": (
-                f"My original request: {original_question}\n\n"
-                f"Agent results:\n{combined}\n\n"
-                "Please give me a unified response."
-            ),
-        })
+        messages.append({"role": "user", "content": original_question})
 
         return self._provider.chat(messages=messages)
 
@@ -256,7 +167,7 @@ class OrchestratorAgent:
         data = json.loads(match.group())
         raw_steps = data.get("steps", [])
 
-        valid_agents = set(AGENT_DESCRIPTIONS.keys())
+        valid_agents = VALID_AGENTS
         steps = []
         for s in raw_steps:
             agent = s.get("agent", "conversational")

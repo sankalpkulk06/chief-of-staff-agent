@@ -72,13 +72,13 @@ class URLIngestionService:
             return True
         return False
 
-    def already_ingested(self, url: str, user_id: str = "default") -> bool:
+    def already_ingested(self, url: str, user_id: str) -> bool:
         return self._registry.is_url_ingested(url, user_id=user_id)
 
     def list_url_sources(self) -> list[dict]:
         return self._registry.list_url_sources()
 
-    def ingest(self, url: str, user_id: str = "default") -> URLIngestionResult:
+    def ingest(self, url: str, user_id: str) -> URLIngestionResult:
         if self.already_ingested(url, user_id=user_id):
             return URLIngestionResult(
                 success=True,
