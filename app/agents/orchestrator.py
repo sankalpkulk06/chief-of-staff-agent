@@ -94,15 +94,85 @@ class OrchestratorAgent:
         data = json.loads(match.group())
         raw_steps = data.get("steps", [])
 
-        steps = []
-        for s in raw_steps:
+        steps: list[AgentStep] = []
+        for i, s in enumerate(raw_steps, 1):
             agent = s.get("agent", "conversational")
             if agent not in VALID_AGENTS:
                 agent = "conversational"
             task = s.get("task", fallback_question)
-            steps.append(AgentStep(agent=agent, task=task))
+            step_id = str(s.get("id") or f"step_{i}")
+            depends_on = s.get("depends_on") or []
+            if isinstance(depends_on, str):
+                depends_on = [depends_on]
+            if not isinstance(depends_on, list):
+                depends_on = []
+            parallel_group = s.get("parallel_group")
+            mode = s.get("mode") or OrchestratorAgent._infer_step_mode(agent, task)
+            if mode not in {"read", "write", "synthesize"}:
+                mode = OrchestratorAgent._infer_step_mode(agent, task)
+            steps.append(
+                AgentStep(
+                    id=step_id,
+                    agent=agent,
+                    task=task,
+                    depends_on=[str(dep) for dep in depends_on],
+                    parallel_group=str(parallel_group) if parallel_group else None,
+                    mode=mode,
+                )
+            )
 
         if not steps:
-            steps = [AgentStep(agent="conversational", task=fallback_question)]
+            steps = [
+                AgentStep(
+                    id="step_1",
+                    agent="conversational",
+                    task=fallback_question,
+                    mode="synthesize",
+                )
+            ]
+
+        steps = OrchestratorAgent._normalize_step_dependencies(steps)
 
         return OrchestratorPlan(steps=steps, reasoning=data.get("reasoning", ""))
+
+    @staticmethod
+    def _infer_step_mode(agent: str, task: str) -> str:
+        if agent == "conversational":
+            return "synthesize"
+        task_lower = task.lower()
+        write_markers = (
+            "add_todo",
+            "add_habit",
+            "log_habit",
+            "remember_fact",
+            "create",
+            "save",
+            "log ",
+            "remind me",
+        )
+        if agent == "action_agent" and any(marker in task_lower for marker in write_markers):
+            return "write"
+        return "read"
+
+    @staticmethod
+    def _normalize_step_dependencies(steps: list[AgentStep]) -> list[AgentStep]:
+        seen_ids: set[str] = set()
+        for i, step in enumerate(steps, 1):
+            if not step.id or step.id in seen_ids:
+                step.id = f"step_{i}"
+            seen_ids.add(step.id)
+
+        valid_ids = {step.id for step in steps}
+        for step in steps:
+            step.depends_on = [
+                dep for dep in step.depends_on if dep in valid_ids and dep != step.id
+            ]
+
+        for i, step in enumerate(steps):
+            if step.mode == "synthesize" and not step.depends_on:
+                step.depends_on = [
+                    prior.id
+                    for prior in steps[:i]
+                    if prior.mode != "synthesize"
+                ]
+        return steps

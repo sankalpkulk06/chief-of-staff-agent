@@ -153,6 +153,8 @@ def create_chat_service(
         enable_tools=True,
         user_id=user_id,
         rag_fallback_distance_threshold=settings.rag_fallback_distance_threshold,
+        agent_parallelism_enabled=settings.agent_parallelism_enabled,
+        agent_parallelism_max_workers=settings.agent_parallelism_max_workers,
         security_agent=SecurityAgent(
             registry=registry,
             chat_provider=chat_provider,

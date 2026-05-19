@@ -28,7 +28,7 @@ class Fact(BaseModel):
 class FactService:
     """Service for managing learned facts about the user."""
 
-    def __init__(self, registry: SQLiteRegistry, user_id: str):
+    def __init__(self, registry: SQLiteRegistry, user_id: str = ""):
         self._registry = registry
         self._user_id = user_id
 

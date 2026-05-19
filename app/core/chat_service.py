@@ -47,7 +47,7 @@ class ChatService:
         retriever: Retriever,
         chat_provider: OllamaChatProvider,
         registry: Any,
-        user_id: str,
+        user_id: str = "",
         agent_chat_providers: Optional[dict[str, Any]] = None,
         agent_model_specs: Optional[dict[str, str]] = None,
         fact_service: Optional[FactService] = None,
@@ -63,6 +63,8 @@ class ChatService:
         enable_tools: bool = True,
         rag_fallback_distance_threshold: float = 0.5,
         security_agent: Optional[SecurityAgent] = None,
+        agent_parallelism_enabled: bool = True,
+        agent_parallelism_max_workers: int = 3,
     ):
         self._retriever = retriever
         self._chat_provider = chat_provider
@@ -99,6 +101,8 @@ class ChatService:
             rag_top_k=max_prompt_chunks,
             rag_fallback_threshold=rag_fallback_distance_threshold,
             security_agent=security_agent,
+            parallelism_enabled=agent_parallelism_enabled,
+            max_parallel_workers=agent_parallelism_max_workers,
         )
 
         # In-memory cache of news articles per session for follow-up questions

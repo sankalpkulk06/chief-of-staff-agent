@@ -210,7 +210,7 @@ class SQLiteRegistry:
     # Documents
     # ------------------------------------------------------------------
 
-    def upsert_document(self, document_id: str, document: ParsedDocument, user_id: str) -> None:
+    def upsert_document(self, document_id: str, document: ParsedDocument, user_id: str = "") -> None:
         metadata_json = json.dumps(document.metadata, sort_keys=True)
         self._connection.execute(
             """
@@ -298,21 +298,21 @@ class SQLiteRegistry:
         )
         self._connection.commit()
 
-    def is_url_ingested(self, source_url: str, user_id: str) -> bool:
+    def is_url_ingested(self, source_url: str, user_id: str = "") -> bool:
         row = self._connection.execute(
             "SELECT 1 FROM documents WHERE source_url = ? AND source_type = 'url' AND user_id = ? LIMIT 1",
             (source_url, user_id),
         ).fetchone()
         return row is not None
 
-    def list_url_sources(self, user_id: str) -> List[Dict[str, object]]:
+    def list_url_sources(self, user_id: str = "") -> List[Dict[str, object]]:
         rows = self._connection.execute(
             "SELECT document_id, file_name, source_url, ingested_at FROM documents WHERE source_type = 'url' AND user_id = ? ORDER BY ingested_at DESC",
             (user_id,),
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_all_sources(self, user_id: str) -> List[Dict[str, object]]:
+    def list_all_sources(self, user_id: str = "") -> List[Dict[str, object]]:
         rows = self._connection.execute(
             "SELECT document_id, file_name, source_path, source_type, source_url, ingested_at FROM documents WHERE user_id = ? ORDER BY ingested_at DESC, created_at DESC",
             (user_id,),
@@ -366,7 +366,7 @@ class SQLiteRegistry:
         self._connection.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
         self._connection.commit()
 
-    def get_or_create_named_session(self, name: str, user_id: str) -> str:
+    def get_or_create_named_session(self, name: str, user_id: str = "") -> str:
         row = self._connection.execute(
             "SELECT session_id FROM named_sessions WHERE name = ? AND user_id = ?",
             (name, user_id),
@@ -710,6 +710,20 @@ class SQLiteRegistry:
             except ValueError:
                 data["expires_at"] = None
         return data
+
+    def attach_hitl_context(self, id: str, context: Dict[str, object]) -> None:
+        row = self.get_hitl_request(id)
+        if not row:
+            return
+        payload = row.get("action_payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        payload["__hitl_context"] = context
+        self._connection.execute(
+            "UPDATE hitl_requests SET action_payload = ? WHERE id = ?",
+            (json.dumps(payload), id),
+        )
+        self._connection.commit()
 
     def resolve_hitl_request(self, id: str, status: str) -> None:
         self._connection.execute(

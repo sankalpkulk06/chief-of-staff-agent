@@ -41,6 +41,7 @@ def resolve_hitl(
         from app.config import get_settings
         from app.providers.factory import create_chat_provider, agent_model_specs
 
+        context = (row.get("action_payload") or {}).get("__hitl_context") or {}
         settings = get_settings()
         specs = agent_model_specs(settings)
         chat_provider = create_chat_provider(settings, specs["action_agent"])
@@ -52,7 +53,19 @@ def resolve_hitl(
         )
         result = agent.execute_approved(hitl_id, current_user["user_id"])
         registry.resolve_hitl_request(hitl_id, "approved")
-        return {"status": "approved", "output": result.output, "success": result.success}
+        final_reply = result.output
+        continuation = context.get("continuation_output")
+        if continuation:
+            final_reply = f"{result.output}\n\n{continuation}" if result.output else continuation
+        return {
+            "status": "approved",
+            "output": result.output,
+            "final_reply": final_reply,
+            "success": result.success,
+        }
 
+    context = (row.get("action_payload") or {}).get("__hitl_context") or {}
     registry.resolve_hitl_request(hitl_id, "rejected")
-    return {"status": "rejected"}
+    continuation = context.get("continuation_output")
+    final_reply = f"Rejected — action was not taken.\n\n{continuation}" if continuation else "Rejected — action was not taken."
+    return {"status": "rejected", "final_reply": final_reply}

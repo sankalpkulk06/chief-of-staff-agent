@@ -1,7 +1,7 @@
 # Sage — Complete System Review
 
-**Last updated:** May 19, 2026 (evening — post RAGAS eval)
-**Branch:** main  
+**Last updated:** May 19, 2026 (parallel orchestration + HITL continuation + response polish)
+**Branch:** `feat/parallel-agent-orchestration`  
 **Live URL:** https://sage-2607286466.us-central1.run.app  
 **Purpose:** Full reference for the Wipro FDE assignment review — agents, pipeline, security, storage, deployment.
 
@@ -38,7 +38,10 @@ Sage is a **personal AI chief-of-staff** built as a multi-agent system. It combi
 - Gmail integration with per-user OAuth tokens stored in Supabase
 - Action execution (todos, habits, facts, reminders)
 - A multi-agent orchestration layer (Orchestrator → specialized agents)
+- Dependency-aware parallel execution for independent agent work
 - A security pipeline that guards every input and output
+- HITL approval for writes, with independent read-only work continuing while approval is pending
+- Friendly, skimmable answer formatting with concise bullets, compact links, and tasteful emoji anchors
 - **Inline LLM-as-judge evaluation** on every RAG turn (faithfulness + answer relevancy)
 - Multi-user authentication backed by Supabase
 
@@ -81,7 +84,15 @@ User Input (CLI / Web / WhatsApp)
                                           ┌────────────▼────────────┐
                                           │  OrchestratorAgent       │
                                           │  plan(question, history) │
-                                          │  → [AgentStep, ...]      │
+                                          │  → [AgentStep{id, mode,  │
+                                          │      depends_on, group}] │
+                                          └────────────┬────────────┘
+                                                       │
+                                          ┌────────────▼────────────┐
+                                          │  Dependency Batcher      │
+                                          │  plan.execution_batches()│
+                                          │  read steps fan out      │
+                                          │  writes/synthesis isolate│
                                           └────────────┬────────────┘
                                                        │
                          ┌─────────────────────────────┼──────────────────────────┐
@@ -91,7 +102,7 @@ User Input (CLI / Web / WhatsApp)
                + LLM filter extract               │                          │
                + retrieved_contexts               │                     EmailAgent
                  in metadata)                     │                          │
-                    └──────────────────────────────┼──────────────────────────┘
+                    └─────────────── parallel read batches ───────────────────┘
                                                    ▼
                                       OrchestratorAgent.synthesize()
                                                    │
@@ -126,8 +137,10 @@ LLM / Embeddings:
 HITL Gate (Human-in-the-Loop):
   ├── ActionAgent intercepts all write actions before execution
   ├── Pending record inserted into hitl_requests (Supabase)
+  ├── Independent read-only siblings keep running while approval waits
+  ├── Completed sibling output is attached to the HITL request
   ├── Frontend renders approve/reject buttons inline in chat
-  └── POST /api/v1/hitl/{id}/resolve executes or discards on user decision
+  └── POST /api/v1/hitl/{id}/resolve executes/discards and returns combined follow-up
 ```
 
 ### Design principle: LLM-first routing
@@ -152,8 +165,20 @@ The only pre-LLM bypass is **URL detection** (structural, not semantic — regex
 
 **What it does:**
 - Receives the user's question and recent conversation history (last 4 turns).
-- Produces a structured plan: an ordered list of `AgentStep(agent, task)` objects.
+- Produces a structured plan: an ordered list of dependency-aware `AgentStep` objects.
 - After all steps execute, synthesizes a single coherent reply from all sub-agent results.
+
+**Plan schema:**
+```python
+AgentStep(
+    id="todos",
+    agent="action_agent",
+    task="list_todos: retrieve all reminders and tasks due today",
+    mode="read",                       # read | write | synthesize
+    depends_on=[],
+    parallel_group="today_overview",
+)
+```
 
 **Prompt design:** Comprehensive few-shot examples covering:
 - Habits, facts, todos, compound queries
@@ -165,13 +190,17 @@ The only pre-LLM bypass is **URL detection** (structural, not semantic — regex
 - `fetch_news: <query>` → news service
 - `web_search: <query>` → web search
 
-**HITL early exit:** If any step returns `metadata.hitl_pending=True`, the runner stops immediately — no further steps run and synthesis is skipped.
+**Parallel planning:** Independent read-only steps use empty `depends_on` and may share a `parallel_group`. Synthesis steps depend on every prior tool step. Write steps are isolated unless a future policy proves a narrower conflict boundary is safe.
+
+**HITL behavior:** If a write step returns `metadata.hitl_pending=True`, the runner pauses dependent synthesis but continues independent read-only work. Any completed sibling output is stored on the HITL request so approval/rejection can return a combined follow-up.
 
 **Fallback:** If the LLM plan parse fails → single `conversational` step.
 
 **Guardrails applied by runner:**
 - Invalid agent names stripped (allowlist: `rag_agent`, `research_agent`, `action_agent`, `conversational`, `email_agent`)
 - Plan capped at 5 steps
+- Missing legacy dependency fields backfilled (`id`, `mode`, `depends_on`)
+- Writes and synthesis isolated into single-step batches
 
 ---
 
@@ -216,7 +245,7 @@ If `chunks_found == 0` OR `top_score > 0.65` (poor cosine match), ResearchAgent 
 **File:** `app/agents/research_agent.py`  
 **Role:** Live external data — web search and news.
 
-**Tools available:** `web_search` (Tavily → DuckDuckGo fallback), `fetch_news` (Google News RSS)
+**Tools available:** `web_search` (Tavily → DuckDuckGo → DuckDuckGo Lite fallback), `fetch_news` (Google News RSS)
 
 **Routing:** Fully trust the orchestrator prefix — no keyword heuristics:
 - `fetch_news:` prefix → news service
@@ -224,6 +253,10 @@ If `chunks_found == 0` OR `top_score > 0.65` (poor cosine match), ResearchAgent 
 - No prefix (shouldn't happen) → defaults to web search
 
 **Meta-language stripping:** Phrases like "with a quick search tell me..." stripped before the search API call.
+
+**Search reliability fallback:** DuckDuckGo can intermittently return an empty list from one backend even for obvious queries. `WebSearchService` now tries multiple DDG backends and finally parses DuckDuckGo Lite HTML before returning no results.
+
+**Answer style:** Research summaries are written so the user understands the story without opening links. Links are compact Markdown citations, not raw URL dumps. News/resources use short bullets, enough context to act on, and restrained emoji anchors such as `📰`, `🔎`, `🏏`, or `🥊`.
 
 ---
 
@@ -283,12 +316,52 @@ This means "log that I read 10 pages of a book today" correctly maps to `name: "
 - Injects stored personal facts into the system prompt
 - Synthesizes previous agent results into a coherent reply when multiple agents ran
 - Always the last step in multi-step plans
+- Uses short paragraphs, concise bullets, compact Markdown links, and light emoji section labels when they improve readability
 
 ---
 
 ## 4. Multi-Agent Pipeline — Step by Step
 
-### Full pipeline for a complex query
+### Full pipeline for a complex query with parallel reads
+
+**Input:** `"what are my tasks for today and also get the latest news on IPL"`
+
+```
+Step 0: SecurityAgent.check_input()
+  → OK
+
+Step 1: OrchestratorAgent.plan()
+  → LLM produces dependency-aware steps:
+    [
+      {id: "todos",    agent: "action_agent",   mode: "read",
+       task: "list_todos: retrieve all reminders and tasks due today",
+       depends_on: [], parallel_group: "today_overview"},
+      {id: "ipl_news", agent: "research_agent", mode: "read",
+       task: "fetch_news: latest IPL news, matches, and playoff updates",
+       depends_on: [], parallel_group: "today_overview"},
+      {id: "merge",    agent: "conversational", mode: "synthesize",
+       task: "present today's tasks and the latest IPL news clearly",
+       depends_on: ["todos", "ipl_news"]}
+    ]
+
+Step 2: AgentRunner.plan.execution_batches()
+  → Batch 1: [todos, ipl_news]       # runs concurrently
+  → Batch 2: [merge]                 # waits for both reads
+
+Step 3a: ActionAgent → list_todos
+Step 3b: ResearchAgent → fetch_news
+  → both complete independently
+
+Step 4: OrchestratorAgent.synthesize()
+  → one friendly, skimmable answer with sections like:
+     **📌 Tasks**
+     **🏏 IPL news**
+
+Step 5: SecurityAgent.check_output()
+Step 6: ChatResponse(reply, steps, sources, latency_ms)
+```
+
+### HITL + independent sibling work
 
 **Input:** `"Search for what LangGraph is, save that I'm studying agent frameworks, and remind me to review it this weekend"`
 
@@ -306,25 +379,34 @@ Step 1: OrchestratorAgent.plan()
       {agent: "conversational", task: "confirm what was done and share what was found"}
     ]
 
-Step 2: ResearchAgent → web_search: prefix → web search "LangGraph"
+Step 2: AgentRunner builds batches
+  → independent reads can continue
+  → writes are isolated
+
+Step 3: ResearchAgent → web_search: prefix → web search "LangGraph"
   → AgentResult(output="LangGraph is a...", citations=[...])
 
-Step 3: ActionAgent → remember_fact (HITL gate fires)
+Step 4: ActionAgent → remember_fact (HITL gate fires)
   → hitl_requests row created (status=pending, expires in 10 min)
   → AgentResult(output="I'm about to save personal fact: studying agent frameworks. Please confirm.",
                 metadata={"hitl_pending": True, "hitl_id": "uuid"})
-  → runner exits immediately (HITL early exit)
-  → ChatResponse(reply="...", hitl_pending=True, hitl_id="uuid")
+  → dependent synthesis is skipped
+  → independent completed research output is attached to hitl_requests.action_payload.__hitl_context
+  → ChatResponse(reply="approval prompt + research summary", hitl_pending=True, hitl_id="uuid")
   → frontend renders Approve / Reject buttons
 
   [User clicks Approve]
   → POST /api/v1/hitl/{uuid}/resolve {"approved": true}
   → ActionAgent.execute_approved() runs the deferred action
-  → {"status": "approved", "output": "Personal fact saved: studying agent frameworks"}
-
-Step 6: OrchestratorAgent.synthesize() → unified reply
-Step 7: SecurityAgent.check_output() → returned unchanged
+  → response includes:
+     {
+       "status": "approved",
+       "output": "Personal fact saved: studying agent frameworks",
+       "final_reply": "Personal fact saved...\n\nLangGraph summary..."
+     }
 ```
+
+Dependent tasks do **not** continue past HITL. Only independent sibling reads do. True post-approval resumption of dependent steps is still a future enhancement.
 
 ### Document query — same session
 
@@ -413,7 +495,8 @@ ChatService.answer_in_session()
 | RAG → web fallback (poor match or no chunks) | ❌ No | `triggered_by_rag_fallback: True` set on research result |
 | Web search / news | ❌ No | No `rag_agent` result in agent_results |
 | Email, action, conversational | ❌ No | No `rag_agent` result in agent_results |
-| HITL early exit | ❌ No | Runner exits before eval |
+| HITL pending | ❌ No | Pending write pauses synthesis/eval; independent sibling outputs can still be returned |
+| HITL with independent sibling reads | ❌ No | Pending write pauses synthesis; sibling outputs can still be returned |
 | Security blocked | ❌ No | Runner exits before eval |
 
 ### 5.4 RagasService Implementation
@@ -694,6 +777,9 @@ Static single-page app served by FastAPI at `/`.
 - **Auth:** Login / Sign Up — username + password stored in `localStorage`
 - **Chat:** Session sidebar, message thread, file upload, HITL approve/reject buttons
 - **RAG eval badge:** `✓ Faithfulness: 0.92 · Relevancy: 1.00` displayed below source citations on RAG replies, color-coded by score threshold
+- **Agent trace stream:** Shows security, planning, parallel batches, agent steps, HITL wait states, synthesis, and output scrub events
+- **Readable Markdown renderer:** Supports paragraphs, bullets, numbered lists, bold/italic/code, clean `[label](url)` links, and compact labels for raw long URLs
+- **Friendly output style:** Prompts and renderer work together for short bullets, useful summaries, and restrained emoji section anchors
 - **Profile:** Facts, habits, knowledge base, analytics, activity
 - **Integrations:** Connect / Disconnect Gmail per-user OAuth flow
 
@@ -716,7 +802,7 @@ All endpoints under `/api/v1/*`. Authenticated endpoints require `X-Sage-Usernam
 | **Sessions** | `GET /sessions`, `POST /sessions`, `GET /sessions/{id}/messages`, `PATCH /sessions/{id}`, `DELETE /sessions/{id}`, `POST /sessions/{id}/generate-title` |
 | **Chat** | `POST /sessions/{id}/chat` → see response shape below |
 | **Upload** | `POST /sessions/{id}/upload` → ingest a file into the knowledge base |
-| **HITL** | `POST /hitl/{id}/resolve` → `{status, output, success}` |
+| **HITL** | `POST /hitl/{id}/resolve` → `{status, output, final_reply, success}` |
 | **Facts** | `GET /facts`, `POST /facts`, `DELETE /facts/{id}` |
 | **Habits** | `GET /habits`, `POST /habits`, `POST /habits/{id}/log`, `DELETE /habits/{id}/log`, `DELETE /habits/{id}` |
 | **Sources** | `GET /sources`, `POST /sources/ingest` |
@@ -745,6 +831,26 @@ All endpoints under `/api/v1/*`. Authenticated endpoints require `X-Sage-Usernam
 ```
 
 `ragas` is `null` for non-RAG turns and RAG→web fallback turns.
+
+### `POST /hitl/{id}/resolve` response shape
+
+```json
+// Approved action, with independent sibling output attached
+{
+  "status": "approved",
+  "output": "Added reminder: call Harry due Tue, May 19 at 12:00PM.",
+  "final_reply": "Added reminder: call Harry due Tue, May 19 at 12:00PM.\n\nHere are useful Python tutorials...",
+  "success": true
+}
+
+// Rejected action, with independent sibling output preserved
+{
+  "status": "rejected",
+  "final_reply": "Rejected — action was not taken.\n\nHere are useful Python tutorials..."
+}
+```
+
+`final_reply` is optional and appears when the original turn had independent work that completed while HITL was waiting.
 
 ---
 
@@ -829,6 +935,8 @@ LLM_MAX_RETRIES=3
 # Pipeline guards
 MAX_AGENT_STEPS=5
 MAX_HISTORY_TURNS=20
+AGENT_PARALLELISM_ENABLED=true
+AGENT_PARALLELISM_MAX_WORKERS=3
 
 # Security
 SECURITY_ENABLED=true
@@ -877,7 +985,26 @@ APP_ENV=development
 
 ### Overview
 
-All ActionAgent write actions require explicit human approval. Read actions (`get_habits`, `list_facts`) bypass HITL.
+All ActionAgent write actions require explicit human approval. Read actions (`get_habits`, `list_facts`, `list_todos`) bypass HITL.
+
+HITL is **non-blocking for independent sibling reads**. If a user asks for a write plus an unrelated read, Sage still runs and returns the read result while waiting for approval.
+
+Example:
+```
+"remind me to call Harry at 12pm and find Python tutorials"
+
+Action branch:
+  → add_todo requires approval
+  → approval prompt returned
+
+Research branch:
+  → web_search runs anyway
+  → tutorial summary returned in the same response
+
+After approval:
+  → deferred reminder executes
+  → approval endpoint returns final_reply with reminder result + preserved tutorial summary
+```
 
 ### Flow
 
@@ -887,8 +1014,9 @@ User message → Orchestrator → ActionAgent._dispatch()
   → create_hitl_request() → DB commit immediately
   → return AgentResult(output="I'm about to <action>. Please confirm.",
                        metadata={hitl_pending: true, hitl_id: uuid})
-  → runner exits immediately (HITL early exit — no further steps, no synthesis)
-  → ChatResponse includes hitl_pending=true, hitl_id=uuid
+  → runner skips dependent synthesis but continues independent read-only sibling steps
+  → completed sibling output stored in action_payload.__hitl_context.continuation_output
+  → ChatResponse includes hitl_pending=true, hitl_id=uuid, plus sibling results when present
   → frontend renders Approve / Reject buttons inline
 
 User clicks Approve:
@@ -898,9 +1026,11 @@ User clicks Approve:
   → expiry check: NOW() > expires_at → mark expired, return 410
   → ActionAgent.execute_approved(hitl_id, user_id) runs the deferred action
   → hitl_requests.status = "approved", resolved_at = NOW()
+  → response.final_reply combines approved action output + preserved sibling output
 
 User clicks Reject:
   → hitl_requests.status = "rejected"
+  → response.final_reply preserves sibling output and states action was not taken
 ```
 
 ### Human-readable confirmation text
@@ -920,6 +1050,7 @@ user_id         TEXT NOT NULL
 session_id      TEXT
 action_type     TEXT NOT NULL       -- add_todo | add_habit | log_habit | remember_fact
 action_payload  JSONB               -- params extracted by LLM
+                                -- may include __hitl_context.continuation_output
 status          TEXT DEFAULT 'pending'  -- pending | approved | rejected | expired
 created_at      TIMESTAMPTZ
 expires_at      TIMESTAMPTZ DEFAULT NOW() + INTERVAL '10 minutes'
@@ -934,11 +1065,12 @@ resolved_at     TIMESTAMPTZ
 
 | Limitation | Details |
 |------------|---------|
-| **No parallel agent execution** | Steps execute sequentially — no async fan-out. |
+| **Parallelism is conservative** | Independent read-only steps can run in parallel; writes and synthesis are isolated. |
 | **Single RAG → Research fallback** | Fallback fires once per step; no third level. |
 | **No mid-plan re-planning** | Orchestrator plans once; if a step fails mid-plan, remaining steps run with incomplete context. |
 | **No cross-session memory** | Facts are persistent but conversation history is session-scoped. |
 | **RAG filter LLM call adds latency** | Every RAG query makes an extra LLM call for metadata extraction (~300-500ms). |
+| **No dependent post-HITL resume yet** | Independent sibling work continues while approval waits, but steps that depend on the approved action are not resumed automatically after approval. |
 
 ### RAG Evaluation
 
@@ -977,15 +1109,17 @@ resolved_at     TIMESTAMPTZ
 | Twilio webhook signature validation | Not built | |
 | Architecture diagram (visual) | Not built | |
 | Assignment report | Not built | |
-| Parallel agent execution | Not built | |
+| Parallel agent execution | ✅ Done | Dependency-aware batches in `app/agents/base.py` + `app/agents/runner.py` |
 | RAG reranker / hybrid BM25+vector | Not built | |
 | `--min-instances 1` for warm Cloud Run | ✅ Done | Applied live + in deploy.yml |
 | HITL expiry background cleanup | Not built | Expired rows accumulate |
-| HITL on WhatsApp | Not built | WhatsApp path bypasses HITL |
+| HITL continuation for independent sibling work | ✅ Done | Completed sibling output stored in `hitl_requests.action_payload.__hitl_context` |
+| HITL on WhatsApp | Not built | WhatsApp path bypasses frontend approval buttons |
 | Gmail verification (Google) | Not submitted | App is in Testing mode — only approved test users can connect |
 | RAG eval score persistence / trend tracking | Not built | Scores returned in API, not stored — no historical dashboard |
 | Retrieval quality metrics (precision/recall/MRR) | Not built | Faithfulness measures grounding; retrieval quality requires an eval set |
 | LLM-as-judge eval — inline (faithfulness + relevancy) | ✅ Done | `app/core/ragas_service.py`, shown as badge in chat UI |
+| Friendly Markdown + emoji answer style | ✅ Done | Prompt guidance + frontend Markdown renderer |
 
 ---
 
