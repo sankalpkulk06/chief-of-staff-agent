@@ -706,6 +706,19 @@
     align-items: center;
   }
   .msg-meta .sources { color: var(--text-3); }
+  .eval-badge {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-4);
+    margin-top: 3px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .eval-badge .ev-score { font-weight: 600; }
+  .ev-green { color: #1D9E75; }
+  .ev-amber { color: #F0A500; }
+  .ev-red   { color: #D85A30; }
 
   /* HITL approve / reject */
   .hitl-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -2944,6 +2957,23 @@
       meta.className = 'msg-meta';
       meta.innerHTML = `<span>${formatNow()}</span><span class="sources">${srcLabel} · local · ${data.latency_ms}ms</span>`;
       wrap.appendChild(meta);
+
+      if (data.ragas?.evaluated) {
+        const scoreColor = v => v >= 0.80 ? 'ev-green' : v >= 0.60 ? 'ev-amber' : 'ev-red';
+        const fmt = v => v != null ? `<span class="ev-score ${scoreColor(v)}">${v.toFixed(2)}</span>` : null;
+        const fPart = fmt(data.ragas.faithfulness);
+        const rPart = fmt(data.ragas.answer_relevancy);
+        const parts = [
+          fPart ? `Faithfulness: ${fPart}` : null,
+          rPart ? `Relevancy: ${rPart}` : null,
+        ].filter(Boolean);
+        if (parts.length) {
+          const badge = document.createElement('div');
+          badge.className = 'eval-badge';
+          badge.innerHTML = `<span>✓</span>${parts.join('<span> · </span>')}`;
+          wrap.appendChild(badge);
+        }
+      }
 
       // Background title generation — fire and forget, update UI when resolved
       const sessionIdForTitle = currentSessionId;

@@ -86,6 +86,8 @@ class Settings(BaseModel):
     llm_timeout_seconds: int = Field(default=30, gt=0)
     llm_max_retries: int = Field(default=3, gt=0)
 
+    ragas_enabled: bool = True
+
     security_enabled: bool = True
     max_input_length: int = Field(default=2000, gt=0)
     max_output_length: int = Field(default=8000, gt=0)

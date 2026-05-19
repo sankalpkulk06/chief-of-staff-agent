@@ -4,6 +4,7 @@ from datetime import date, datetime
 from typing import Any, Callable, List, Optional
 
 from app.core.qa_service import QAResult
+from app.core.ragas_service import RagasService
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.services.email_service import EmailService
@@ -204,6 +205,22 @@ class ChatService:
                 hitl_id = r.metadata.get("hitl_id")
                 break
 
+        # Inline RAGAS eval — runs only for successful RAG turns with retrieved contexts.
+        # Never blocks or raises: on any failure returns evaluated=False silently.
+        ragas_result = None
+        if run.rag_eval_inputs:
+            from app.config.settings import get_settings
+            if get_settings().ragas_enabled:
+                try:
+                    ragas_result = RagasService(self._chat_provider).score(
+                        question=run.rag_eval_inputs["question"],
+                        answer=run.output,
+                        contexts=run.rag_eval_inputs["contexts"],
+                        timeout=5.0,
+                    )
+                except Exception:
+                    pass  # score() already catches internally; belt-and-suspenders
+
         return self._record_answer(
             session_id=session_id,
             question=question,
@@ -214,6 +231,7 @@ class ChatService:
             agent_steps=run.steps_summary,
             hitl_pending=hitl_pending,
             hitl_id=hitl_id,
+            ragas_result=ragas_result,
         )
 
     def _record_answer(
@@ -228,6 +246,7 @@ class ChatService:
         agent_steps: Optional[list] = None,
         hitl_pending: bool = False,
         hitl_id: Optional[str] = None,
+        ragas_result=None,
     ) -> QAResult:
         """Persist a user/assistant exchange and return the standard result shape."""
         user_turn_id = str(uuid.uuid4())
@@ -264,6 +283,7 @@ class ChatService:
             steps=agent_steps or [],
             hitl_pending=hitl_pending,
             hitl_id=hitl_id,
+            ragas_result=ragas_result,
         )
 
     @classmethod

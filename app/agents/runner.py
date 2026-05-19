@@ -29,12 +29,16 @@ class RunResult:
         agent_results: List[AgentResult],
         latency_ms: int,
         security_flags: Optional[list] = None,
+        rag_eval_inputs: Optional[dict] = None,
     ):
         self.output = output
         self.plan = plan
         self.agent_results = agent_results
         self.latency_ms = latency_ms
         self.security_flags: list = security_flags or []
+        # Set when a successful RAG turn retrieved contexts (no web fallback).
+        # Structure: {"question": str, "contexts": list[str]}
+        self.rag_eval_inputs: Optional[dict] = rag_eval_inputs
 
     @property
     def citations(self) -> list:
@@ -280,6 +284,7 @@ class AgentRunner:
                 if (chunks_found == 0 or poor_match) and self._research is not None:
                     _trace("rag_agent", "fallback", "Low relevance in documents, searching the web")
                     result = self._research.execute(step.task, question, history, agent_results)
+                    result.metadata["triggered_by_rag_fallback"] = True
             else:
                 result = agent.execute(step.task, question, history, agent_results, user_id=user_id)
 
@@ -323,6 +328,7 @@ class AgentRunner:
                 agent_results=agent_results,
                 latency_ms=latency_ms,
                 security_flags=_security_flags,
+                rag_eval_inputs=self._extract_rag_eval_inputs(question, agent_results),
             )
 
         # 3. Synthesize — inject stored user facts for persona-aware replies.
@@ -355,7 +361,21 @@ class AgentRunner:
             agent_results=agent_results,
             latency_ms=latency_ms,
             security_flags=_security_flags,
+            rag_eval_inputs=self._extract_rag_eval_inputs(question, agent_results),
         )
+
+    @staticmethod
+    def _extract_rag_eval_inputs(question: str, agent_results: List[AgentResult]) -> Optional[dict]:
+        """Return {question, contexts} for RAGAS scoring, or None if not applicable."""
+        fallback_occurred = any(r.metadata.get("triggered_by_rag_fallback") for r in agent_results)
+        if fallback_occurred:
+            return None
+        for r in agent_results:
+            if r.agent == "rag_agent" and r.success:
+                contexts = r.metadata.get("retrieved_contexts")
+                if contexts:
+                    return {"question": question, "contexts": contexts}
+        return None
 
     def _resolve_agent(self, agent_name: str):
         return {

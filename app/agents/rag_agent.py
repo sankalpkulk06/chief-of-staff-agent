@@ -165,7 +165,12 @@ class RAGAgent:
                 output=answer,
                 success=True,
                 citations=citations,
-                metadata={"chunks_found": len(retrieval.chunks), "top_score": retrieval.chunks[0].score},
+                metadata={
+                    "chunks_found": len(retrieval.chunks),
+                    "top_score": retrieval.chunks[0].score,
+                    "retrieved_contexts": [c.text for c in retrieval.chunks],
+                    "source_ids": [c.chunk_id for c in retrieval.chunks],
+                },
             )
 
         except Exception as exc:

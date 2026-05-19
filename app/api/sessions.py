@@ -59,6 +59,14 @@ class StepOut(BaseModel):
     error: Optional[str] = None
 
 
+class RagasOut(BaseModel):
+    faithfulness: Optional[float] = None
+    answer_relevancy: Optional[float] = None
+    evaluated: bool
+    contexts_count: int
+    error: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     reply: str
     sources: List[SourceOut] = []
@@ -66,6 +74,7 @@ class ChatResponse(BaseModel):
     latency_ms: int
     hitl_pending: bool = False
     hitl_id: Optional[str] = None
+    ragas: Optional[RagasOut] = None
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +375,17 @@ async def chat(
         for s in result.steps
     ]
 
+    ragas_out = None
+    if result.ragas_result is not None:
+        r = result.ragas_result
+        ragas_out = RagasOut(
+            faithfulness=r.faithfulness,
+            answer_relevancy=r.answer_relevancy,
+            evaluated=r.evaluated,
+            contexts_count=r.contexts_count,
+            error=r.error,
+        )
+
     return ChatResponse(
         reply=result.answer,
         sources=sources,
@@ -373,6 +393,7 @@ async def chat(
         latency_ms=latency_ms,
         hitl_pending=result.hitl_pending,
         hitl_id=result.hitl_id,
+        ragas=ragas_out,
     )
 
 
