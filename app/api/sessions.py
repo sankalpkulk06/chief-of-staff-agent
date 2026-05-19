@@ -1,6 +1,7 @@
 import time
 import uuid
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -352,8 +353,19 @@ async def upload_document(
                 out.write(chunk)
 
         coordinator = _build_ingest_coordinator(registry)
+        virtual_source_path = Path("/uploads") / current_user["user_id"] / filename
         try:
-            summary = coordinator.ingest(stored_path, user_id=current_user["user_id"])
+            summary = coordinator.ingest(
+                stored_path,
+                user_id=current_user["user_id"],
+                source_type="upload",
+                source_path_override=virtual_source_path,
+                extra_metadata={
+                    "source_type": "upload",
+                    "original_filename": filename,
+                    "uploaded_via": "chat",
+                },
+            )
         finally:
             vector_store = getattr(coordinator, "_vector_store", None)
             close = getattr(vector_store, "close", None)
@@ -371,6 +383,14 @@ async def upload_document(
         if stored_path.exists():
             stored_path.unlink()
         raise HTTPException(status_code=500, detail=f"Upload ingestion failed: {exc}") from exc
+    finally:
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        user_upload_dir = upload_dir.parent
+        try:
+            user_upload_dir.rmdir()
+        except OSError:
+            pass
 
     latency_ms = int((time.monotonic() - t0) * 1000)
     if summary.files_processed:

@@ -36,7 +36,15 @@ class IngestCoordinator:
         self._vector_store = vector_store
         self._supported_extensions = supported_extensions or [".md", ".pdf", ".txt"]
 
-    def ingest(self, input_path: Path, user_id: str) -> IngestSummary:
+    def ingest(
+        self,
+        input_path: Path,
+        user_id: str = "default",
+        *,
+        source_type: str = "local",
+        source_path_override: Optional[Path] = None,
+        extra_metadata: Optional[dict] = None,
+    ) -> IngestSummary:
         files = self._discover_files(input_path)
         summary = IngestSummary(files_discovered=len(files))
         if not files:
@@ -45,7 +53,13 @@ class IngestCoordinator:
 
         for file_path in files:
             try:
-                ingest_result = self._ingest_service.ingest_file(file_path)
+                override = source_path_override if len(files) == 1 else None
+                ingest_result = self._ingest_service.ingest_file(
+                    file_path,
+                    source_path_override=override,
+                )
+                if extra_metadata:
+                    ingest_result.document.metadata.update(extra_metadata)
                 existing = self._registry.get_document(ingest_result.document_id)
                 if existing and existing.get("checksum_sha256") == ingest_result.document.checksum_sha256:
                     summary.files_skipped += 1
@@ -53,6 +67,12 @@ class IngestCoordinator:
                     continue
 
                 self._registry.upsert_document(ingest_result.document_id, ingest_result.document, user_id=user_id)
+                if source_type != "local":
+                    self._registry.set_document_source(
+                        ingest_result.document_id,
+                        source_type=source_type,
+                        source_url=None,
+                    )
                 if ingest_result.chunk_count == 0:
                     summary.files_processed += 1
                     summary.warnings.extend(ingest_result.warnings or [f"No chunks produced for: {file_path}"])
@@ -60,6 +80,10 @@ class IngestCoordinator:
 
                 for chunk in ingest_result.chunks:
                     chunk.metadata["user_id"] = user_id
+                    if source_type != "local":
+                        chunk.metadata["source_type"] = source_type
+                    if extra_metadata:
+                        chunk.metadata.update(extra_metadata)
                     self._registry.upsert_chunk(chunk)
 
                 embeddings = self._embeddings_provider.embed_texts([chunk.text for chunk in ingest_result.chunks])

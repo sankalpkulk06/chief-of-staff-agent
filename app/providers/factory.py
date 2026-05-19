@@ -107,6 +107,8 @@ def create_chat_provider(settings: Settings, spec: Union[str, ModelSpec]) -> Cha
 
 
 def default_chat_model_spec(settings: Settings) -> str:
+    if settings.gemini_api_key:
+        return f"gemini:{settings.gemini_chat_model}"
     if settings.groq_api_key:
         return f"groq:{settings.groq_chat_model}"
     return f"ollama:{settings.ollama_chat_model}"

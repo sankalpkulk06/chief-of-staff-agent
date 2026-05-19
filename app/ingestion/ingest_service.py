@@ -39,8 +39,10 @@ class IngestService:
         self._parser_router = parser_router or ParserRouter()
         self._chunker = chunker or Chunker()
 
-    def ingest_file(self, file_path: Path) -> IngestionResult:
+    def ingest_file(self, file_path: Path, source_path_override: Optional[Path] = None) -> IngestionResult:
         parsed_document = self._parser_router.parse(file_path)
+        if source_path_override is not None:
+            parsed_document.source_path = source_path_override
         document_id = build_document_id(parsed_document.source_path, parsed_document.checksum_sha256)
         chunks = self._chunker.chunk_document(parsed_document, document_id=document_id)
 
@@ -59,4 +61,3 @@ class IngestService:
     def ingest_files(self, file_paths: Iterable[Path]) -> IngestionBatchResult:
         results = [self.ingest_file(path) for path in file_paths]
         return IngestionBatchResult(results=results)
-

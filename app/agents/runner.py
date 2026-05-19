@@ -235,7 +235,8 @@ class AgentRunner:
                 self._rag._top_k = original_top_k
 
                 top_score = result.metadata.get("top_score", 1.0)
-                if top_score > self._rag_fallback_threshold and self._research is not None:
+                chunks_found = result.metadata.get("chunks_found", 0)
+                if chunks_found == 0 and top_score > self._rag_fallback_threshold and self._research is not None:
                     result = self._research.execute(step.task, question, history, agent_results)
             else:
                 result = agent.execute(step.task, question, history, agent_results, user_id=user_id)

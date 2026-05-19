@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -53,6 +54,7 @@ class Retriever:
         top_k: Optional[int] = None,
         user_id: Optional[str] = None,
         source_url: Optional[str] = None,
+        file_name: Optional[str] = None,
     ) -> RetrievalResult:
         effective_top_k = top_k or self._default_top_k
         query_embedding = self._embeddings_provider.embed_query(question)
@@ -61,6 +63,9 @@ class Retriever:
             filters.append({"user_id": user_id})
         if source_url:
             filters.append({"source_url": source_url})
+        resolved_file_name = file_name or self._extract_file_name(question)
+        if resolved_file_name:
+            filters.append({"file_name": resolved_file_name})
         if len(filters) == 1:
             where = filters[0]
         elif len(filters) > 1:
@@ -102,3 +107,8 @@ class Retriever:
             )
 
         return RetrievalResult(question=question, chunks=chunks, top_k=effective_top_k)
+
+    @staticmethod
+    def _extract_file_name(question: str) -> Optional[str]:
+        match = re.search(r"\b([A-Za-z0-9][A-Za-z0-9._-]*\.(?:txt|md|pdf|docx?))\b", question)
+        return match.group(1) if match else None

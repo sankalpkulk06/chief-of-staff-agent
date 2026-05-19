@@ -130,12 +130,42 @@ class PgVectorStore:
         self._validate_embedding(query_embedding)
         vector_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
 
-        # Build optional WHERE filter from metadata (document_id filter only for now)
+        filter_clauses: List[str] = []
+        filter_params: list = []
+
+        def add_filter(key: str, value: object) -> None:
+            if value in (None, ""):
+                return
+            if key == "document_id":
+                filter_clauses.append("c.document_id = %s")
+                filter_params.append(value)
+            elif key == "user_id":
+                filter_clauses.append("d.user_id = %s")
+                filter_params.append(value)
+            elif key == "source_url":
+                filter_clauses.append("d.source_url = %s")
+                filter_params.append(value)
+            elif key == "source_type":
+                filter_clauses.append("d.source_type = %s")
+                filter_params.append(value)
+            elif key == "file_name":
+                filter_clauses.append("c.file_name = %s")
+                filter_params.append(value)
+
+        if where:
+            if "$and" in where and isinstance(where["$and"], list):
+                for condition in where["$and"]:
+                    if isinstance(condition, dict):
+                        for key, value in condition.items():
+                            add_filter(key, value)
+            else:
+                for key, value in where.items():
+                    add_filter(key, value)
+
         extra_where = ""
-        params: list = [vector_str, vector_str, n_results]
-        if where and "document_id" in where:
-            extra_where = "AND c.document_id = %s"
-            params.insert(1, where["document_id"])
+        if filter_clauses:
+            extra_where = "AND " + " AND ".join(filter_clauses)
+        params: list = [vector_str, *filter_params, vector_str, n_results]
 
         sql = f"""
             SELECT
@@ -150,6 +180,7 @@ class PgVectorStore:
                 (ce.embedding <=> %s::extensions.vector) AS distance
             FROM chunk_embeddings ce
             JOIN chunks c ON c.chunk_id = ce.chunk_id
+            JOIN documents d ON d.document_id = c.document_id
             WHERE ce.embedding IS NOT NULL {extra_where}
             ORDER BY ce.embedding <=> %s::extensions.vector
             LIMIT %s
