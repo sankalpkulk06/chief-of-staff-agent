@@ -83,14 +83,23 @@ class HabitService:
         ).fetchone()
         if row is not None:
             return Habit(id=row["id"], name=row["name"], reminder_time=row["reminder_time"], active=bool(row["active"]))
-        # Partial match fallback — handles "gym" matching "going to the gym"
+        # Forward partial match — handles "gym" matching "going to the gym"
         row = self._execute(
             "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND LOWER(name) LIKE ? AND active = 1",
             (self._user_id, f"%{name.lower()}%"),
         ).fetchone()
-        if row is None:
-            return None
-        return Habit(id=row["id"], name=row["name"], reminder_time=row["reminder_time"], active=bool(row["active"]))
+        if row is not None:
+            return Habit(id=row["id"], name=row["name"], reminder_time=row["reminder_time"], active=bool(row["active"]))
+        # Reverse partial match — handles "read 10 pages of a book" matching stored "read 10 pages"
+        all_rows = self._execute(
+            "SELECT id, name, reminder_time, active FROM habits WHERE user_id = ? AND active = 1",
+            (self._user_id,),
+        ).fetchall()
+        name_lower = name.lower()
+        for r in all_rows:
+            if r["name"].lower() in name_lower:
+                return Habit(id=r["id"], name=r["name"], reminder_time=r["reminder_time"], active=bool(r["active"]))
+        return None
 
     def get_habit_by_id(self, habit_id: str) -> Optional[Habit]:
         row = self._execute(

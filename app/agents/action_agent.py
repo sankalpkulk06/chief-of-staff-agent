@@ -79,11 +79,15 @@ class ActionAgent:
                                success=False, error="hitl_not_found")
         fact_svc = FactService(self._registry, user_id=user_id)
         habit_svc = HabitService(self._registry, user_id=user_id)
-        return self._dispatch(
-            row["action_type"], row["action_payload"], row["action_type"],
-            fact_svc=fact_svc, habit_svc=habit_svc,
-            hitl_bypass=True,
-        )
+        try:
+            return self._dispatch(
+                row["action_type"], row["action_payload"], row["action_type"],
+                fact_svc=fact_svc, habit_svc=habit_svc,
+                hitl_bypass=True,
+            )
+        except Exception as exc:
+            return AgentResult(agent="action_agent", task=row["action_type"], output="",
+                               success=False, error=f"Action failed: {exc}")
 
     # ------------------------------------------------------------------
 

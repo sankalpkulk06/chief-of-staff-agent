@@ -657,6 +657,7 @@ class PostgresRegistry:
                 """,
                 (id, user_id, session_id, action_type, _json.dumps(action_payload)),
             )
+        self._commit()
         return id
 
     def get_hitl_request(self, id: str) -> Optional[Dict[str, object]]:
@@ -679,6 +680,7 @@ class PostgresRegistry:
                 "UPDATE hitl_requests SET status = %s, resolved_at = NOW() WHERE id = %s",
                 (status, id),
             )
+        self._commit()
 
     # ------------------------------------------------------------------
     # Helpers
