@@ -656,12 +656,14 @@
     color: var(--text-1);
   }
 
-  .bubble p { margin: 0 0 0.5em; }
+  .bubble p { margin: 0 0 0.72em; }
   .bubble p:last-child { margin-bottom: 0; }
   .bubble strong { color: var(--text-1); font-weight: 600; }
   .bubble em { color: var(--text-2); }
-  .bubble ul, .bubble ol { margin: 8px 0; padding-left: 22px; }
-  .bubble li { margin-bottom: 4px; color: var(--text-1); }
+  .bubble a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+  .bubble ul, .bubble ol { margin: 8px 0 12px; padding-left: 21px; }
+  .bubble li { margin-bottom: 6px; color: var(--text-1); padding-left: 2px; }
+  .bubble li:last-child { margin-bottom: 0; }
   .bubble li::marker { color: var(--text-3); }
 
   .bubble code {
@@ -2361,20 +2363,81 @@
   }
 
   function renderMarkdown(text) {
-    return String(text)
-      .split(/\n\n+/)
-      .map(para => {
-        const escaped = escapeHtml(para);
-        const formatted = escaped
-          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-          .replace(/\*(.+?)\*/g, '<em>$1</em>')
-          .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-          // URLs → clickable links (after HTML escaping so & is already &amp;)
-          .replace(/(https?:\/\/[^\s<>"]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline;text-underline-offset:2px;word-break:break-all;">$1</a>')
-          .replace(/\n/g, '<br>');
-        return `<p>${formatted}</p>`;
-      })
-      .join('');
+    const inline = (value) => {
+      let escaped = escapeHtml(value);
+      const links = [];
+      escaped = escaped
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label, url) => {
+          const token = `@@SAGE_LINK_${links.length}@@`;
+          links.push(`<a href="${url}" target="_blank" rel="noopener">${label}</a>`);
+          return token;
+        })
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+        .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+        .replace(/(https?:\/\/[^\s<>"]+)/g, (url) => {
+          let label = url;
+          try {
+            const parsed = new URL(url.replace(/&amp;/g, '&'));
+            label = parsed.hostname.replace(/^www\./, '');
+            const cleanPath = parsed.pathname.replace(/\/$/, '');
+            if (cleanPath && cleanPath !== '/') {
+              const pathLabel = cleanPath.split('/').filter(Boolean).slice(0, 2).join('/');
+              if (pathLabel) label += `/${pathLabel}`;
+            }
+          } catch (_err) {}
+          return `<a href="${url}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+        });
+      links.forEach((link, index) => {
+        escaped = escaped.replace(`@@SAGE_LINK_${index}@@`, link);
+      });
+      return escaped;
+    };
+
+    const lines = String(text).trim().split(/\n/);
+    const out = [];
+    let paragraph = [];
+    let list = null;
+
+    const flushParagraph = () => {
+      if (!paragraph.length) return;
+      out.push(`<p>${inline(paragraph.join(' '))}</p>`);
+      paragraph = [];
+    };
+    const flushList = () => {
+      if (!list) return;
+      out.push(`<${list.type}>${list.items.map(item => `<li>${inline(item)}</li>`).join('')}</${list.type}>`);
+      list = null;
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        flushParagraph();
+        flushList();
+        continue;
+      }
+
+      const bullet = line.match(/^[-*]\s+(.+)$/);
+      const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+      if (bullet || numbered) {
+        flushParagraph();
+        const type = numbered ? 'ol' : 'ul';
+        if (!list || list.type !== type) {
+          flushList();
+          list = { type, items: [] };
+        }
+        list.items.push((bullet || numbered)[1]);
+        continue;
+      }
+
+      flushList();
+      paragraph.push(line);
+    }
+
+    flushParagraph();
+    flushList();
+    return out.join('');
   }
 
   function parseDate(dateStr) {
