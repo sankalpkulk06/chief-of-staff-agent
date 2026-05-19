@@ -1,6 +1,6 @@
 # Sage — Complete System Review
 
-**Last updated:** May 18, 2026  
+**Last updated:** May 19, 2026  
 **Branch:** main  
 **Live URL:** https://sage-2607286466.us-central1.run.app  
 **Purpose:** Full reference for the Wipro FDE assignment review — agents, pipeline, security, storage, deployment.
@@ -11,7 +11,7 @@
 
 1. [What Sage Is](#1-what-sage-is)
 2. [System Architecture](#2-system-architecture)
-3. [The Five Agents](#3-the-five-agents)
+3. [The Six Agents](#3-the-six-agents)
 4. [Multi-Agent Pipeline — Step by Step](#4-multi-agent-pipeline--step-by-step)
 5. [Security Layer](#5-security-layer)
 6. [Infinite Loop Prevention](#6-infinite-loop-prevention)
@@ -32,8 +32,9 @@
 
 Sage is a **personal AI chief-of-staff** built as a multi-agent system. It combines:
 
-- RAG over personal documents
+- RAG over personal documents with LLM-extracted metadata filters
 - Live web search and news
+- Gmail integration with per-user OAuth tokens stored in Supabase
 - Action execution (todos, habits, facts, reminders)
 - A multi-agent orchestration layer (Orchestrator → specialized agents)
 - A security pipeline that guards every input and output
@@ -41,7 +42,7 @@ Sage is a **personal AI chief-of-staff** built as a multi-agent system. It combi
 
 **Three surfaces:** CLI (`sage chat`), Web frontend, WhatsApp (via Twilio)  
 **Storage:** SQLite + ChromaDB locally; PostgreSQL (Supabase) + pgvector in cloud  
-**LLM (Orchestrator):** Gemini 2.5 Flash (`gemini:gemini-2.5-flash`) — better structured JSON planning  
+**LLM (Orchestrator):** Gemini 2.5 Flash (`gemini:gemini-2.5-flash`)  
 **LLM (Sub-agents):** Groq (`llama-3.3-70b-versatile`) — fast execution  
 **LLM (Local dev):** Ollama  
 **Embeddings:** `sentence-transformers/all-MiniLM-L6-v2` (384-dim) — runs in-process, no external service  
@@ -58,9 +59,8 @@ User Input (CLI / Web / WhatsApp)
     ChatService
     (app/core/chat_service.py)
          │
-         ├── URL ingestion? ──────────────────────────── UrlIngestionService
+         ├── URL detected? ───────────────────────────── UrlIngestionService
          ├── Slash command? ──────────────────────────── Direct dispatch
-         ├── Email triage? ───────────────────────────── EmailService
          └── Everything else ─────────────────────────┐
                                                        ▼
                                                AgentRunner.run()
@@ -82,30 +82,31 @@ User Input (CLI / Web / WhatsApp)
                                           │  → [AgentStep, ...]      │
                                           └────────────┬────────────┘
                                                        │
-                              ┌────────────────────────┼────────────────────────┐
-                              ▼                        ▼                        ▼
-                         RAGAgent              ResearchAgent             ActionAgent
-                    (document search)     (web search / news)     (todos/habits/facts)
-                              │                        │                        │
-                              └────────────────────────┼────────────────────────┘
-                                                       ▼
-                                          OrchestratorAgent.synthesize()
-                                                       │
-                                          ┌────────────▼────────────┐
-                                          │  SecurityAgent           │
-                                          │  check_output()          │
-                                          │  ┌─ secret scrub  REDACT │
-                                          │  └─ max length   TRIM   │
-                                          └────────────┬────────────┘
-                                                       ▼
-                                              RunResult → User
+                         ┌─────────────────────────────┼──────────────────────────┐
+                         ▼                             ▼                          ▼
+                    RAGAgent                   ResearchAgent               ActionAgent
+              (document search            (web_search: / fetch_news:)  (todos/habits/facts)
+               + LLM filter extract)               │                          │
+                    │                              │                     EmailAgent
+                    └──────────────────────────────┼──────────────────────────┘
+                                                   ▼
+                                      OrchestratorAgent.synthesize()
+                                                   │
+                                      ┌────────────▼────────────┐
+                                      │  SecurityAgent           │
+                                      │  check_output()          │
+                                      │  ┌─ secret scrub  REDACT │
+                                      │  └─ max length   TRIM   │
+                                      └────────────┬────────────┘
+                                                   ▼
+                                          RunResult → User
 
 Storage Layer (app/storage/factory.py):
   ├── Local dev:  SQLiteRegistry + ChromaDB
   └── Cloud:      PostgresRegistry (Supabase) + PgVectorStore (pgvector)
 
 LLM / Embeddings:
-  ├── Orchestrator: Gemini 2.5 Flash (structured JSON planning, better trajectory)
+  ├── Orchestrator: Gemini 2.5 Flash (structured JSON planning, full intent understanding)
   ├── Sub-agents:   Groq llama-3.3-70b-versatile (cloud) / Ollama (local)
   └── Embeddings:   sentence-transformers/all-MiniLM-L6-v2 (in-process, 384-dim)
 
@@ -116,32 +117,47 @@ HITL Gate (Human-in-the-Loop):
   └── POST /api/v1/hitl/{id}/resolve executes or discards on user decision
 ```
 
+### Design principle: LLM-first routing
+
+All routing decisions are made by the orchestrator LLM — there are **no keyword lists, regex triggers, or heuristics** deciding which agent handles a message. This means:
+
+- "good catch, now fix the deployment" → not bypassed as a greeting
+- "any unread messages?" → routes to email_agent, not missed
+- "bookmark this for me: https://..." → LLM understands save-intent
+- "what's the latest Alzheimer's research?" → correctly routes to web_search, not news (no "latest" keyword trap)
+
+The only pre-LLM bypass is **URL detection** (structural, not semantic — regex to detect `https?://`) and **slash commands** (explicit user intent via `/`).
+
 ---
 
-## 3. The Five Agents
+## 3. The Six Agents
 
 ### 3.1 OrchestratorAgent
 **File:** `app/agents/orchestrator.py`  
 **Role:** Planner and synthesizer — never executes tools directly.  
-**Model:** Gemini 2.5 Flash (`ORCHESTRATOR_CHAT_MODEL=gemini:gemini-2.5-flash`) — chosen for reliable structured JSON output and better multi-intent decomposition than Llama-3.3-70b.
+**Model:** Gemini 2.5 Flash (`ORCHESTRATOR_CHAT_MODEL=gemini:gemini-2.5-flash`)
 
 **What it does:**
-- Receives the user's question and recent conversation history.
+- Receives the user's question and recent conversation history (last 4 turns).
 - Produces a structured plan: an ordered list of `AgentStep(agent, task)` objects.
 - After all steps execute, synthesizes a single coherent reply from all sub-agent results.
 
-**Prompt design:** 20+ few-shot examples covering habits, facts, todos, compound queries (personal info + research), implicit activity logging, and read vs write routing. Examples are necessary because Gemini must generalise to novel phrasings.
+**Prompt design:** Comprehensive few-shot examples covering:
+- Habits, facts, todos, compound queries
+- Email in any phrasing ("check my email", "any urgent messages?", "what's new in my inbox?")
+- Document queries — same-session implicit ("give me a summary of the doc"), cross-session by filename, by topic
+- Research tasks always prefixed with `fetch_news:` or `web_search:` so ResearchAgent never guesses
 
-**Fast paths (no LLM planning):**
-- Simple greetings (`hi`, `hello`, `thanks`) → single `conversational` step instantly
-- Compound web+news queries detected by rule → two `research_agent` steps without LLM call
+**Research task format:** The orchestrator always prefixes research tasks:
+- `fetch_news: <query>` → news service
+- `web_search: <query>` → web search
 
-**HITL early exit:** If any step returns `metadata.hitl_pending=True`, the runner stops immediately — no further steps run and synthesis is skipped. This prevents the synthesizer from hallucinating "I've done X" when X is still pending approval.
+**HITL early exit:** If any step returns `metadata.hitl_pending=True`, the runner stops immediately — no further steps run and synthesis is skipped.
 
 **Fallback:** If the LLM plan parse fails → single `conversational` step.
 
 **Guardrails applied by runner:**
-- Invalid agent names stripped (allowlist: `rag_agent`, `research_agent`, `action_agent`, `conversational`)
+- Invalid agent names stripped (allowlist: `rag_agent`, `research_agent`, `action_agent`, `conversational`, `email_agent`)
 - Plan capped at 5 steps
 
 ---
@@ -150,16 +166,25 @@ HITL Gate (Human-in-the-Loop):
 **File:** `app/agents/rag_agent.py`  
 **Role:** Searches the user's personal saved documents.
 
-**Tools available:** `search_documents` (pgvector / ChromaDB semantic search via `Retriever`)
-
 **What it does:**
-1. Embeds the task query via `sentence-transformers/all-MiniLM-L6-v2`
-2. Retrieves top-K most similar chunks
-3. Builds a cited context block and asks the LLM to answer from it
-4. Returns `AgentResult` with `citations` and `metadata` (chunks_found, top_score)
+1. Makes a fast LLM extraction call to parse the orchestrator task into:
+   - `query` — the clean semantic search string
+   - `file_name` — the exact filename if the user referenced one (or null)
+2. If `file_name` is extracted, it becomes a **hard WHERE clause** in pgvector (`WHERE c.file_name = ?`), not part of the embedding — precise and fast
+3. Embeds the `query` via `sentence-transformers/all-MiniLM-L6-v2`
+4. Retrieves top-K most similar chunks from the user's documents
+5. If `file_name` filter returns 0 chunks, retries without the filter (graceful fallback)
+6. Builds a cited context block and asks the LLM to answer from it
+
+**Examples of filter extraction:**
+```
+task: "summarize README.md"       → query: "summarize", file_name: "README.md"
+task: "give me the title of the README file" → query: "title", file_name: "README.md"
+task: "key points on Sage AI"    → query: "key points Sage AI", file_name: null
+```
 
 **RAG → Web fallback:**  
-If `top_score` exceeds `rag_fallback_distance_threshold` (default `0.5`), the RAG result is discarded and `ResearchAgent` runs instead.
+If `chunks_found == 0` and `top_score > rag_fallback_distance_threshold` (default `0.5`), ResearchAgent runs instead.
 
 ---
 
@@ -169,48 +194,71 @@ If `top_score` exceeds `rag_fallback_distance_threshold` (default `0.5`), the RA
 
 **Tools available:** `web_search` (Tavily → DuckDuckGo fallback), `fetch_news` (Google News RSS)
 
-**Routing logic:**
-- Explicit `web search:` prefix → web search
-- Explicit `news:` prefix → news
-- Heuristic detection ("news", "latest", etc.) → news
-- Everything else → web search
+**Routing:** Fully trust the orchestrator prefix — no keyword heuristics:
+- `fetch_news:` prefix → news service
+- `web_search:` prefix → web search
+- No prefix (shouldn't happen) → defaults to web search
 
-**Meta-language stripping:** Phrases like "with a quick search tell me..." are stripped before the search API call.
-
-**Limit:** Max 3 web search calls per user turn.
+**Meta-language stripping:** Phrases like "with a quick search tell me..." stripped before the search API call.
 
 ---
 
 ### 3.4 ActionAgent
 **File:** `app/agents/action_agent.py`  
-**Role:** Side-effecting operations — the only agent that writes state.
+**Role:** Side-effecting operations — the only agent that writes user state.
 
 **Tools available:**
 
 | Tool | Effect | HITL? |
 |------|--------|-------|
-| `add_todo` | Creates a todo with optional due date and list name | Yes — write |
-| `add_habit` | Registers a new habit with reminder time | Yes — write |
-| `log_habit` | Records a habit as done or skipped | Yes — write |
-| `get_habits` | Returns weekly habit summary | No — read |
-| `remember_fact` | Saves a personal or work fact to `learned_facts` | Yes — write |
-| `list_facts` | Returns stored facts by category | No — read |
+| `add_todo` | Creates a todo with optional due date and list name | Yes |
+| `add_habit` | Registers a new habit with reminder time | Yes |
+| `log_habit` | Records a habit as done or skipped | Yes |
+| `get_habits` | Returns weekly habit summary | No |
+| `remember_fact` | Saves a personal or work fact to `learned_facts` | Yes |
+| `list_facts` | Returns stored facts by category | No |
 
-**HITL gate:** All four write actions are intercepted in `_dispatch()` before execution. A `hitl_requests` row is created in Supabase and an `AgentResult` with `metadata={"hitl_pending": True, "hitl_id": uuid}` is returned. The actual write only executes when `execute_approved(hitl_id, user_id)` is called via the resolve endpoint.
+**Habit name context injection:** Before extracting the action, the agent fetches the user's existing habit names and injects them into the extraction prompt:
+```
+Existing habits (use exact name when logging): "read 10 pages", "gym", "meditation"
+```
+This means "log that I read 10 pages of a book today" correctly maps to `name: "read 10 pages"` without requiring fuzzy matching at lookup time.
 
-**Habit name matching:** `HabitService._get_habit_by_name` tries exact match first, then falls back to `LIKE %name%` — so "gym" matches "going to the gym".
-
-All tool calls are scoped to the authenticated `user_id` — no cross-user data leakage.
+**Habit name fuzzy matching (safety net):** `_get_habit_by_name` also does bidirectional partial matching:
+1. Exact match (case-insensitive)
+2. Forward: stored name CONTAINS query (e.g., "gym" → "going to the gym")
+3. Reverse: query CONTAINS stored name (e.g., "read 10 pages of a book" → "read 10 pages")
 
 ---
 
-### 3.5 ConversationalAgent
+### 3.5 EmailAgent
+**File:** `app/agents/email_agent.py`  
+**Role:** Fetches and triages the user's Gmail inbox.
+
+**Per-user OAuth tokens stored in Supabase** — each user connects their own Gmail account. The agent:
+1. Reads `token_json` from `user_email_tokens` table for the requesting `user_id`
+2. Builds a Gmail API client from the stored token; auto-refreshes expired tokens
+3. Persists refreshed tokens back to Supabase automatically
+4. Fetches inbox, runs LLM triage (ACTION / FYI / IGNORE per email)
+5. Returns a formatted summary
+
+**Not connected:** Returns a clear message directing the user to Profile → Integrations → Connect Gmail.
+
+**Any phrasing works:**
+- "check my email" → `email_agent`
+- "any urgent messages?" → `email_agent`
+- "what's new in my inbox?" → `email_agent`
+- "do I have anything that needs attention?" → `email_agent`
+
+---
+
+### 3.6 ConversationalAgent
 **File:** `app/agents/conversational_agent.py`  
 **Role:** General chat, greetings, acknowledgements, follow-ups.
 
 - Injects stored personal facts into the system prompt
 - Synthesizes previous agent results into a coherent reply when multiple agents ran
-- Fast path for greetings/meta-questions — skips all other agents
+- Always the last step in multi-step plans
 
 ---
 
@@ -222,69 +270,74 @@ All tool calls are scoped to the authenticated `user_id` — no cross-user data 
 
 ```
 Step 0: SecurityAgent.check_input()
-  → rate limit: OK
-  → length: OK (72 chars)
-  → HTML: clean
-  → injection: clean
-  → PII: none
+  → rate limit: OK, length: OK, HTML: clean, injection: clean, PII: none
   → blocked=False
 
 Step 1: OrchestratorAgent.plan()
   → LLM produces:
     [
-      {agent: "research_agent", task: "Search the web for what LangGraph is"},
-      {agent: "action_agent",   task: "Save fact: user is studying agent frameworks"},
-      {agent: "action_agent",   task: "Add reminder to review LangGraph this weekend"},
-      {agent: "conversational", task: "Confirm what was done and share what was found"}
+      {agent: "research_agent", task: "web_search: what is LangGraph"},
+      {agent: "action_agent",   task: "remember_fact: user is studying agent frameworks"},
+      {agent: "action_agent",   task: "add_todo: review LangGraph, due this weekend"},
+      {agent: "conversational", task: "confirm what was done and share what was found"}
     ]
-  → runner strips invalid names: all valid
-  → runner caps at 5: 4 steps, no change
 
-Step 2: ResearchAgent → web search "LangGraph" via Tavily
-  → AgentResult(output="LangGraph is a...", citations=[{url, title}])
+Step 2: ResearchAgent → web_search: prefix → web search "LangGraph"
+  → AgentResult(output="LangGraph is a...", citations=[...])
 
 Step 3: ActionAgent → remember_fact (HITL gate fires)
   → hitl_requests row created (status=pending, expires in 10 min)
   → AgentResult(output="I'm about to save personal fact: studying agent frameworks. Please confirm.",
                 metadata={"hitl_pending": True, "hitl_id": "uuid"})
-  → runner exits immediately (HITL early exit — no further steps, no synthesis)
+  → runner exits immediately (HITL early exit)
   → ChatResponse(reply="...", hitl_pending=True, hitl_id="uuid")
-  → frontend renders approve/reject buttons
+  → frontend renders Approve / Reject buttons
 
   [User clicks Approve]
   → POST /api/v1/hitl/{uuid}/resolve {"approved": true}
-  → auth check: user_id matches
-  → expiry check: within 10 min
-  → ActionAgent.execute_approved() → _dispatch(hitl_bypass=True)
-  → FactService.remember(user_id=...) + registry.resolve_hitl_request(status=approved)
+  → ActionAgent.execute_approved() runs the deferred action
   → {"status": "approved", "output": "Personal fact saved: studying agent frameworks"}
 
 Step 6: OrchestratorAgent.synthesize() → unified reply
-
-Step 7: SecurityAgent.check_output()
-  → no secrets, length OK → returned unchanged
+Step 7: SecurityAgent.check_output() → returned unchanged
 ```
 
-### Single-agent fast path
+### Document query — same session
 
-**Input:** `"what is my name"`
+**Input:** `"give me a summary of the doc"` (after uploading README.md)
 
 ```
-SecurityAgent.check_input() → clean
-OrchestratorAgent.plan() → fast-path: [conversational]
-ConversationalAgent.execute()
-  → injects facts for user_id: "name: Sankalp Kulkarni"
-  → LLM: "Your name is Sankalp Kulkarni."
-OrchestratorAgent.synthesize() → single step, no LLM call
-SecurityAgent.check_output() → clean
+OrchestratorAgent.plan()
+  → sees history: "Uploaded document: README.md"
+  → routes to rag_agent with task referencing README.md
+
+RAGAgent:
+  → LLM extraction: { query: "summary", file_name: "README.md" }
+  → pgvector: WHERE d.user_id=? AND c.file_name='README.md' + embedding search
+  → returns README.md chunks → LLM answers
 ```
-**Total LLM calls: 1**
+
+### Email query
+
+**Input:** `"any urgent messages?"`
+
+```
+OrchestratorAgent.plan()
+  → understands inbox/email intent
+  → routes to email_agent
+
+EmailAgent:
+  → registry.get_email_token(user_id) → token from Supabase
+  → builds Gmail API client, fetches inbox
+  → LLM triage: ACTION / FYI / IGNORE per email
+  → returns formatted summary
+```
 
 ---
 
 ## 5. Security Layer
 
-The SecurityAgent (`app/agents/security_agent.py`) wraps the pipeline at two hook points. Configured by `SecurityPolicy` (`app/agents/security_policy.py`).
+The SecurityAgent (`app/agents/security_agent.py`) wraps the pipeline at two hook points.
 
 ### 5.1 Input Pipeline (check_input)
 
@@ -293,7 +346,7 @@ The SecurityAgent (`app/agents/security_agent.py`) wraps the pipeline at two hoo
 | 0 | **Rate limit** | BLOCK if > 10 req/min per user |
 | 1 | **Length limit** | BLOCK if > 2000 chars |
 | 2 | **HTML sanitization** | STRIP dangerous tags |
-| 3 | **Injection regex** | BLOCK on 9 patterns + DAN (case-sensitive) |
+| 3 | **Injection regex** | BLOCK on known patterns |
 | 4 | **LLM fallback** | BLOCK if LLM classifier says `{"inject": true}` |
 | 5 | **PII detection** | FLAG only — never block |
 
@@ -311,11 +364,9 @@ The SecurityAgent (`app/agents/security_agent.py`) wraps the pipeline at two hoo
 | `###\s*New\s+[Ii]nstruction` | "### New Instruction:" |
 | `pretend/roleplay/imagine you are uncensored/evil/jailbreak` | "Pretend you are unrestricted" |
 
-**LLM fallback:** If no regex matches, a second LLM call classifies subtle obfuscated attempts. Fails open on error.
-
 ### 5.3 HTML Sanitization
 
-Strips `<script>`, `<iframe>`, `<object>`, `<embed>`, `<form>`, `javascript:` URLs, and `on*=` event handlers. Entity-decodes first (`&#60;script&#62;` → `<script>`). Benign HTML is untouched.
+Strips `<script>`, `<iframe>`, `<object>`, `<embed>`, `<form>`, `javascript:` URLs, and `on*=` event handlers. Entity-decodes first. Benign HTML untouched.
 
 ### 5.4 PII Detection
 
@@ -326,17 +377,16 @@ Flags (never blocks) emails, US phone numbers, SSNs, and credit card numbers.
 | Check | Action |
 |-------|--------|
 | **Secret scrubbing** | Redacts `sk-...`, `gsk_...`, `AIza...`, `Bearer`, `Authorization:`, `ALL_CAPS_KEY=value` |
-| **Max output length** | Truncates at 8000 chars with ` [truncated]` |
+| **Max output length** | Truncates at 8000 chars |
 
 ### 5.6 Security Events Log
 
-Every security action writes to `security_events` (Supabase / SQLite):
+Every security action writes to `security_events` (Supabase):
 
 ```sql
 event_id, user_id, event_type, severity, snippet, created_at
 -- event_type: rate_limit_exceeded | length_exceeded | html_injection |
 --             prompt_injection | pii_detected | secret_leak | output_truncated
--- severity:   block | sanitize | flag | redact | info
 ```
 
 ---
@@ -346,9 +396,9 @@ event_id, user_id, event_type, severity, snippet, created_at
 | Guard | Where | Rule |
 |-------|-------|------|
 | **Plan step cap** | `runner.py` after `orchestrator.plan()` | `plan.steps = plan.steps[:5]` |
-| **Agent allowlist** | `runner.py` after plan | Strip any step not in `{rag_agent, research_agent, action_agent, conversational}` |
+| **Agent allowlist** | `runner.py` after plan | Strip any step not in valid agents |
 | **History truncation** | `runner.py` at start of `run()` | `history = history[-20:]` |
-| **LLM retry (tenacity)** | `OllamaChatProvider`, `GroqChatProvider` | 3 retries, exponential backoff (1s→10s), transient errors only |
+| **LLM retry** | Chat providers | 3 retries, exponential backoff |
 
 ---
 
@@ -358,13 +408,11 @@ event_id, user_id, event_type, severity, snippet, created_at
 
 | Provider | Class | When used |
 |----------|-------|-----------|
-| Gemini | `GeminiChatProvider` | Orchestrator — `GEMINI_API_KEY` set, `ORCHESTRATOR_CHAT_MODEL=gemini:gemini-2.5-flash` |
-| Groq | `GroqChatProvider` | Sub-agents (cloud default) — `GROQ_API_KEY` set |
-| Ollama | `OllamaChatProvider` | Local dev — no cloud key |
+| Gemini | `GeminiChatProvider` | Orchestrator + fallback |
+| Groq | `GroqChatProvider` | Sub-agents (cloud default) |
+| Ollama | `OllamaChatProvider` | Local dev |
 
-**Routing strategy:** Orchestrator uses Gemini 2.5 Flash (better structured JSON planning), sub-agents use Groq (faster execution). Each agent has its own model spec via env vars. `default_chat_model_spec()` falls back Groq → Ollama; Gemini is only used when explicitly set in `ORCHESTRATOR_CHAT_MODEL`.
-
-**Gemini message conversion:** `GeminiChatProvider._convert_messages()` maps OpenAI-style `system/user/assistant` messages to Gemini's `systemInstruction + contents[role=user|model]` format.
+**Gemini fallback to Groq:** `FallbackChatProvider` wraps Gemini with Groq as fallback — if Gemini rate-limits, Groq takes over transparently.
 
 ### Embeddings providers
 
@@ -373,18 +421,7 @@ event_id, user_id, event_type, severity, snippet, created_at
 | sentence-transformers | `SentenceTransformersEmbeddingsProvider` | Cloud (no Ollama) |
 | Ollama | `OllamaEmbeddingsProvider` | Local dev |
 
-**Model:** `sentence-transformers/all-MiniLM-L6-v2`, 384 dimensions. Runs in-process — no Ollama required in cloud.
-
-### Per-agent model routing
-
-Each agent can use a different model spec (`provider:model`):
-
-```env
-ORCHESTRATOR_CHAT_MODEL=groq:llama-3.3-70b-versatile
-ACTION_CHAT_MODEL=groq:llama-3.3-70b-versatile
-```
-
-**Factory:** `app/providers/factory.py` — `create_chat_provider(settings, spec)` returns the correct provider.
+**Model:** `sentence-transformers/all-MiniLM-L6-v2`, 384 dimensions. Runs in-process — no external service needed in cloud.
 
 ---
 
@@ -392,21 +429,23 @@ ACTION_CHAT_MODEL=groq:llama-3.3-70b-versatile
 
 ### Storage factory (`app/storage/factory.py`)
 
-The backend switches automatically based on `DATABASE_URL`:
-
 | `DATABASE_URL` set? | Registry | Vector store |
 |---------------------|----------|--------------|
 | No (local dev) | `SQLiteRegistry` | `ChromaDB` |
 | Yes (cloud) | `PostgresRegistry` | `PgVectorStore` (pgvector) |
 
-**Rule:** Never instantiate storage classes directly — always use `create_registry()` / `create_vector_store()`.
-
 ### Cloud: Supabase (PostgreSQL + pgvector)
 
 - **Project ref:** `qhzitilsywqtfxuzyioy`
-- **Connection:** Shared IPv4 pooler `aws-1-us-east-1.pooler.supabase.com:6543` (required for Docker/Cloud Run — direct host is IPv6-only)
+- **Connection:** Shared IPv4 pooler `aws-1-us-east-1.pooler.supabase.com:6543`
 - **Migrations:** `scripts/migrations/` — applied via `mcp__supabase__apply_migration`
-- **pgvector:** Embeddings stored as `vector(384)` columns; similarity search via `<=>` operator
+- **pgvector:** Embeddings stored as `vector(384)`; similarity search via `<=>` operator
+
+### PgVectorStore connection reliability
+
+The retrieval `PgVectorStore` uses **separate connections** for reads (Retriever) and writes (URL ingestion). This prevents URL ingestion failures from corrupting the retriever's transaction state.
+
+`_cursor()` detects and recovers from aborted transaction states (`TRANSACTION_STATUS_INERROR`) by rolling back and reconnecting — so a failed write never silently breaks future reads.
 
 ### Supabase schema (key tables)
 
@@ -419,22 +458,19 @@ The backend switches automatically based on `DATABASE_URL`:
 | `habits` | Tracked habits, `user_id` FK |
 | `habit_logs` | Per-day done/skipped entries |
 | `documents` | Ingested files/URLs, `user_id` FK |
-| `chunks` | RAG chunks with embeddings (`vector(384)`) |
+| `chunks` | RAG chunks |
+| `chunk_embeddings` | `vector(384)` embeddings, FK to chunks |
 | `todos` | Reminders with due dates |
 | `security_events` | All security blocks, flags, sanitizations |
-| `hitl_requests` | Pending/approved/rejected write actions awaiting human approval |
-
-### Local: SQLite + ChromaDB
-
-- SQLite at `./data/sqlite/registry.db`
-- ChromaDB at `./data/chroma/`
-- Same interface via `SQLiteRegistry` / `ChromaStore` — factory returns these when `DATABASE_URL` is unset
+| `hitl_requests` | Pending/approved/rejected write actions |
+| `user_email_tokens` | Per-user Gmail OAuth token (access + refresh), `user_id` FK |
+| `oauth_states` | Short-lived CSRF state tokens for OAuth handshake (10-min expiry) |
 
 ### Database migrations
 
 Migration files: `scripts/migrations/YYYYMMDDHHMMSS_description.sql`  
-Applied via: `mcp__supabase__apply_migration` (tracked in `supabase_migrations`)  
-**Never apply schema changes directly in Supabase dashboard** — keep SQL files and DB in sync.
+Applied via: `mcp__supabase__apply_migration`  
+**Never apply schema changes directly in the Supabase dashboard** — keep SQL files and DB in sync.
 
 ---
 
@@ -442,9 +478,7 @@ Applied via: `mcp__supabase__apply_migration` (tracked in `supabase_migrations`)
 
 ### How auth works
 
-**CLI:** `sage chat` prompts for username + password on first run. Credentials verified against the `users` table. `user_id` persisted to local config.
-
-**Web frontend:** Login form posts `{username, password}` to `POST /api/v1/auth/login`. On success, credentials stored in `sessionStorage`. Every subsequent API request sends:
+**Web frontend:** Login form posts `{username, password}` to `POST /api/v1/auth/login`. On success, credentials stored in `localStorage` (survives full-page navigations like OAuth redirects). Every API request sends:
 ```
 X-Sage-Username: sankalp
 X-Sage-Key: <password>
@@ -455,30 +489,26 @@ X-Sage-Key: <password>
 def get_current_user(x_sage_username, x_sage_key) -> dict:
     user = registry.verify_password(username, key)
     if user is None:
-        raise HTTP 401
+        raise HTTP 401  # No WWW-Authenticate header (prevents browser native prompt)
     return {"user_id": "...", "username": "..."}
 ```
-
-All authenticated endpoints declare `current_user: Dict = Depends(get_current_user)`.
 
 ### Data isolation
 
 Every registry call passes `user_id=current_user["user_id"]`:
+- Sessions, facts, habits, documents, email tokens — all scoped to the authenticated user
+- pgvector queries always include `WHERE d.user_id = ?`
+- No cross-user data leakage possible through the API layer
 
-- `registry.list_sessions(user_id=...)` 
-- `registry.list_facts(user_id=...)`
-- `HabitService(registry, user_id=...)` — created per-request
-- `ChatService.answer_in_session(user_id=...)` — threads `user_id` through slash commands and agent calls
+### Gmail OAuth — per-user
 
-Users can only see and modify their own sessions, facts, habits, and documents.
+Each user connects their own Gmail account:
+1. `GET /api/v1/email/oauth/start` → server generates Google OAuth URL + stores CSRF state
+2. User approves on Google consent screen
+3. `GET /api/v1/email/callback` → server exchanges code for token, stores in `user_email_tokens`
+4. Future email fetches read the token from DB, auto-refresh if expired
 
-### Auth endpoints (`app/api/auth.py`)
-
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /auth/info` (public) | Returns model, storage backend, version |
-| `POST /auth/login` | Validates credentials, returns `{ok, username}` |
-| `POST /auth/signup` | Creates new user (min lengths, duplicate check) |
+The Google OAuth client secret (`GOOGLE_CLIENT_SECRETS_JSON`, base64-encoded) is a server-level secret — users never see it.
 
 ---
 
@@ -494,11 +524,10 @@ Full interactive REPL with Rich formatting.
 
 Static single-page app served by FastAPI at `/`.
 
-- **Auth:** Login / Sign Up tabs — username + password
-- **Chat:** Session sidebar (real sessions from API), message thread
-- **Profile:** Facts, habits, knowledge base, analytics
-- **Headers:** Every API call sends `X-Sage-Username` + `X-Sage-Key`
-- **Sidebar:** Shows live model name, storage backend, username from `/auth/info`
+- **Auth:** Login / Sign Up — username + password stored in `localStorage`
+- **Chat:** Session sidebar, message thread, file upload, HITL approve/reject buttons
+- **Profile:** Facts, habits, knowledge base, analytics, activity
+- **Integrations:** Connect / Disconnect Gmail per-user OAuth flow
 
 ### WhatsApp (Twilio)
 
@@ -518,11 +547,13 @@ All endpoints under `/api/v1/*`. Authenticated endpoints require `X-Sage-Usernam
 | **Auth** | `GET /auth/info`, `POST /auth/login`, `POST /auth/signup` |
 | **Sessions** | `GET /sessions`, `POST /sessions`, `GET /sessions/{id}/messages`, `PATCH /sessions/{id}`, `DELETE /sessions/{id}`, `POST /sessions/{id}/generate-title` |
 | **Chat** | `POST /sessions/{id}/chat` → `{reply, sources, steps, latency_ms, hitl_pending, hitl_id}` |
-| **HITL** | `POST /hitl/{id}/resolve` → `{status, output, success}` — approve or reject a pending write action |
+| **Upload** | `POST /sessions/{id}/upload` → ingest a file into the knowledge base |
+| **HITL** | `POST /hitl/{id}/resolve` → `{status, output, success}` |
 | **Facts** | `GET /facts`, `POST /facts`, `DELETE /facts/{id}` |
 | **Habits** | `GET /habits`, `POST /habits`, `POST /habits/{id}/log`, `DELETE /habits/{id}/log`, `DELETE /habits/{id}` |
 | **Sources** | `GET /sources`, `POST /sources/ingest` |
 | **Analytics** | `GET /analytics`, `GET /profile` |
+| **Email** | `GET /email/status`, `GET /email/oauth/start`, `GET /email/callback`, `DELETE /email/disconnect` |
 | **Health** | `GET /health` → `{"status": "ok"}` |
 
 ---
@@ -532,25 +563,12 @@ All endpoints under `/api/v1/*`. Authenticated endpoints require `X-Sage-Usernam
 ### Local development
 
 ```bash
-# Python
 sage serve --port 8000
-
-# Docker
-docker compose up --build
-# Frontend: http://localhost:8000
+# or
+python3 -m uvicorn app.webhook.server:app --port 8000
 ```
 
 Storage auto-selects: no `DATABASE_URL` → SQLite + ChromaDB.
-
-### Docker image
-
-```dockerfile
-FROM python:3.11-slim
-# sentence-transformers included — no Ollama needed
-CMD ["sage", "serve", "--port", "8000"]
-```
-
-Built image: `personal-agent-sage:latest` (~2.5 GB including sentence-transformers + PyTorch)
 
 ### GCP Cloud Run
 
@@ -558,40 +576,27 @@ Built image: `personal-agent-sage:latest` (~2.5 GB including sentence-transforme
 **Image registry:** `us-central1-docker.pkg.dev/personal-agent-494817/sage/app:latest`  
 **Project:** `personal-agent-494817` | **Region:** `us-central1`
 
-Deploy command:
-```bash
-gcloud run deploy sage \
-  --image us-central1-docker.pkg.dev/personal-agent-494817/sage/app:latest \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --port 8000 \
-  --memory 2Gi \
-  --timeout 300 \
-  --set-env-vars "DATABASE_URL=...,GROQ_API_KEY=..."
-```
-
 Key Cloud Run settings:
 - `--memory 2Gi` — required for sentence-transformers model load
 - `--timeout 300` — allows cold-start model initialization
-- `--port 8000` — matches hardcoded Dockerfile `CMD`
-- `--allow-unauthenticated` — public access (auth handled by app layer)
+- `--allow-unauthenticated` — auth handled at app layer
 
 ### GitHub Actions (CI/CD)
 
 **File:** `.github/workflows/deploy.yml`  
-**Trigger:** Manual (`workflow_dispatch`) — GitHub → Actions → Deploy to Cloud Run → Run workflow
+**Trigger:** Manual (`workflow_dispatch`)
 
-**Pipeline:**
-1. Checkout source
-2. Auth to GCP via `GCP_SA_KEY` service account secret
-3. `docker build` on GitHub runner (Ubuntu)
-4. `docker push` to Artifact Registry
-5. `gcloud run deploy`
+**Required GitHub secrets:**
 
-**Required GitHub secrets:** `GCP_SA_KEY`, `DATABASE_URL`, `GROQ_API_KEY`, `HUGGINGFACE_API_KEY`
-
-**Service account:** `sage-deployer@personal-agent-494817.iam.gserviceaccount.com`  
-**Roles:** `roles/run.admin`, `roles/artifactregistry.writer`, `roles/iam.serviceAccountUser`, `roles/cloudbuild.builds.editor`
+| Secret | Purpose |
+|--------|---------|
+| `GCP_SA_KEY` | GCP service account key |
+| `DATABASE_URL` | Supabase PostgreSQL DSN |
+| `GROQ_API_KEY` | Groq API key |
+| `GEMINI_API_KEY` | Gemini API key |
+| `HUGGINGFACE_API_KEY` | HuggingFace API key |
+| `GOOGLE_CLIENT_SECRETS_JSON` | Base64-encoded Google OAuth credentials.json (Web app type) |
+| `SAGE_PUBLIC_URL` | Public URL of the deployment (for OAuth callback URI) |
 
 ---
 
@@ -620,6 +625,11 @@ EMBEDDING_DIMENSION=384
 
 # Storage — leave unset for local SQLite+ChromaDB
 DATABASE_URL=postgresql://...@aws-1-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require
+
+# Gmail OAuth (Web app credentials.json, base64-encoded)
+GOOGLE_CLIENT_SECRETS_JSON=
+# Public URL used to build the OAuth redirect_uri
+SAGE_PUBLIC_URL=https://sage-2607286466.us-central1.run.app
 
 # LLM reliability
 LLM_TIMEOUT_SECONDS=30
@@ -673,19 +683,19 @@ APP_ENV=development
 
 ### Overview
 
-All ActionAgent write actions require explicit human approval before execution. Read actions (`get_habits`, `list_facts`) bypass HITL.
+All ActionAgent write actions require explicit human approval. Read actions (`get_habits`, `list_facts`) bypass HITL.
 
 ### Flow
 
 ```
 User message → Orchestrator → ActionAgent._dispatch()
   → write action detected (add_todo | add_habit | log_habit | remember_fact)
-  → create hitl_requests row (status=pending, expires_at=now+10min)
+  → create_hitl_request() → DB commit immediately
   → return AgentResult(output="I'm about to <action>. Please confirm.",
                        metadata={hitl_pending: true, hitl_id: uuid})
-  → runner exits early (no further steps, no synthesis)
+  → runner exits immediately (HITL early exit — no further steps, no synthesis)
   → ChatResponse includes hitl_pending=true, hitl_id=uuid
-  → frontend renders ✓ Approve / ✗ Reject buttons inline
+  → frontend renders Approve / Reject buttons inline
 
 User clicks Approve:
   POST /api/v1/hitl/{id}/resolve {"approved": true}
@@ -694,14 +704,12 @@ User clicks Approve:
   → expiry check: NOW() > expires_at → mark expired, return 410
   → ActionAgent.execute_approved(hitl_id, user_id) runs the deferred action
   → hitl_requests.status = "approved", resolved_at = NOW()
-  → {"status": "approved", "output": "<action result>"}
 
 User clicks Reject:
   → hitl_requests.status = "rejected"
-  → {"status": "rejected"}
 ```
 
-### Human-readable confirmation text (`_describe_action`)
+### Human-readable confirmation text
 
 | Action | Example output |
 |--------|---------------|
@@ -717,22 +725,12 @@ id              TEXT PRIMARY KEY
 user_id         TEXT NOT NULL
 session_id      TEXT
 action_type     TEXT NOT NULL       -- add_todo | add_habit | log_habit | remember_fact
-action_payload  JSONB               -- params extracted by LLM (e.g. {name, status})
+action_payload  JSONB               -- params extracted by LLM
 status          TEXT DEFAULT 'pending'  -- pending | approved | rejected | expired
 created_at      TIMESTAMPTZ
 expires_at      TIMESTAMPTZ DEFAULT NOW() + INTERVAL '10 minutes'
 resolved_at     TIMESTAMPTZ
 ```
-
-### Frontend error states
-
-| HTTP status | Display |
-|-------------|---------|
-| 200 + success=true | "✓ Done — \<action result\>" |
-| 200 + success=false | "✗ Action failed — \<reason\>" |
-| 409 | "Already resolved" |
-| 410 | "⚠ Expired — action was not taken" |
-| Network error | Re-enables buttons, shows "Network error — try again" |
 
 ---
 
@@ -742,16 +740,17 @@ resolved_at     TIMESTAMPTZ
 
 | Limitation | Details |
 |------------|---------|
-| **No parallel agent execution** | Steps execute sequentially — no async fan-out across agents. |
+| **No parallel agent execution** | Steps execute sequentially — no async fan-out. |
 | **Single RAG → Research fallback** | Fallback fires once per step; no third level. |
 | **No mid-plan re-planning** | Orchestrator plans once; if a step fails mid-plan, remaining steps run with incomplete context. |
 | **No cross-session memory** | Facts are persistent but conversation history is session-scoped. |
+| **RAG filter LLM call adds latency** | Every RAG query makes an extra LLM call for metadata extraction (~300-500ms). |
 
 ### Security
 
 | Limitation | Details |
 |------------|---------|
-| **Rate limiting is in-memory** | Resets on Cloud Run instance restart. Multiple instances each have independent counters. |
+| **Rate limiting is in-memory** | Resets on Cloud Run instance restart. Multiple instances have independent counters. |
 | **PII is flagged, not redacted** | SSNs and card numbers reach the LLM unchanged. |
 | **Webhook has no Twilio signature validation** | Anyone knowing the URL can POST fake WhatsApp messages. |
 | **LLM injection classifier non-deterministic** | Fails open (allows through) on error. |
@@ -761,8 +760,7 @@ resolved_at     TIMESTAMPTZ
 | Limitation | Details |
 |------------|---------|
 | **Cold start latency** | First request after Cloud Run scales to zero takes ~20-30s for sentence-transformers to initialize. |
-| **Single Cloud Run instance** | No horizontal scaling config — one instance handles all traffic. |
-| **Apple Reminders macOS only** | `RemindersService` uses AppleScript; fails silently in Cloud Run. |
+| **Gmail OAuth in Testing mode** | Only manually-added test users can connect Gmail until the app is verified by Google. |
 
 ---
 
@@ -779,28 +777,30 @@ resolved_at     TIMESTAMPTZ
 | Parallel agent execution | Not built | |
 | RAG reranker / hybrid BM25+vector | Not built | |
 | `--min-instances 1` for warm Cloud Run | Not configured | Costs ~$15/month |
-| HITL expiry background cleanup | Not built | Expired rows accumulate; no scheduled purge job yet |
-| HITL on WhatsApp | Not built | WhatsApp path bypasses HITL — writes execute immediately |
+| HITL expiry background cleanup | Not built | Expired rows accumulate |
+| HITL on WhatsApp | Not built | WhatsApp path bypasses HITL |
+| Gmail verification (Google) | Not submitted | App is in Testing mode — only approved test users can connect |
 
 ---
 
-## Appendix: Commit History (key milestones)
+## Appendix: Key Architectural Decisions
 
-```
-fe80e05  Improve orchestrator routing for implicit habit log phrases
-e7f219d  Fix habit partial name matching and HITL approve feedback
-41d4c73  Stop execution on HITL pending — skip further steps and synthesis
-3b50413  Fix execute() signature mismatch — add user_id param to conversational and research agents
-97e9d18  Add HITL gate — all ActionAgent write actions require human approval
-df1aa63  Expand orchestrator prompt with personal-info + research compound examples
-9c36dcc  Add Gemini provider and route orchestrator to Gemini 2.5 Flash
-c9ab299  Fix ActionAgent user isolation — scope FactService/HabitService per request
-b0f57cc  Add GitHub Actions deploy workflow and .dockerignore
-7459d9b  Docker + Supabase IPv4 pooler fix (aws-1-us-east-1.pooler.supabase.com)
-726cb72  Auth/user isolation — get_current_user, per-request HabitService/FactService
-45a7445  Add Supabase + pgvector + Groq cloud stack for GCP Cloud Run deployment
-a7b44b0  Add SecurityPolicy config, rate limiting, and HTML sanitization
-b4cd4b7  Add infinite loop prevention — plan caps, history truncation, LLM retries
-5586036  Add SecurityAgent — prompt injection blocking, PII flagging, secret scrubbing
-56c087c  Use provider factory in commands_email — removes hardcoded Ollama dependency
-```
+### Why LLM-first routing (no keyword lists)
+
+The original codebase had ~15 hardcoded keyword lists and regex triggers scattered across 5 files deciding routing: `_FAST_PATH_STARTS`, `_EMAIL_TRIGGERS`, `_EMAIL_ACTION_WORDS`, `NEWS_PATTERNS`, `_INGEST_TRIGGERS`, `_doc_refs`, `_doc_actions`, and more.
+
+These were replaced entirely by the orchestrator LLM because:
+- **False positives:** "good catch, fix the deployment" would fast-path to conversational; "find a file manager" would trigger RAG
+- **False negatives:** "any urgent messages?" missed email detection; "bookmark this" missed URL save intent
+- **Maintenance:** Each new capability required manually updating keyword lists in multiple files
+- **The LLM is better at this:** Gemini 2.5 Flash understands intent from context, history, and semantics — not substring matching
+
+### Why separate vector store connections for reads and writes
+
+The shared `PgVectorStore` connection originally used for both the `Retriever` (reads) and `URLIngestionService` (writes) could enter psycopg2's `TRANSACTION_STATUS_INERROR` state if any URL ingestion failed mid-write. The old `_cursor()` only reconnected on `InterfaceError` — so a failed write permanently broke all subsequent reads, returning 0 RAG results silently.
+
+Fix: separate connections + `_cursor()` that detects `INERROR` and rolls back before any query.
+
+### Why per-user Gmail tokens in Supabase (not files)
+
+The original `EmailService` used `InstalledAppFlow.run_local_server()` which opens a browser on the server machine — works on localhost but breaks entirely on Cloud Run (no browser in container). Replaced with a standard web OAuth flow (Google consent screen → server callback → token stored in `user_email_tokens` per user_id).
