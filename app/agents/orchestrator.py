@@ -8,18 +8,10 @@ from app.agents.prompts import load
 from app.providers.factory import ChatProvider
 
 # Valid agent names — used to filter/validate the parsed plan.
-VALID_AGENTS = frozenset({"action_agent", "rag_agent", "research_agent", "conversational"})
+VALID_AGENTS = frozenset({"action_agent", "rag_agent", "research_agent", "conversational", "email_agent"})
 
 _PLAN_SYSTEM = load("orchestrator_plan")
 _SYNTHESIS_SYSTEM = load("orchestrator_synthesis")
-
-# Patterns that are obviously pure conversational — skip planning overhead.
-_FAST_PATH_STARTS = frozenset([
-    "hi", "hello", "hey", "howdy", "sup", "yo",
-    "thanks", "thank", "cheers", "cool", "great", "nice",
-    "bye", "goodbye", "see", "ok", "okay", "sure", "got",
-    "good", "perfect", "understood",
-])
 
 
 def _friendly_failure(errors: str) -> str:
@@ -41,28 +33,14 @@ class OrchestratorAgent:
 
     def plan(self, question: str, history: List[dict[str, Any]]) -> OrchestratorPlan:
         """Decompose the user question into a sequence of agent steps."""
-        if self._is_fast_path(question):
-            return OrchestratorPlan(
-                steps=[AgentStep(agent="conversational", task=question)],
-                reasoning="simple conversational query — no planning needed",
-            )
-
-        # Rule-based pre-decomposition for compound research requests.
-        # Small models reliably miss these — detect and split before LLM planning.
-        rule_plan = self._rule_based_plan(question, history=history)
-        if rule_plan:
-            return rule_plan
-
-        # Give the planner recent history so it understands follow-ups.
         messages: list[dict[str, Any]] = [{"role": "system", "content": _PLAN_SYSTEM}]
-        messages.extend(history[-4:])  # last 2 turns
+        messages.extend(history[-4:])
         messages.append({"role": "user", "content": question})
 
         try:
             response = self._provider.chat(messages=messages)
             return self._parse_plan(response, question)
         except Exception:
-            # Fallback: send to conversational rather than crash.
             return OrchestratorPlan(
                 steps=[AgentStep(agent="conversational", task=question)],
                 reasoning="planning failed — falling back to conversational",
@@ -82,9 +60,6 @@ class OrchestratorAgent:
             failed_errors = "; ".join(r.error or "unknown error" for r in results if not r.success)
             return _friendly_failure(failed_errors)
 
-        # Only skip synthesis when there was genuinely a single planned step.
-        # If multiple steps were planned but only one succeeded, we still want
-        # synthesis so the LLM can acknowledge what it found vs what it couldn't.
         if len(results) == 1 and len(successful) == 1:
             return successful[0].output
 
@@ -108,65 +83,10 @@ class OrchestratorAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _rule_based_plan(question: str, history: Optional[List[dict[str, Any]]] = None) -> Optional["OrchestratorPlan"]:
-        """
-        Detect compound requests that LLMs reliably fail to split correctly.
-        Kept narrow — only catches the web-search + news compound pattern.
-        Document/RAG routing is intentionally left to the LLM so it can use
-        conversation context (e.g. a recent upload) to understand implicit intent.
-        """
-        q = question.lower()
-
-        # Detect: web-search intent + news intent in the same message
-        _search_words = {"search", "look up", "find", "what is", "explain", "tell me about", "google"}
-        _news_words = {"news", "latest", "recent", "headlines", "what's happening"}
-        _connectors = {" and ", " also ", " plus ", " as well as ", " then "}
-
-        has_search = any(w in q for w in _search_words)
-        has_news = any(w in q for w in _news_words)
-        has_connector = any(c in q for c in _connectors)
-
-        if has_search and has_news and has_connector:
-            # Split at the connector to extract the two sub-tasks
-            import re
-            parts = re.split(r"\band\b|\balso\b|\bplus\b|\bas well as\b|\bthen\b", question, maxsplit=1, flags=re.IGNORECASE)
-            if len(parts) == 2:
-                first, second = parts[0].strip(), parts[1].strip()
-                # Assign each part to the right agent
-                first_is_news = any(w in first.lower() for w in _news_words)
-                second_is_news = any(w in second.lower() for w in _news_words)
-                steps = [
-                    AgentStep(
-                        agent="research_agent",
-                        task=f"news: {first}" if first_is_news else f"web search: {first}",
-                    ),
-                    AgentStep(
-                        agent="research_agent",
-                        task=f"news: {second}" if second_is_news else f"web search: {second}",
-                    ),
-                ]
-                return OrchestratorPlan(
-                    steps=steps,
-                    reasoning="compound research request — split into web search + news steps",
-                )
-
-        return None
-
-    @staticmethod
-    def _is_fast_path(question: str) -> bool:
-        words = question.lower().strip().split()
-        if not words:
-            return True
-        # Only short pure-greeting messages skip planning
-        return words[0] in _FAST_PATH_STARTS and len(words) <= 4
-
-    @staticmethod
     def _parse_plan(response: str, fallback_question: str) -> OrchestratorPlan:
         """Extract and validate the JSON plan from the LLM response."""
-        # Strip markdown code fences if the model wraps JSON in ```
         cleaned = re.sub(r"```(?:json)?", "", response).strip().rstrip("`").strip()
 
-        # Find the outermost {...}
         match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if not match:
             raise ValueError("No JSON object found in orchestrator response")
@@ -174,11 +94,10 @@ class OrchestratorAgent:
         data = json.loads(match.group())
         raw_steps = data.get("steps", [])
 
-        valid_agents = VALID_AGENTS
         steps = []
         for s in raw_steps:
             agent = s.get("agent", "conversational")
-            if agent not in valid_agents:
+            if agent not in VALID_AGENTS:
                 agent = "conversational"
             task = s.get("task", fallback_question)
             steps.append(AgentStep(agent=agent, task=task))

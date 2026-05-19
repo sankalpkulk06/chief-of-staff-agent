@@ -118,26 +118,25 @@ class ResearchAgent:
         # Determine whether this is a news or general web search query.
         task_lower = task.lower()
 
-        # Honour explicit routing prefix set by the orchestrator's rule-based planner.
-        if task_lower.startswith("web search:"):
-            clean_task = task[len("web search:"):].strip()
-            return self._web_search_query(clean_task) if self._web_search else AgentResult(
-                agent="research_agent", task=task, output="Web search is not configured.", success=False, error="no_web_search"
-            )
-        if task_lower.startswith("news:"):
-            clean_task = task[len("news:"):].strip()
-            return self._fetch_news(clean_task) if self._news else AgentResult(
-                agent="research_agent", task=task, output="News service is not configured.", success=False, error="no_news"
-            )
+        # The orchestrator always prefixes tasks with "fetch_news:" or "web_search:".
+        # Trust that prefix — no keyword heuristics.
+        if task_lower.startswith("fetch_news:"):
+            clean_task = task[len("fetch_news:"):].strip()
+            if self._news:
+                return self._fetch_news(clean_task)
+            # news blocked (common on GCP) — fall through to web search
+            clean_task = clean_task  # use same query
+        elif task_lower.startswith("web_search:") or task_lower.startswith("web search:"):
+            prefix_len = len("web_search:") if task_lower.startswith("web_search:") else len("web search:")
+            clean_task = task[prefix_len:].strip()
+        else:
+            # No prefix — shouldn't happen with the new prompt, but handle gracefully
+            clean_task = task
 
-        # Heuristic routing when no prefix is present.
-        is_news = any(w in task_lower for w in ("news", "latest", "recent", "today", "happened", "headlines"))
-        if is_news and self._news:
-            return self._fetch_news(task)
         if self._web_search:
-            return self._web_search_query(task)
+            return self._web_search_query(clean_task)
         if self._news:
-            return self._fetch_news(task)
+            return self._fetch_news(clean_task)
 
         return AgentResult(
             agent="research_agent",

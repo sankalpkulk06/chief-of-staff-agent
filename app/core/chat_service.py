@@ -16,15 +16,6 @@ from app.retrieval.retriever import Retriever, RetrievalResult
 from app.agents.runner import AgentRunner
 from app.agents.security_agent import SecurityAgent
 
-_EMAIL_TRIGGERS = {
-    "check my email", "check email", "any emails", "any email",
-    "show my email", "show email", "read my email", "read email",
-    "email inbox", "check inbox", "what emails", "do i have email",
-    "email triage", "triage email", "triage my email",
-    "check my gmail", "check gmail", "my gmail",
-}
-_EMAIL_ACTION_WORDS = {"check", "any", "show", "read", "triage", "fetch", "get", "what", "action", "gmail"}
-
 _HISTORY_INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
     re.compile(r"you\s+are\s+now\b", re.IGNORECASE),
@@ -33,17 +24,6 @@ _HISTORY_INJECTION_PATTERNS = [
     re.compile(r"\boverride\s*:", re.IGNORECASE),
     re.compile(r"\bDAN\b"),
 ]
-
-
-def _is_email_request(text: str) -> bool:
-    t = text.lower().strip()
-    if t in _EMAIL_TRIGGERS:
-        return True
-    if ("/email" in t or "/email-personal" in t):
-        return True
-    if ("email" in t or "inbox" in t or "gmail" in t) and any(w in t for w in _EMAIL_ACTION_WORDS):
-        return True
-    return False
 
 
 def _looks_like_history_injection(text: str) -> bool:
@@ -60,30 +40,6 @@ class ChatService:
         "Use WhatsApp markdown lightly (*bold* for labels, backticks for commands). "
         "Do not overdo it: 1-4 useful emojis is usually enough unless the user is celebrating."
     )
-
-    CONVERSATIONAL_PATTERNS = [
-        r"^(hi|hello|hey|howdy|sup|yo)\b",
-        r"^how are you",
-        r"^good (morning|afternoon|evening|night)",
-        r"what (is |'s )?(your |my )?(name|last name|surname|birthday|birth year|age|location|job|work)",
-        r"where (do |)i (live|work)",
-        r"what (do |)i (do|work as)",
-        r"who are you",
-        r"what are you",
-        r"are you (an? )?(ai|bot|assistant)",
-        r"what did (i|you) (ask|say|tell)",
-        r"\b(earlier|previous(ly)?|before|last (time|message|question))\b",
-        r"^(thanks|thank you|cheers|great|nice|cool|awesome|ok|okay|sure|got it|understood|perfect)\b",
-        r"^bye|^see you|^goodbye|^farewell",
-    ]
-
-    NEWS_PATTERNS = [
-        r"(what('s| is) the news (on|about|for|regarding))",
-        r"(latest|recent|current|today'?s?) news (on|about|for|regarding)",
-        r"(any )?news (on|about|for|regarding)",
-        r"what happened (to|with|in)",
-        r"news (on|about)",
-    ]
 
     def __init__(
         self,
@@ -136,6 +92,7 @@ class ChatService:
             news_service=news_service,
             web_search_service=web_search_service,
             habit_service=habit_service,
+            email_service=email_service,
             schedule_todo_callback=schedule_todo_callback,
             assistant_name=assistant_name,
             rag_top_k=max_prompt_chunks,
@@ -145,60 +102,6 @@ class ChatService:
 
         # In-memory cache of news articles per session for follow-up questions
         self._session_news: dict[str, list[dict]] = {}
-
-    @staticmethod
-    def _is_conversational(question: str) -> bool:
-        """Check if a question is conversational (doesn't need document retrieval).
-
-        Uses regex patterns to detect greetings, meta-questions, and identity questions.
-        """
-        q_lower = question.lower().strip()
-        for pattern in ChatService.CONVERSATIONAL_PATTERNS:
-            if re.search(pattern, q_lower):
-                return True
-        return False
-
-    @staticmethod
-    def _is_news_query(question: str) -> bool:
-        """Check if a question is asking for news.
-
-        Uses regex patterns to detect news-related queries.
-        """
-        q_lower = question.lower().strip()
-        for pattern in ChatService.NEWS_PATTERNS:
-            if re.search(pattern, q_lower):
-                return True
-        return False
-
-    @staticmethod
-    def _extract_news_topic(question: str) -> Optional[str]:
-        """Extract the news topic from a question.
-
-        Args:
-            question: The user question
-
-        Returns:
-            The extracted topic or None if not found
-        """
-        q_lower = question.lower().strip()
-
-        # Try to extract from common patterns
-        patterns = [
-            r"(what('s| is) the news (on|about|for|regarding)\s+)(.+)",
-            r"(latest|recent|current|today'?s?) news (on|about|for|regarding)\s+(.+)",
-            r"(any )?news (on|about|for|regarding)\s+(.+)",
-            r"what happened (to|with|in)\s+(.+)",
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, q_lower)
-            if match:
-                topic = match.group(match.lastindex)  # Get last capture group
-                # Clean up common suffixes
-                topic = re.sub(r"\s+(today|yesterday|this week|right now)", "", topic).strip()
-                return topic
-
-        return None
 
     def answer_in_session(
         self,
@@ -259,16 +162,6 @@ class ChatService:
                 session_id=session_id,
                 question=question,
                 answer=direct_answer,
-                history=history,
-            )
-
-        # Gmail triage → dedicated service, not an agent task
-        email_answer = self._answer_email_request(question, response_style=response_style)
-        if email_answer is not None:
-            return self._record_answer(
-                session_id=session_id,
-                question=question,
-                answer=email_answer,
                 history=history,
             )
 
@@ -656,101 +549,6 @@ class ChatService:
         if chat_usage["other"]:
             text += f"\nOther chats: {chat_usage['other']}"
         return self._style_status(text, "📊", response_style)
-
-    def _answer_email_request(
-        self, question: str, response_style: Optional[str] = None
-    ) -> Optional[str]:
-        """Fetch and triage Gmail if the question is an email request."""
-        if not _is_email_request(question):
-            return None
-        if not self._email_service:
-            return self._style_status(
-                "Gmail isn't configured yet. Run `sage email-personal` from the CLI to set up OAuth, "
-                "then restart the server.",
-                "📭",
-                response_style,
-            )
-        try:
-            emails = self._email_service.fetch_recent()
-        except FileNotFoundError:
-            return self._style_status(
-                "Gmail credentials not found. Run `sage email-personal` from the CLI first to authorise access.",
-                "🔑",
-                response_style,
-            )
-        except Exception as exc:
-            return self._style_status(f"Failed to fetch emails: {exc}", "⚠️", response_style)
-
-        if not emails:
-            return self._style_status("Your inbox is empty — nothing to report.", "📭", response_style)
-
-        try:
-            triaged = self._email_service.triage(emails, self._chat_provider)
-        except Exception as exc:
-            return self._style_status(f"Fetched {len(emails)} emails but triage failed: {exc}", "⚠️", response_style)
-
-        action_items = [t for t in triaged if t.category == "action"]
-        fyi_items    = [t for t in triaged if t.category == "fyi"]
-
-        lines = [f"Checked {len(emails)} emails. Here's what needs your attention:\n"]
-        if action_items:
-            lines.append(f"**ACTION NEEDED ({len(action_items)})**")
-            for i, item in enumerate(action_items, 1):
-                lines.append(f"{i}. **{item.email.sender}** — {item.email.subject}\n   → {item.reason}")
-            lines.append("")
-        else:
-            lines.append("No action needed.\n")
-
-        if fyi_items:
-            lines.append(f"**FYI ({len(fyi_items)})**")
-            for i, item in enumerate(fyi_items, 1):
-                lines.append(f"{i}. **{item.email.sender}** — {item.email.subject}\n   → {item.reason}")
-
-        return self._style_status("\n".join(lines), None, response_style)
-
-    def _answer_news_query(
-        self, question: str, response_style: Optional[str] = None
-    ) -> Optional[tuple[str, List[NewsArticle]]]:
-        if not self._news_service:
-            return None
-
-        stripped = question.strip()
-        lowered = stripped.lower()
-        explicit_news = lowered == "/news" or lowered.startswith("/news ")
-        if not explicit_news and not self._is_news_query(stripped):
-            return None
-
-        query = stripped[len("/news"):].strip() if explicit_news else (self._extract_news_topic(stripped) or stripped)
-        articles = self._news_service.search_news(query) if query else self._news_service.get_top_news()
-        if not articles:
-            topic = query or "top news"
-            return self._style_status(f"No news found for '{topic}'.", "📰", response_style), []
-
-        summary = self._news_service.generate_summary(articles, self._chat_provider)
-        return self._format_news_answer(query=query, summary=summary, articles=articles, response_style=response_style), articles
-
-    def _format_news_answer(
-        self,
-        query: str,
-        summary: str,
-        articles: List[NewsArticle],
-        response_style: Optional[str] = None,
-    ) -> str:
-        title = f"Latest News: {query}" if query else "Top News Today"
-        if self._is_whatsapp_style(response_style):
-            lines = [f"📰 *{title}*", "", f"⚡ *Summary*\n{summary.strip()}", "", "🔗 *Sources*"]
-            for i, article in enumerate(articles, 1):
-                lines.append(f"{i}. *{article.title}*")
-                lines.append(f"   {article.source}")
-                lines.append(f"   {article.url}")
-            return "\n".join(lines)
-
-        lines = [title, "", "Summary:", summary.strip(), "", "Sources:"]
-        for i, article in enumerate(articles, 1):
-            lines.append(f"{i}. {article.title}")
-            lines.append(f"   {article.source} | {article.published}")
-            lines.append(f"   {article.url}")
-        return "\n".join(lines)
 
     def _remember_fact_command(
         self, command: str, prefix: str, category: str, response_style: Optional[str] = None, fact_svc=None

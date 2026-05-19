@@ -12,9 +12,10 @@ from app.storage.sqlite_registry import SQLiteRegistry
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 
-_INGEST_TRIGGERS = re.compile(
-    r"\b(remember|save|store|ingest|add to (knowledge base|rag|my docs))\b",
-    re.IGNORECASE,
+_SAVE_INTENT_SYSTEM = (
+    "You are an intent classifier. Answer only 'yes' or 'no'.\n"
+    "Does this message ask to save, remember, store, index, or bookmark a URL "
+    "for future reference? Treat a bare URL (with no question about its content) as save-intent."
 )
 
 
@@ -64,13 +65,23 @@ class URLIngestionService:
         return match.group(0).rstrip(".,)") if match else None
 
     def is_ingest_intent(self, text: str) -> bool:
-        """True if message is a bare URL or has an explicit save/remember trigger."""
+        """True if the message is a bare URL or the LLM judges save-intent."""
         stripped = text.strip()
+        # Bare URL — always a save intent
         if _URL_RE.fullmatch(stripped.rstrip(".,)")):
             return True
-        if _INGEST_TRIGGERS.search(stripped) and _URL_RE.search(stripped):
-            return True
-        return False
+        # Must at least contain a URL to be a save intent
+        if not _URL_RE.search(stripped):
+            return False
+        # Ask the LLM — only triggered when a URL is already present
+        try:
+            response = self._chat_provider.chat([
+                {"role": "system", "content": _SAVE_INTENT_SYSTEM},
+                {"role": "user", "content": text},
+            ])
+            return response.strip().lower().startswith("yes")
+        except Exception:
+            return False
 
     def already_ingested(self, url: str, user_id: str) -> bool:
         return self._registry.is_url_ingested(url, user_id=user_id)
