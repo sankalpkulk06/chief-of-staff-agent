@@ -76,6 +76,7 @@ jobs:
             --memory 2Gi \
             --cpu 1 \
             --timeout 300 \
+            --min-instances 1 \
             --set-env-vars "${ENV_VARS}"
 
       - name: Print service URL
