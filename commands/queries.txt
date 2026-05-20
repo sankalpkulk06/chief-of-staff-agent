@@ -105,7 +105,7 @@ WORKS: look up what Qdrant is and also get me the news on vector databases
 10. MULTI-AGENT — Research + Action (compound)
     Orchestrator plans: research_agent -> action_agent
 -------------------------------------------------------------
-search for what CrewAI does and remind me to try it this weekend
+WORKS: search for what CrewAI does and remind me to try it this weekend
 look up the best Python agent frameworks and add a todo to evaluate them tomorrow at 10am
 search for Groq API pricing and remind me to set up an API key tonight
 find what LangGraph is and add it to my tasks to learn it next week
@@ -125,7 +125,7 @@ I graduated from university with a degree in computer science
 12. MULTI-AGENT — Research + Action + Conversational (3 steps)
     Orchestrator plans: research_agent -> action_agent -> conversational
 -------------------------------------------------------------
-search for what Wipro does as a company, save that as a work fact, and remind me to read about it tonight
+WORKS: search for what Wipro does as a company, save that as a work fact, and remind me to read about it tonight
 look up LangGraph tutorials, save that I am learning LangGraph, and remind me to study it this weekend
 
 
@@ -155,7 +155,7 @@ Ambiguous query (should default to conversational or web search):
 what is the weather like
 
 Very long compound query (stress test the rule-based splitter):
-with a quick search tell me what CrewAI is, also search for what LangGraph does, and also get me the latest news on AI agent frameworks in 2025
+WORKS: with a quick search tell me what CrewAI is, also search for what LangGraph does, and also get me the latest news on AI agent frameworks in 2025
 
 Follow-up after a fact is saved (tests session memory injection):
   Step 1: my name is Sankalp
