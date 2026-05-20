@@ -2470,16 +2470,6 @@
         </div>
       </div>
 
-      <!-- Privacy -->
-      <div class="privacy-foot">
-        <div class="lock">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2" stroke-linecap="round"/></svg>
-        </div>
-        <div class="body" id="privacyBody">
-          <p><strong style="color:var(--text-1);font-weight:500">Your data, your control.</strong></p>
-          <p style="color:var(--text-3);" id="privacyDetail">Loading storage info…</p>
-        </div>
-      </div>
     </div>
   </section>
 </div>
@@ -2784,7 +2774,7 @@
     const sideStatus = document.getElementById('sideStatusLabel');
     if (sideStatus) sideStatus.textContent = 'connected';
     const sideUsername = document.getElementById('sideUsername');
-    if (sideUsername) sideUsername.textContent = info.username || 'local user';
+    if (sideUsername) sideUsername.textContent = info.username || 'user';
     const sideStorage = document.getElementById('sideStorage');
     if (sideStorage) sideStorage.textContent = info.storage.includes('supabase') ? '☁ supabase' : '~/sage';
     const sideAvatar = document.getElementById('sideAvatar');
@@ -2794,15 +2784,6 @@
     const topAvatar = document.getElementById('topAvatar');
     if (topAvatar) topAvatar.textContent = letter;
 
-    // Privacy footer
-    const privacyDetail = document.getElementById('privacyDetail');
-    if (privacyDetail) {
-      if (info.storage.includes('supabase')) {
-        privacyDetail.innerHTML = `Sessions and facts stored in <code>Supabase Postgres</code>. Embeddings in <code>pgvector</code>. Data lives in your Supabase project — no third party has access beyond what you configured.`;
-      } else {
-        privacyDetail.innerHTML = `Facts and habits in <code>~/sage/data/registry.db</code>. Embeddings in <code>~/sage/data/chroma/</code>. No cloud sync, no telemetry, no third party reads this.`;
-      }
-    }
   }
 
   // ================================================================
@@ -3751,7 +3732,7 @@
       const joined = p.joined ? new Date(p.joined.includes('T') ? p.joined : p.joined.replace(' ','T')+'Z')
         .toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '—';
       subEl.innerHTML = `
-        <span class="pill"><span class="dot"></span>local user</span>
+        <span class="pill"><span class="dot"></span>active</span>
         <span>~/sage</span>
         <span class="sep">·</span>
         <span>joined ${escapeHtml(joined)}</span>
@@ -3913,7 +3894,7 @@
       .find(el => el.closest('.section')?.querySelector('h2')?.textContent.includes('Knowledge'));
     if (kbMeta) {
       const totalChunks = sources.reduce((s, r) => s + r.chunk_count, 0);
-      kbMeta.textContent = `${sources.length} documents · ${totalChunks.toLocaleString()} chunks · ChromaDB local`;
+      kbMeta.textContent = `${sources.length} documents · ${totalChunks.toLocaleString()} chunks`;
     }
 
     if (!sources.length) {
@@ -3990,10 +3971,10 @@
     { cmd: '/usage',               args: '',                       desc: "Show today's Twilio WhatsApp usage",        group: 'Help',         badge: 'meta' },
 
     // Memory
-    { cmd: '/remember-personal',   args: '<fact>',                 desc: 'Remember a personal fact',                  group: 'Memory',       badge: 'sqlite' },
-    { cmd: '/remember-work',       args: '<fact>',                 desc: 'Remember a work fact',                      group: 'Memory',       badge: 'sqlite' },
-    { cmd: '/facts',               args: '[category]',             desc: 'List facts (personal | work)',              group: 'Memory',       badge: 'sqlite' },
-    { cmd: '/forget',              args: '<fact-id>',              desc: 'Delete a learned fact',                     group: 'Memory',       badge: 'sqlite' },
+    { cmd: '/remember-personal',   args: '<fact>',                 desc: 'Remember a personal fact',                  group: 'Memory',       badge: 'memory' },
+    { cmd: '/remember-work',       args: '<fact>',                 desc: 'Remember a work fact',                      group: 'Memory',       badge: 'memory' },
+    { cmd: '/facts',               args: '[category]',             desc: 'List facts (personal | work)',              group: 'Memory',       badge: 'memory' },
+    { cmd: '/forget',              args: '<fact-id>',              desc: 'Delete a learned fact',                     group: 'Memory',       badge: 'memory' },
 
     // Knowledge & search
     { cmd: '/search',              args: '<query>',                desc: 'Search the web (Tavily → DuckDuckGo)',      group: 'Knowledge',    badge: 'web' },
@@ -4004,7 +3985,7 @@
     { cmd: '/email',               args: '',                       desc: 'Triage Gmail inbox (ACTION / FYI / IGNORE)', group: 'Email',       badge: 'gmail' },
 
     // Reminders & habits
-    { cmd: '/todo',                args: '<task> [#list] [@due]',  desc: 'Add a Sage reminder',                       group: 'Reminders',    badge: 'local' },
+    { cmd: '/todo',                args: '<task> [#list] [@due]',  desc: 'Add a Sage reminder',                       group: 'Reminders',    badge: 'reminder' },
     { cmd: '/apple-reminder',      args: '<task> [#list] [@due]',  desc: 'Add a task to Apple Reminders',             group: 'Reminders',    badge: 'apple' },
     { cmd: '/habit add',           args: '<name> [@time]',         desc: 'Track a new habit (optional reminder)',     group: 'Habits',       badge: 'streak' },
     { cmd: '/habit log',           args: '<name> [skipped]',       desc: 'Log a habit as done or skipped',            group: 'Habits',       badge: 'streak' },
