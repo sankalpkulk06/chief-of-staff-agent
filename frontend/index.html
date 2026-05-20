@@ -4008,12 +4008,10 @@
     list.innerHTML = sources.map(s => {
       const isWeb = s.source_type === 'url';
       const display = isWeb ? (s.source_url || s.title) : s.title;
-      const sub = isWeb ? (s.source_url || '') : (s.source_path || '');
       return `
         <div class="source" data-id="${escapeHtml(s.id)}">
           <div class="ico" title="${isWeb ? 'Web' : 'File'}">${isWeb ? webIcon : fileIcon}</div>
           <div class="title">${escapeHtml(display)}
-            <span class="url">${escapeHtml(sub)}</span>
           </div>
           <span class="chunks">${s.chunk_count} chunks</span>
           <span class="when">${formatShortDate(s.ingested_at)}</span>
