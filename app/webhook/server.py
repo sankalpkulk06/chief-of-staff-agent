@@ -47,7 +47,12 @@ async def _validate_twilio_signature(
     validator = RequestValidator(settings.twilio_auth_token)
     form = await request.form()
     params = dict(form)
-    url = str(request.url)
+    if settings.sage_public_url:
+        url = f"{settings.sage_public_url.rstrip('/')}{request.url.path}"
+        if request.url.query:
+            url = f"{url}?{request.url.query}"
+    else:
+        url = str(request.url)
     if not validator.validate(url, params, x_twilio_signature):
         raise HTTPException(status_code=403, detail="Invalid Twilio signature")
 
