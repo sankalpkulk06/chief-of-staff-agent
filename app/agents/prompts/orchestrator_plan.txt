@@ -10,6 +10,7 @@ action_agent — manages ALL personal user data (read AND write)
   • remember_fact(fact, category) — save a personal or work fact about the user
   • list_facts(category) — retrieve stored facts; use for "what is my X?" questions
   • add_todo(task, due_date, list_name) — create a reminder or task
+  • list_todos(scope) — list pending tasks/reminders; scope="today" for today only, scope="all" for everything pending
   • add_habit(name, reminder_time) — register a new tracked habit
   • log_habit(name, status) — record that a habit was completed or skipped today
   • get_habits() — retrieve all habits and their weekly summary
@@ -129,10 +130,16 @@ EXAMPLES
  {"id":"tutorials","agent":"research_agent","task":"web_search: Python tutorials for beginners","mode":"read","depends_on":[],"parallel_group":"research"},
  {"id":"merge","agent":"conversational","task":"present both the news and the tutorials with clear emoji section labels and concise bullets","mode":"synthesize","depends_on":["news","tutorials"]}]
 
+"what's on my plate today?" / "what do I need to do today?" / "what's left for today?" →
+[{"id":"todos","agent":"action_agent","task":"list_todos: retrieve all reminders and tasks due today, scope=today","mode":"read","depends_on":[],"parallel_group":"daily_overview"},
+ {"id":"habits","agent":"action_agent","task":"get_habits: retrieve all tracked habits and which are not yet logged today","mode":"read","depends_on":[],"parallel_group":"daily_overview"},
+ {"id":"merge","agent":"conversational","task":"present today's tasks and habit status in a clear, warm daily overview with emoji section labels","mode":"synthesize","depends_on":["todos","habits"]}]
+
 "what are my tasks for today and also get the latest news on IPL" →
-[{"id":"todos","agent":"action_agent","task":"list_todos: retrieve all reminders and tasks due today","mode":"read","depends_on":[],"parallel_group":"today_overview"},
+[{"id":"todos","agent":"action_agent","task":"list_todos: retrieve all reminders and tasks due today, scope=today","mode":"read","depends_on":[],"parallel_group":"today_overview"},
+ {"id":"habits","agent":"action_agent","task":"get_habits: retrieve all tracked habits and which are not yet logged today","mode":"read","depends_on":[],"parallel_group":"today_overview"},
  {"id":"ipl_news","agent":"research_agent","task":"fetch_news: latest IPL news, matches, and playoff updates","mode":"read","depends_on":[],"parallel_group":"today_overview"},
- {"id":"merge","agent":"conversational","task":"present today's tasks and the latest IPL news clearly with friendly emoji section labels","mode":"synthesize","depends_on":["todos","ipl_news"]}]
+ {"id":"merge","agent":"conversational","task":"present today's tasks, habit status, and the latest IPL news clearly with friendly emoji section labels","mode":"synthesize","depends_on":["todos","habits","ipl_news"]}]
 
 "check my email" →
 [{"agent":"email_agent","task":"fetch and triage inbox"},

@@ -466,6 +466,152 @@ class AddHabitTool(Tool):
             return {"success": False, "error": f"Failed to add habit: {str(e)}"}
 
 
+class ListTodosTool(Tool):
+    """List pending todos/reminders, optionally filtered to today."""
+
+    def __init__(self, registry: SQLiteRegistry):
+        super().__init__(
+            name="list_todos",
+            description=(
+                "List the user's pending reminders and tasks. "
+                "Use scope='today' when the user asks what's due today, what's on their plate, "
+                "or what they need to do today. Use scope='all' for all pending tasks."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="scope",
+                    type="string",
+                    description="'today' to show only today's tasks, 'all' for all pending tasks",
+                    required=False,
+                    enum=["today", "all"],
+                )
+            ],
+        )
+        self.registry = registry
+
+    def execute(self, scope: str = "all", user_id: str = "", **kwargs) -> Dict[str, Any]:
+        try:
+            from datetime import date as _date
+            todos = self.registry.list_todos(user_id=user_id)
+            if scope == "today":
+                today = _date.today()
+                todos = [t for t in todos if self._due_date(t.get("due_at")) == today]
+            if not todos:
+                label = "today" if scope == "today" else "pending"
+                return {"success": True, "result": f"No {label} tasks or reminders."}
+            label = "Today's tasks" if scope == "today" else "Pending tasks"
+            lines = [f"{label}:"]
+            for t in todos[:20]:
+                title = str(t.get("title", "")).strip() or "Untitled"
+                due = self._format_due(t.get("due_at"))
+                lines.append(f"• {title}{due}")
+            return {"success": True, "result": "\n".join(lines)}
+        except Exception as e:
+            return {"success": False, "error": f"Failed to list todos: {str(e)}"}
+
+    @staticmethod
+    def _due_date(value):
+        from datetime import datetime as _dt, date as _date
+        if not value:
+            return None
+        try:
+            parsed = _dt.fromisoformat(str(value).replace("Z", "+00:00").replace(" ", "T"))
+            parsed = parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
+            return parsed.date()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _format_due(value):
+        from datetime import datetime as _dt, date as _date, timedelta
+        if not value:
+            return ""
+        try:
+            parsed = _dt.fromisoformat(str(value).replace("Z", "+00:00").replace(" ", "T"))
+            parsed = parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
+            today = _date.today()
+            if parsed.date() == today:
+                return f" — due {parsed.strftime('%-I:%M %p')}"
+            if parsed.date() == today + timedelta(days=1):
+                return f" — due tomorrow at {parsed.strftime('%-I:%M %p')}"
+            return f" — due {parsed.strftime('%b %-d at %-I:%M %p')}"
+        except ValueError:
+            return ""
+
+
+class DailyBriefTool(Tool):
+    """Combined today's todos + habit status — answers 'what's on my plate today'."""
+
+    def __init__(self, registry: SQLiteRegistry, habit_service: HabitService):
+        super().__init__(
+            name="get_daily_brief",
+            description=(
+                "Get a combined overview of today's tasks, reminders, and habit status. "
+                "Use this when the user asks 'what's on my plate today', 'what do I need to do today', "
+                "'what's left for today', or any similar question about their day."
+            ),
+            parameters=[],
+        )
+        self.registry = registry
+        self.habit_service = habit_service
+
+    def execute(self, user_id: str = "", **kwargs) -> Dict[str, Any]:
+        from datetime import date as _date, datetime as _dt
+        sections = []
+
+        # --- Todos due today or overdue ---
+        try:
+            today = _date.today()
+            todos = self.registry.list_todos(user_id=user_id)
+            due_today = []
+            for t in todos:
+                val = t.get("due_at")
+                if not val:
+                    due_today.append(t)  # no date = always relevant
+                    continue
+                try:
+                    parsed = _dt.fromisoformat(str(val).replace("Z", "+00:00").replace(" ", "T"))
+                    parsed = parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
+                    if parsed.date() <= today:
+                        due_today.append(t)
+                except ValueError:
+                    pass
+            if due_today:
+                lines = ["📋 **Tasks & Reminders:**"]
+                for t in due_today[:15]:
+                    title = str(t.get("title", "")).strip() or "Untitled"
+                    lines.append(f"• {title}")
+                sections.append("\n".join(lines))
+            else:
+                sections.append("📋 **Tasks & Reminders:** Nothing due today.")
+        except Exception as e:
+            sections.append(f"📋 Tasks: (unavailable — {e})")
+
+        # --- Habits ---
+        try:
+            summaries = self.habit_service.get_weekly_summary()
+            if summaries:
+                not_done = [s for s in summaries if not s.logged_today]
+                done = [s for s in summaries if s.logged_today]
+                lines = ["🔁 **Habits:**"]
+                if not_done:
+                    lines.append("Not logged yet today:")
+                    for s in not_done:
+                        streak = f" ({s.streak}d streak)" if s.streak > 0 else ""
+                        lines.append(f"• {s.habit.name}{streak}")
+                if done:
+                    lines.append("Already done:")
+                    for s in done:
+                        lines.append(f"• ✓ {s.habit.name}")
+                sections.append("\n".join(lines))
+            else:
+                sections.append("🔁 **Habits:** No habits tracked yet.")
+        except Exception as e:
+            sections.append(f"🔁 Habits: (unavailable — {e})")
+
+        return {"success": True, "result": "\n\n".join(sections)}
+
+
 class ToolRegistry:
     """Registry of all available tools."""
 
@@ -489,6 +635,7 @@ class ToolRegistry:
             self.register(ListFactsTool(fact_service))
         if registry:
             self.register(AddTodoTool(registry, schedule_todo_callback=schedule_todo_callback))
+            self.register(ListTodosTool(registry))
         if reminders_service:
             self.register(AddAppleReminderTool(reminders_service))
         if retriever:
@@ -499,6 +646,8 @@ class ToolRegistry:
             self.register(GetHabitsTool(habit_service))
             self.register(AddHabitTool(habit_service))
             self.register(LogHabitTool(habit_service))
+        if registry and habit_service:
+            self.register(DailyBriefTool(registry, habit_service))
 
     def register(self, tool: Tool) -> None:
         """Register a tool."""

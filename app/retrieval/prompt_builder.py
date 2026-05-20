@@ -149,7 +149,10 @@ def build_system_message_with_tools(
         "- Always use the exact tool name and parameters from the definitions below\n"
         "- For natural language dates/times, describe them as the user said (e.g., 'tomorrow', 'next Tuesday')\n\n"
         "- Use add_todo for normal reminders/todos, including 'remind me...' requests\n"
-        "- Use add_apple_reminder only when the user explicitly says Apple Reminders\n\n"
+        "- Use add_apple_reminder only when the user explicitly says Apple Reminders\n"
+        "- Use get_daily_brief when the user asks 'what's on my plate', 'what do I need to do today', "
+        "'what's left today', or any paraphrase of their daily overview — it returns todos AND habits together\n"
+        "- Use list_todos when the user asks specifically about their tasks or reminders (not habits)\n\n"
     )
 
     if learned_facts:
