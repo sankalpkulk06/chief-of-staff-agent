@@ -1751,6 +1751,45 @@
   .fact-add-btn:hover { opacity: 0.85; }
   .fact-add-btn:disabled { opacity: 0.4; cursor: default; }
 
+  .habit-add-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-top: 1px dashed var(--line);
+  }
+  .habit-add-input {
+    flex: 1;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--sans);
+    font-size: 13px;
+    padding: 6px 10px;
+    outline: none;
+    transition: border-color 160ms;
+  }
+  .habit-add-input:focus { border-color: var(--accent-line); }
+  .habit-add-input::placeholder { color: var(--text-4); }
+  .habit-add-btn {
+    height: 30px;
+    padding: 0 12px;
+    background: var(--accent);
+    color: #1a1208;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 140ms;
+    flex-shrink: 0;
+  }
+  .habit-add-btn:hover { opacity: 0.85; }
+  .habit-add-btn:disabled { opacity: 0.4; cursor: default; }
+
   /* ----- Habits ----- */
   .habits-card {
     background: var(--bg-2);
@@ -3855,15 +3894,9 @@
   }
 
   // ---- Habits ----
-  function renderHabits(habits) {
-    const hCard = document.getElementById('habitsCard');
-    if (!hCard) return;
-    if (!habits.length) {
-      hCard.innerHTML = '<div style="padding:20px 18px;color:var(--text-4);font-size:13px;">No habits tracked yet. Type <code>/habit add &lt;name&gt;</code> in chat.</div>';
-      return;
-    }
-    hCard.innerHTML = habits.map(h => `
-      <div class="habit-row">
+  function habitRowHTML(h) {
+    return `
+      <div class="habit-row" data-id="${escapeHtml(h.id)}">
         <div class="name">
           <span class="icon">${escapeHtml(h.name[0].toUpperCase())}</span>
           ${escapeHtml(h.name)}
@@ -3872,8 +3905,22 @@
           ${h.week.map(s => `<span class="day ${s === 'done' ? 'done' : s === 'skipped' ? 'skip' : s === 'future' ? 'future' : ''}"></span>`).join('')}
         </div>
         <div class="habit-streak"><span class="num">${h.streak}</span> day streak</div>
-      </div>
-    `).join('');
+      </div>`;
+  }
+
+  const habitAddFormHTML = `
+    <div class="habit-add-form">
+      <input type="text" class="habit-add-input" placeholder="New habit name…" maxlength="80" />
+      <button class="habit-add-btn" type="button">Add</button>
+    </div>`;
+
+  function renderHabits(habits) {
+    const hCard = document.getElementById('habitsCard');
+    if (!hCard) return;
+    hCard.innerHTML = (habits.length
+      ? habits.map(habitRowHTML).join('')
+      : '<div id="noHabitsMsg" style="padding:20px 18px;color:var(--text-4);font-size:13px;">No habits yet — add one below.</div>'
+    ) + habitAddFormHTML;
   }
 
   // ---- Activity heatmap + topics ----
@@ -4030,6 +4077,37 @@
     if (e.key === 'Enter' && e.target.classList.contains('fact-add-input')) {
       e.preventDefault();
       e.target.closest('.fact-add-form')?.querySelector('.fact-add-btn')?.click();
+    }
+    if (e.key === 'Enter' && e.target.classList.contains('habit-add-input')) {
+      e.preventDefault();
+      e.target.closest('.habit-add-form')?.querySelector('.habit-add-btn')?.click();
+    }
+  });
+
+  // ---- Add habit ----
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.habit-add-btn');
+    if (!btn) return;
+    const form = btn.closest('.habit-add-form');
+    const input = form.querySelector('.habit-add-input');
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+    try {
+      const habit = await apiFetch('POST', '/habits', { name });
+      const hCard = document.getElementById('habitsCard');
+      document.getElementById('noHabitsMsg')?.remove();
+      const tmp = document.createElement('template');
+      tmp.innerHTML = habitRowHTML(habit);
+      hCard.insertBefore(tmp.content.firstElementChild, form);
+      input.value = '';
+    } catch (err) {
+      alert('Failed to add habit: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Add';
     }
   });
 
