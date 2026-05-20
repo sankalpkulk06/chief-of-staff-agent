@@ -375,6 +375,12 @@ class PostgresRegistry:
                 )
             return [dict(r) for r in cur.fetchall()]
 
+    def delete_document(self, document_id: str, user_id: str) -> None:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
+            cur.execute("DELETE FROM documents WHERE document_id = %s AND user_id = %s", (document_id, user_id))
+        self._commit()
+
     def delete_fact(self, fact_id: str, user_id: str) -> None:
         with self._cursor() as cur:
             cur.execute("DELETE FROM learned_facts WHERE fact_id = %s AND user_id = %s", (fact_id, user_id))

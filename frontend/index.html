@@ -2056,7 +2056,7 @@
   }
   .source {
     display: grid;
-    grid-template-columns: auto 1fr auto auto;
+    grid-template-columns: auto 1fr auto auto auto;
     gap: 12px;
     align-items: center;
     padding: 12px 16px;
@@ -2078,8 +2078,22 @@
   .source .title .url { display: block; font-family: var(--mono); font-size: 11px; color: var(--text-4); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .source .chunks { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
   .source .when { font-family: var(--mono); font-size: 11px; color: var(--text-4); white-space: nowrap; }
+  .source .del-source {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-4);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 3px 7px;
+    cursor: pointer;
+    transition: color 140ms, background 140ms, border-color 140ms;
+    white-space: nowrap;
+  }
+  .source .del-source:hover { color: var(--err); background: rgba(210,117,117,0.08); border-color: rgba(210,117,117,0.25); }
+  .source .del-source:disabled { opacity: 0.4; cursor: default; }
   @media (max-width: 600px) {
-    .source { grid-template-columns: auto 1fr auto; }
+    .source { grid-template-columns: auto 1fr auto auto; }
     .source .when { display: none; }
   }
 
@@ -3996,13 +4010,14 @@
       const display = isWeb ? (s.source_url || s.title) : s.title;
       const sub = isWeb ? (s.source_url || '') : (s.source_path || '');
       return `
-        <div class="source">
+        <div class="source" data-id="${escapeHtml(s.id)}">
           <div class="ico" title="${isWeb ? 'Web' : 'File'}">${isWeb ? webIcon : fileIcon}</div>
           <div class="title">${escapeHtml(display)}
             <span class="url">${escapeHtml(sub)}</span>
           </div>
           <span class="chunks">${s.chunk_count} chunks</span>
           <span class="when">${formatShortDate(s.ingested_at)}</span>
+          <button class="del-source" title="Remove from knowledge base">delete</button>
         </div>`;
     }).join('');
   }
@@ -4026,6 +4041,40 @@
 
     if (factId) {
       apiFetch('DELETE', `/facts/${factId}`).catch(() => {});
+    }
+  });
+
+  // ---- Delete source ----
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.del-source');
+    if (!btn) return;
+    const row = btn.closest('.source');
+    const docId = row?.dataset.id;
+    if (!docId) return;
+
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      await apiFetch('DELETE', `/sources/${docId}`);
+      row.style.transition = 'opacity 200ms ease, max-height 220ms ease, padding 220ms ease';
+      row.style.maxHeight = row.offsetHeight + 'px';
+      requestAnimationFrame(() => {
+        row.style.opacity = '0';
+        row.style.maxHeight = '0';
+        row.style.padding = '0 16px';
+      });
+      setTimeout(() => {
+        row.remove();
+        // Update chunk count in section meta
+        const remaining = document.querySelectorAll('.source[data-id]');
+        const kbMeta = [...document.querySelectorAll('.section-head .meta')]
+          .find(el => el.closest('.section')?.querySelector('h2')?.textContent.includes('Knowledge'));
+        if (kbMeta) kbMeta.textContent = `${remaining.length} documents`;
+      }, 240);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'delete';
+      alert('Failed to delete: ' + err.message);
     }
   });
 

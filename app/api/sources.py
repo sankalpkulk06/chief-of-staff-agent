@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user, get_registry
+from app.config.settings import get_settings
+from app.storage.factory import create_vector_store
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -37,3 +39,23 @@ async def list_sources(
             ingested_at=str(r["ingested_at"]) if r["ingested_at"] else None,
         ))
     return result
+
+
+@router.delete("/{document_id}")
+async def delete_source(
+    document_id: str,
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
+) -> dict:
+    settings = get_settings()
+    paths = settings.resolve_paths()
+    vector_store = create_vector_store(settings.database_url, paths.chroma_dir, settings.embedding_dimension)
+    try:
+        vector_store.delete_user_records(current_user["user_id"], document_ids=[document_id])
+    finally:
+        try:
+            vector_store.close()
+        except Exception:
+            pass
+    registry.delete_document(document_id, user_id=current_user["user_id"])
+    return {"ok": True}
