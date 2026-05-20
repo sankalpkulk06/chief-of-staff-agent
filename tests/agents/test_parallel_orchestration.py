@@ -50,6 +50,41 @@ class _HitlAgent:
         )
 
 
+class _RagAgent:
+    def __init__(self, chunks_found, top_score, output="document answer"):
+        self._top_k = 5
+        self._chunks_found = chunks_found
+        self._top_score = top_score
+        self._output = output
+
+    def execute(self, task, original_question, history, previous_results=None, **kwargs):
+        return AgentResult(
+            agent="rag_agent",
+            task=task,
+            output=self._output,
+            success=True,
+            metadata={
+                "chunks_found": self._chunks_found,
+                "top_score": self._top_score,
+                "retrieved_contexts": ["relevant document context"],
+            },
+        )
+
+
+class _ResearchAgent:
+    def __init__(self):
+        self.calls = 0
+
+    def execute(self, task, original_question, history, previous_results=None, **kwargs):
+        self.calls += 1
+        return AgentResult(
+            agent="research_agent",
+            task=task,
+            output="web fallback",
+            success=True,
+        )
+
+
 class _ContextRegistry:
     def __init__(self):
         self.contexts = {}
@@ -180,3 +215,41 @@ def test_runner_continues_independent_work_after_hitl_pause():
     assert "official Python tutorial" in result.output
     assert [r.agent for r in result.agent_results] == ["action_agent", "research_agent"]
     assert registry.contexts["hitl-1"]["continuation_output"] == "Use the official Python tutorial."
+
+
+def test_runner_keeps_rag_result_when_chunks_exist_even_with_high_distance():
+    plan = OrchestratorPlan(
+        steps=[
+            AgentStep(id="docs", agent="rag_agent", task="search_documents: uploaded document", mode="read"),
+        ]
+    )
+    research = _ResearchAgent()
+    runner = AgentRunner(chat_provider=_Provider())
+    runner._orchestrator = _PlanOnlyOrchestrator(plan)
+    runner._rag = _RagAgent(chunks_found=1, top_score=0.9, output="answer from retrieved document")
+    runner._research = research
+
+    result = runner.run("what does my uploaded document say?", history=[])
+
+    assert result.output == "answer from retrieved document"
+    assert research.calls == 0
+    assert result.agent_results[0].metadata.get("triggered_by_rag_fallback") is None
+
+
+def test_runner_falls_back_to_web_when_rag_finds_no_chunks():
+    plan = OrchestratorPlan(
+        steps=[
+            AgentStep(id="docs", agent="rag_agent", task="search_documents: uploaded document", mode="read"),
+        ]
+    )
+    research = _ResearchAgent()
+    runner = AgentRunner(chat_provider=_Provider())
+    runner._orchestrator = _PlanOnlyOrchestrator(plan)
+    runner._rag = _RagAgent(chunks_found=0, top_score=1.0)
+    runner._research = research
+
+    result = runner.run("what does my uploaded document say?", history=[])
+
+    assert result.output == "web fallback"
+    assert research.calls == 1
+    assert result.agent_results[0].metadata["triggered_by_rag_fallback"] is True

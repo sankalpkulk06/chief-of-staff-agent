@@ -528,11 +528,9 @@ class AgentRunner:
             finally:
                 self._rag._top_k = original_top_k
 
-            top_score = result.metadata.get("top_score", 1.0)
             chunks_found = result.metadata.get("chunks_found", 0)
-            poor_match = top_score > 0.65
-            if (chunks_found == 0 or poor_match) and self._research is not None:
-                trace("rag_agent", "fallback", "Low relevance in documents, searching the web", metadata)
+            if chunks_found == 0 and self._research is not None:
+                trace("rag_agent", "fallback", "No matching document chunks, searching the web", metadata)
                 result = self._research.execute(step.task, question, history, previous_results)
                 result.metadata["triggered_by_rag_fallback"] = True
         else:
