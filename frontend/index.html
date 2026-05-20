@@ -1712,6 +1712,45 @@
   .fact:hover .forget { opacity: 1; }
   .fact .forget:hover { background: rgba(210, 117, 117, 0.1); border-color: rgba(210, 117, 117, 0.3); }
 
+  .fact-add-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+  }
+  .fact-add-input {
+    flex: 1;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--sans);
+    font-size: 13px;
+    padding: 6px 10px;
+    outline: none;
+    transition: border-color 160ms;
+  }
+  .fact-add-input:focus { border-color: var(--accent-line); }
+  .fact-add-input::placeholder { color: var(--text-4); }
+  .fact-add-btn {
+    height: 30px;
+    padding: 0 12px;
+    background: var(--accent);
+    color: #1a1208;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 140ms;
+    flex-shrink: 0;
+  }
+  .fact-add-btn:hover { opacity: 0.85; }
+  .fact-add-btn:disabled { opacity: 0.4; cursor: default; }
+
   /* ----- Habits ----- */
   .habits-card {
     background: var(--bg-2);
@@ -3800,6 +3839,10 @@
               </div>`).join('')}
             ${items.length === 0 ? '<div style="padding:14px 16px;color:var(--text-4);font-size:13px;">No facts yet</div>' : ''}
           </div>
+          <div class="fact-add-form" data-category="${isWork ? 'work' : 'personal'}">
+            <input type="text" class="fact-add-input" placeholder="Add a fact…" maxlength="400" />
+            <button class="fact-add-btn" type="button">Add</button>
+          </div>
         </div>`;
     }
 
@@ -3940,6 +3983,57 @@
 
     if (factId) {
       apiFetch('DELETE', `/facts/${factId}`).catch(() => {});
+    }
+  });
+
+  // ---- Add fact ----
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.fact-add-btn');
+    if (!btn) return;
+    const form = btn.closest('.fact-add-form');
+    const input = form.querySelector('.fact-add-input');
+    const content = input.value.trim();
+    const category = form.dataset.category;
+    if (!content) { input.focus(); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+    try {
+      const fact = await apiFetch('POST', '/facts', { content, category });
+      const list = form.closest('.facts-card').querySelector('.facts-list');
+      const empty = list.querySelector('div[style]');
+      if (empty) empty.remove();
+      const div = document.createElement('div');
+      div.className = 'fact';
+      div.dataset.id = fact.id;
+      div.innerHTML = `
+        <div class="text">${escapeHtml(fact.content)}</div>
+        <div class="meta">
+          <span class="id">${escapeHtml(fact.id)}</span>
+          <span>·</span>
+          <span>just now</span>
+        </div>
+        <button class="forget">forget</button>`;
+      list.prepend(div);
+      const countEl = form.closest('.facts-card').querySelector('.count');
+      if (countEl) {
+        const n = list.querySelectorAll('.fact').length;
+        countEl.textContent = `${n} fact${n !== 1 ? 's' : ''}`;
+      }
+      input.value = '';
+    } catch (err) {
+      alert('Failed to add fact: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Add';
+    }
+  });
+
+  // Allow Enter key in fact-add-input to submit
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.classList.contains('fact-add-input')) {
+      e.preventDefault();
+      e.target.closest('.fact-add-form')?.querySelector('.fact-add-btn')?.click();
     }
   });
 
