@@ -1,7 +1,7 @@
 # Sage — Complete System Review
 
-**Last updated:** May 19, 2026 (parallel orchestration + HITL continuation + response polish)
-**Branch:** `feat/parallel-agent-orchestration`  
+**Last updated:** May 20, 2026 (HITL WhatsApp approval, auto-doc search, profile UI, bug fixes)
+**Branch:** `main`  
 **Live URL:** https://sage-2607286466.us-central1.run.app  
 **Purpose:** Full reference for the Wipro FDE assignment review — agents, pipeline, security, storage, deployment.
 
@@ -34,6 +34,7 @@
 Sage is a **personal AI chief-of-staff** built as a multi-agent system. It combines:
 
 - RAG over personal documents with LLM-extracted metadata filters
+- **Auto-search user documents for any personal question** — the orchestrator routes to `rag_agent` when a question might be answered by uploaded docs, even if not explicitly asked
 - Live web search and news
 - Gmail integration with per-user OAuth tokens stored in Supabase
 - Action execution (todos, habits, facts, reminders)
@@ -41,8 +42,10 @@ Sage is a **personal AI chief-of-staff** built as a multi-agent system. It combi
 - Dependency-aware parallel execution for independent agent work
 - A security pipeline that guards every input and output
 - HITL approval for writes, with independent read-only work continuing while approval is pending
+- **HITL approval via WhatsApp** — reply `yes`/`no` to approve or reject pending write actions directly from WhatsApp
 - Friendly, skimmable answer formatting with concise bullets, compact links, and tasteful emoji anchors
 - **Inline LLM-as-judge evaluation** on every RAG turn (faithfulness + answer relevancy)
+- **Daily overview** — "what's on my plate?" combines todos + habit summary in one answer
 - Multi-user authentication backed by Supabase
 
 **Three surfaces:** CLI (`sage chat`), Web frontend, WhatsApp (via Twilio)  
@@ -776,11 +779,16 @@ Static single-page app served by FastAPI at `/`.
 
 - **Auth:** Login / Sign Up — username + password stored in `localStorage`
 - **Chat:** Session sidebar, message thread, file upload, HITL approve/reject buttons
+- **Empty state:** Example queries shown on new chat to onboard users immediately
 - **RAG eval badge:** `✓ Faithfulness: 0.92 · Relevancy: 1.00` displayed below source citations on RAG replies, color-coded by score threshold
 - **Agent trace stream:** Shows security, planning, parallel batches, agent steps, HITL wait states, synthesis, and output scrub events
 - **Readable Markdown renderer:** Supports paragraphs, bullets, numbered lists, bold/italic/code, clean `[label](url)` links, and compact labels for raw long URLs
 - **Friendly output style:** Prompts and renderer work together for short bullets, useful summaries, and restrained emoji section anchors
-- **Profile:** Facts, habits, knowledge base, analytics, activity
+- **Profile:**
+  - Facts — view + add facts inline from the profile page (no chat required)
+  - Habits — view + add habits inline from the profile page
+  - Knowledge base — view + **delete** uploaded sources directly from the profile page
+  - Analytics, activity
 - **Integrations:** Connect / Disconnect Gmail per-user OAuth flow
 
 ### WhatsApp (Twilio)
@@ -788,6 +796,8 @@ Static single-page app served by FastAPI at `/`.
 - `POST /webhook` → looks up session by phone number → `ChatService`
 - Replies split at 1600 chars (WhatsApp limit)
 - Fast-reply for habit nudges: `done` / `skipped` bypasses LLM
+- **HITL approval via WhatsApp:** pending write actions send a confirmation message with `yes`/`no` prompt; phone reply resolves the HITL and executes or discards the action
+- WhatsApp messages associated with a configured `SAGE_USERNAME` — all history tied to a real user account
 - Daily quota: 50 messages; alerts at 25/45/49
 
 ---
@@ -1042,6 +1052,16 @@ User clicks Reject:
 | `log_habit` | "mark 'going to the gym' as done for today" |
 | `remember_fact` | "save personal fact: I am 23 years old" |
 
+### WhatsApp HITL flow
+
+When a write action triggers via WhatsApp:
+1. Sage sends a confirmation message: `"I'm about to add a reminder: drink coffee — due today. Reply yes to confirm or no to cancel."`
+2. `whatsapp_hitl_context` table stores `phone_number → hitl_id` for up to 10 minutes
+3. Next message from that phone number is checked: if it's `yes`/`no`, it resolves the HITL instead of going to `ChatService`
+4. On `yes` → `ActionAgent.execute_approved()` → Sage sends the result via WhatsApp
+5. On `no` → marked rejected, Sage confirms cancellation
+6. Any other reply clears the pending HITL context and is processed as a normal message
+
 ### `hitl_requests` schema
 
 ```sql
@@ -1087,7 +1107,6 @@ resolved_at     TIMESTAMPTZ
 |------------|---------|
 | **Rate limiting is in-memory** | Resets on Cloud Run instance restart. Multiple instances have independent counters. |
 | **PII is flagged, not redacted** | SSNs and card numbers reach the LLM unchanged. |
-| **Webhook has no Twilio signature validation** | Anyone knowing the URL can POST fake WhatsApp messages. |
 | **LLM injection classifier non-deterministic** | Fails open (allows through) on error. |
 
 ### Infrastructure
@@ -1106,7 +1125,7 @@ resolved_at     TIMESTAMPTZ
 | Agno workflow/team wiring | Not built | Custom runner used instead |
 | SecurityAgent tool authorization (per-agent allowed tools) | Not built | |
 | System prompt leakage detection in output | Not built | |
-| Twilio webhook signature validation | Not built | |
+| Twilio webhook signature validation | Not built | URL construction was fixed; full HMAC request validation not yet added |
 | Architecture diagram (visual) | Not built | |
 | Assignment report | Not built | |
 | Parallel agent execution | ✅ Done | Dependency-aware batches in `app/agents/base.py` + `app/agents/runner.py` |
@@ -1114,7 +1133,13 @@ resolved_at     TIMESTAMPTZ
 | `--min-instances 1` for warm Cloud Run | ✅ Done | Applied live + in deploy.yml |
 | HITL expiry background cleanup | Not built | Expired rows accumulate |
 | HITL continuation for independent sibling work | ✅ Done | Completed sibling output stored in `hitl_requests.action_payload.__hitl_context` |
-| HITL on WhatsApp | Not built | WhatsApp path bypasses frontend approval buttons |
+| HITL approve/reject bug fix | ✅ Done | Postgres TIMESTAMPTZ vs naive `datetime.now()` comparison raised TypeError inside the scheduler callback — todo was created but response showed "unknown error". Fixed in `_coerce_datetime` + callback isolation. |
+| HITL on WhatsApp | ✅ Done | `yes`/`no` reply resolves pending action; `whatsapp_hitl_context` table tracks per-phone pending HITL id |
+| Auto-search user docs for personal questions | ✅ Done | Orchestrator routes personal/knowledge questions to `rag_agent` even without explicit "search my docs" phrasing |
+| Daily overview (todos + habits combined) | ✅ Done | "what's on my plate?" returns unified today-view from `action_agent` |
+| Delete sources from knowledge base (profile UI) | ✅ Done | Sources tab in profile page supports deletion |
+| Add facts/habits from profile page | ✅ Done | Inline add forms in profile — no chat required |
+| Example queries on new chat empty state | ✅ Done | Onboarding prompts shown when session has no messages |
 | Gmail verification (Google) | Not submitted | App is in Testing mode — only approved test users can connect |
 | RAG eval score persistence / trend tracking | Not built | Scores returned in API, not stored — no historical dashboard |
 | Retrieval quality metrics (precision/recall/MRR) | Not built | Faithfulness measures grounding; retrieval quality requires an eval set |
