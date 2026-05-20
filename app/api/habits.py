@@ -19,6 +19,10 @@ class HabitOut(BaseModel):
     week: List[str]
 
 
+class HabitIn(BaseModel):
+    name: str
+
+
 @router.get("", response_model=List[HabitOut])
 async def list_habits(
     registry: Any = Depends(get_registry),
@@ -53,3 +57,21 @@ async def list_habits(
         ))
 
     return result
+
+
+@router.post("", response_model=HabitOut)
+async def create_habit(
+    payload: HabitIn,
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
+) -> HabitOut:
+    habit_service = HabitService(registry, user_id=current_user["user_id"])
+    habit = habit_service.add_habit(payload.name.strip())
+    return HabitOut(
+        id=habit.id,
+        name=habit.name,
+        streak=0,
+        days_done=0,
+        logged_today=False,
+        week=["none"] * 7,
+    )

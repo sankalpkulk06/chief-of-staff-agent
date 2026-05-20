@@ -10,6 +10,7 @@ action_agent — manages ALL personal user data (read AND write)
   • remember_fact(fact, category) — save a personal or work fact about the user
   • list_facts(category) — retrieve stored facts; use for "what is my X?" questions
   • add_todo(task, due_date, list_name) — create a reminder or task
+  • list_todos(scope) — list pending tasks/reminders; scope="today" for today only, scope="all" for everything pending
   • add_habit(name, reminder_time) — register a new tracked habit
   • log_habit(name, status) — record that a habit was completed or skipped today
   • get_habits() — retrieve all habits and their weekly summary
@@ -49,9 +50,12 @@ Before choosing agents, classify the user's intent:
 WRITE intent    → user wants to SAVE, LOG, CREATE, or CHANGE personal data
 READ intent     → user wants to RETRIEVE something already stored about themselves
 RESEARCH intent → user wants EXTERNAL information from the web or news
-DOCUMENT intent → user wants to query their own saved/uploaded documents
 EMAIL intent    → user wants to check or triage their inbox
 CONVERSE intent → simple chat, greetings, or general knowledge with no stored data needed
+
+The user's uploaded documents are their personal knowledge base — bookings, receipts,
+plans, notes, articles they care about. Treat rag_agent as a natural extension of what
+the user knows about themselves, not a special explicit mode.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ROUTING RULES — apply in order
@@ -60,13 +64,25 @@ ROUTING RULES — apply in order
 1. ALWAYS include conversational as the LAST step if any other agent ran.
 2. NEVER use conversational alone unless the request is pure conversation or general knowledge.
 3. action_agent handles ALL reads AND writes of user state — facts, todos, habits.
-4. rag_agent is ONLY for the user's own saved documents — never for web or news.
-5. research_agent is ONLY for live external data. Always include fetch_news: or web_search: prefix.
-6. email_agent handles ALL inbox/email/gmail requests, regardless of phrasing.
-7. For compound requests: mark independent read-only work with empty depends_on so it can run in parallel; make conversational depend on all prior tool steps.
-8. Maximum 5 steps. Prefer fewer — avoid unnecessary agents.
-9. Each task field must be self-contained — include all context the agent needs to execute it.
-10. Use mode="read" for retrieval, mode="write" for state changes, and mode="synthesize" for conversational merge steps.
+4. rag_agent searches the user's uploaded documents. The user's documents are their personal
+   knowledge base — things they care about, are building, planning, reading, or have saved.
+   Automatically include rag_agent (in parallel with action_agent) whenever the user asks
+   about something personal and specific that they might have documented:
+     - projects, products, or things they're building
+     - travel, bookings, reservations, or appointments
+     - notes, research, articles, or topics they've saved
+     - plans, goals, ideas, or decisions they've recorded
+     - anything where the answer is "something about me" rather than general knowledge
+   The user should NEVER have to say "check my docs" or "look at what I uploaded" — Sage
+   does this automatically. When in doubt, include rag_agent.
+5. For personal questions: ALWAYS run action_agent (facts) AND rag_agent (documents) in parallel.
+   Only skip rag_agent for pure greetings, general knowledge questions, or write-only intents.
+6. research_agent is ONLY for live external data. Always include fetch_news: or web_search: prefix.
+7. email_agent handles ALL inbox/email/gmail requests, regardless of phrasing.
+8. For compound requests: mark independent read-only work with empty depends_on so it can run in parallel; make conversational depend on all prior tool steps.
+9. Maximum 5 steps. Prefer fewer — avoid unnecessary agents.
+10. Each task field must be self-contained — include all context the agent needs to execute it.
+11. Use mode="read" for retrieval, mode="write" for state changes, and mode="synthesize" for conversational merge steps.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DEPENDENCY RULES
@@ -97,6 +113,21 @@ EXAMPLES
 "what are my habits?" →
 [{"agent":"action_agent","task":"get_habits: retrieve all tracked habits and streaks"},
  {"agent":"conversational","task":"present the user's habits in a clear readable format"}]
+
+"when is my birthday and when is my hotel booking in New Jersey?" →
+[{"id":"facts","agent":"action_agent","task":"list_facts: retrieve stored personal facts including birthday","mode":"read","depends_on":[],"parallel_group":"personal"},
+ {"id":"docs","agent":"rag_agent","task":"search_documents: hotel booking in New Jersey — date, hotel name, reservation details","mode":"read","depends_on":[],"parallel_group":"personal"},
+ {"id":"merge","agent":"conversational","task":"present birthday from facts and hotel booking from documents clearly","mode":"synthesize","depends_on":["facts","docs"]}]
+
+"do I have any travel plans coming up?" →
+[{"id":"facts","agent":"action_agent","task":"list_facts: retrieve stored facts about travel or upcoming trips","mode":"read","depends_on":[],"parallel_group":"personal"},
+ {"id":"docs","agent":"rag_agent","task":"search_documents: travel plans, bookings, flights, hotel reservations","mode":"read","depends_on":[],"parallel_group":"personal"},
+ {"id":"merge","agent":"conversational","task":"summarise upcoming travel from facts and documents","mode":"synthesize","depends_on":["facts","docs"]}]
+
+"what are the key points on what I'm building?" / "tell me about my project" →
+[{"id":"facts","agent":"action_agent","task":"list_facts: retrieve stored facts about what the user is building or working on","mode":"read","depends_on":[],"parallel_group":"personal"},
+ {"id":"docs","agent":"rag_agent","task":"search_documents: what the user is building — project overview, key points, goals","mode":"read","depends_on":[],"parallel_group":"personal"},
+ {"id":"merge","agent":"conversational","task":"summarise the key points about what the user is building from facts and documents","mode":"synthesize","depends_on":["facts","docs"]}]
 
 "what did I save about machine learning?" →
 [{"agent":"rag_agent","task":"search_documents: find saved notes and documents about machine learning"}]
@@ -129,10 +160,16 @@ EXAMPLES
  {"id":"tutorials","agent":"research_agent","task":"web_search: Python tutorials for beginners","mode":"read","depends_on":[],"parallel_group":"research"},
  {"id":"merge","agent":"conversational","task":"present both the news and the tutorials with clear emoji section labels and concise bullets","mode":"synthesize","depends_on":["news","tutorials"]}]
 
+"what's on my plate today?" / "what do I need to do today?" / "what's left for today?" →
+[{"id":"todos","agent":"action_agent","task":"list_todos: retrieve all reminders and tasks due today, scope=today","mode":"read","depends_on":[],"parallel_group":"daily_overview"},
+ {"id":"habits","agent":"action_agent","task":"get_habits: retrieve all tracked habits and which are not yet logged today","mode":"read","depends_on":[],"parallel_group":"daily_overview"},
+ {"id":"merge","agent":"conversational","task":"present today's tasks and habit status in a clear, warm daily overview with emoji section labels","mode":"synthesize","depends_on":["todos","habits"]}]
+
 "what are my tasks for today and also get the latest news on IPL" →
-[{"id":"todos","agent":"action_agent","task":"list_todos: retrieve all reminders and tasks due today","mode":"read","depends_on":[],"parallel_group":"today_overview"},
+[{"id":"todos","agent":"action_agent","task":"list_todos: retrieve all reminders and tasks due today, scope=today","mode":"read","depends_on":[],"parallel_group":"today_overview"},
+ {"id":"habits","agent":"action_agent","task":"get_habits: retrieve all tracked habits and which are not yet logged today","mode":"read","depends_on":[],"parallel_group":"today_overview"},
  {"id":"ipl_news","agent":"research_agent","task":"fetch_news: latest IPL news, matches, and playoff updates","mode":"read","depends_on":[],"parallel_group":"today_overview"},
- {"id":"merge","agent":"conversational","task":"present today's tasks and the latest IPL news clearly with friendly emoji section labels","mode":"synthesize","depends_on":["todos","ipl_news"]}]
+ {"id":"merge","agent":"conversational","task":"present today's tasks, habit status, and the latest IPL news clearly with friendly emoji section labels","mode":"synthesize","depends_on":["todos","habits","ipl_news"]}]
 
 "check my email" →
 [{"agent":"email_agent","task":"fetch and triage inbox"},

@@ -48,6 +48,13 @@ jobs:
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
           GOOGLE_CLIENT_SECRETS_JSON: ${{ secrets.GOOGLE_CLIENT_SECRETS_JSON }}
           SAGE_PUBLIC_URL: ${{ secrets.SAGE_PUBLIC_URL }}
+          SAGE_USERNAME: ${{ secrets.SAGE_USERNAME }}
+          SAGE_PASSPHRASE: ${{ secrets.SAGE_PASSPHRASE }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_WHATSAPP_NUMBER: ${{ secrets.TWILIO_WHATSAPP_NUMBER }}
+          YOUR_WHATSAPP_NUMBER: ${{ secrets.YOUR_WHATSAPP_NUMBER }}
+          WHATSAPP_ENABLED: ${{ secrets.WHATSAPP_ENABLED }}
         run: |
           ENV_VARS="DATABASE_URL=${DATABASE_URL}"
           ENV_VARS="${ENV_VARS},GROQ_API_KEY=${GROQ_API_KEY}"
@@ -60,6 +67,25 @@ jobs:
           ENV_VARS="${ENV_VARS},EMBEDDING_DIMENSION=384"
           ENV_VARS="${ENV_VARS},DATA_DIR=/tmp/sage-data"
           ENV_VARS="${ENV_VARS},ASSISTANT_NAME=Sage"
+          ENV_VARS="${ENV_VARS},WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-true}"
+          if [ -n "${SAGE_USERNAME}" ]; then
+            ENV_VARS="${ENV_VARS},SAGE_USERNAME=${SAGE_USERNAME}"
+          fi
+          if [ -n "${SAGE_PASSPHRASE}" ]; then
+            ENV_VARS="${ENV_VARS},SAGE_PASSPHRASE=${SAGE_PASSPHRASE}"
+          fi
+          if [ -n "${TWILIO_ACCOUNT_SID}" ]; then
+            ENV_VARS="${ENV_VARS},TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}"
+          fi
+          if [ -n "${TWILIO_AUTH_TOKEN}" ]; then
+            ENV_VARS="${ENV_VARS},TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}"
+          fi
+          if [ -n "${TWILIO_WHATSAPP_NUMBER}" ]; then
+            ENV_VARS="${ENV_VARS},TWILIO_WHATSAPP_NUMBER=${TWILIO_WHATSAPP_NUMBER}"
+          fi
+          if [ -n "${YOUR_WHATSAPP_NUMBER}" ]; then
+            ENV_VARS="${ENV_VARS},YOUR_WHATSAPP_NUMBER=${YOUR_WHATSAPP_NUMBER}"
+          fi
           if [ -n "${GOOGLE_CLIENT_SECRETS_JSON}" ]; then
             ENV_VARS="${ENV_VARS},GOOGLE_CLIENT_SECRETS_JSON=${GOOGLE_CLIENT_SECRETS_JSON}"
           fi

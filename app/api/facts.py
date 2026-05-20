@@ -1,3 +1,5 @@
+import datetime
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
@@ -13,6 +15,11 @@ class FactOut(BaseModel):
     category: str
     content: str
     created_at: str
+
+
+class FactIn(BaseModel):
+    content: str
+    category: str  # "personal" | "work"
 
 
 @router.get("", response_model=List[FactOut])
@@ -31,6 +38,29 @@ async def list_facts(
         )
         for r in rows
     ]
+
+
+@router.post("", response_model=FactOut)
+async def create_fact(
+    payload: FactIn,
+    registry: Any = Depends(get_registry),
+    current_user: Dict = Depends(get_current_user),
+) -> FactOut:
+    fact_id = str(uuid.uuid4())
+    now = datetime.datetime.utcnow()
+    registry.insert_fact(
+        fact_id=fact_id,
+        content=payload.content,
+        category=payload.category,
+        source="user",
+        user_id=current_user["user_id"],
+    )
+    return FactOut(
+        id=fact_id,
+        category=payload.category,
+        content=payload.content,
+        created_at=str(now),
+    )
 
 
 @router.delete("/{fact_id}")

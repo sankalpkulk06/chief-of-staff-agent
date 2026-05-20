@@ -419,6 +419,15 @@ class SQLiteRegistry:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def delete_document(self, document_id: str, user_id: str) -> None:
+        self._connection.execute(
+            "DELETE FROM chunks WHERE document_id = ?", (document_id,)
+        )
+        self._connection.execute(
+            "DELETE FROM documents WHERE document_id = ? AND user_id = ?", (document_id, user_id)
+        )
+        self._connection.commit()
+
     def delete_fact(self, fact_id: str, user_id: str) -> None:
         self._connection.execute(
             "DELETE FROM learned_facts WHERE fact_id = ? AND user_id = ?", (fact_id, user_id)
