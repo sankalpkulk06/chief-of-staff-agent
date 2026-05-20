@@ -116,16 +116,115 @@
     display: grid;
     place-items: center;
     padding: 24px;
+    overflow: hidden;
+  }
+
+  /* Ambient orbs behind the card */
+  #login::before,
+  #login::after {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    filter: blur(80px);
+  }
+  #login::before {
+    width: 520px; height: 520px;
+    top: -160px; left: 50%;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse, rgba(232,165,68,0.13) 0%, transparent 70%);
+    animation: orb-drift 8s ease-in-out infinite alternate;
+  }
+  #login::after {
+    width: 360px; height: 360px;
+    bottom: -100px; left: 50%;
+    transform: translateX(-60%);
+    background: radial-gradient(ellipse, rgba(127,174,138,0.09) 0%, transparent 70%);
+    animation: orb-drift 11s ease-in-out infinite alternate-reverse;
+  }
+  @keyframes orb-drift {
+    0%   { transform: translateX(-50%) translateY(0) scale(1); }
+    100% { transform: translateX(-50%) translateY(20px) scale(1.06); }
+  }
+
+  /* Fade-in on load */
+  @keyframes card-rise {
+    from { opacity: 0; transform: translateY(18px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .login-card {
     width: 100%;
-    max-width: 380px;
+    max-width: 400px;
     text-align: center;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 28px;
+    gap: 0;
+    position: relative;
+    z-index: 1;
+    animation: card-rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+
+    /* Glassmorphism card */
+    background: rgba(18, 26, 23, 0.72);
+    backdrop-filter: blur(24px) saturate(1.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 20px;
+    box-shadow:
+      0 0 0 0.5px rgba(232,165,68,0.12),
+      0 32px 80px rgba(0,0,0,0.55),
+      inset 0 1px 0 rgba(255,255,255,0.06);
+    padding: 44px 40px 36px;
+  }
+  @media (max-width: 480px) { .login-card { padding: 36px 24px 28px; } }
+
+  /* Thin amber shimmer on top edge */
+  .login-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 16%; right: 16%; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(232,165,68,0.5), transparent);
+    border-radius: 999px;
+  }
+
+  .login-brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 32px;
+  }
+
+  /* Amber glow ring behind the logo mark */
+  .login-logo-ring {
+    width: 64px; height: 64px;
+    border-radius: 18px;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, rgba(232,165,68,0.14) 0%, rgba(232,165,68,0.05) 100%);
+    border: 1px solid rgba(232,165,68,0.22);
+    box-shadow: 0 0 28px rgba(232,165,68,0.12), inset 0 1px 0 rgba(232,165,68,0.15);
+    margin-bottom: 6px;
+    position: relative;
+  }
+  .login-logo-ring::after {
+    content: "";
+    position: absolute; inset: -1px;
+    border-radius: 19px;
+    background: linear-gradient(135deg, rgba(232,165,68,0.3), transparent 60%);
+    mask: linear-gradient(white,white) content-box, linear-gradient(white,white);
+    mask-composite: exclude;
+    -webkit-mask-composite: xor;
+    padding: 1px;
+    pointer-events: none;
+  }
+  .login-logo-glyph {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--accent);
+    line-height: 1;
+    user-select: none;
   }
 
   .wordmark {
@@ -149,83 +248,121 @@
   }
   @keyframes blink { 50% { opacity: 0; } }
 
-  .login-card .wordmark { font-size: 38px; }
+  .login-card .wordmark { font-size: 34px; letter-spacing: -0.03em; }
 
   .tagline {
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 13px;
     color: var(--text-3);
-    letter-spacing: 0.02em;
-    margin-top: -12px;
+    letter-spacing: 0.01em;
+    font-weight: 400;
+    margin-top: 2px;
   }
-  .tagline .dot { color: var(--text-4); margin: 0 6px; }
 
+  /* ---- Tabs ---- */
+  .auth-tabs {
+    display: flex;
+    gap: 2px;
+    background: rgba(0,0,0,0.25);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 3px;
+    width: 100%;
+    margin-bottom: 20px;
+  }
+  .auth-tab {
+    flex: 1;
+    height: 36px;
+    font-family: var(--sans);
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-4);
+    border-radius: 9px;
+    transition: background 180ms, color 180ms, box-shadow 180ms;
+  }
+  .auth-tab.active {
+    background: rgba(232,165,68,0.12);
+    color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(232,165,68,0.22), 0 2px 8px rgba(0,0,0,0.3);
+  }
+  .auth-tab:hover:not(.active) { color: var(--text-2); }
+
+  /* ---- Form ---- */
   .pw-form {
     width: 100%;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    margin-top: 8px;
+    gap: 12px;
   }
 
   .pw-field {
     position: relative;
     display: flex;
     align-items: center;
-    background: var(--bg-2);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-md);
-    padding: 0 14px;
-    height: 48px;
-    transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+    background: rgba(0,0,0,0.22);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px;
+    padding: 0 16px;
+    height: 52px;
+    transition: border-color 200ms ease, background 200ms ease, box-shadow 200ms ease;
   }
   .pw-field:focus-within {
-    border-color: var(--accent-line);
-    background: var(--bg-3);
-    box-shadow: 0 0 0 4px var(--accent-soft);
+    border-color: rgba(232,165,68,0.4);
+    background: rgba(232,165,68,0.04);
+    box-shadow: 0 0 0 4px rgba(232,165,68,0.08), 0 2px 12px rgba(0,0,0,0.3);
   }
   .pw-field .prompt {
     font-family: var(--mono);
-    font-size: 14px;
-    color: var(--accent);
-    margin-right: 10px;
+    font-size: 15px;
+    color: rgba(232,165,68,0.5);
+    margin-right: 12px;
     user-select: none;
+    transition: color 200ms;
   }
+  .pw-field:focus-within .prompt { color: var(--accent); }
   .pw-field input {
     flex: 1;
     height: 100%;
-    font-family: var(--mono);
-    font-size: 14px;
+    font-family: var(--sans);
+    font-size: 14.5px;
     color: var(--text-1);
-    letter-spacing: 0.04em;
+    letter-spacing: 0.01em;
   }
   .pw-field input::placeholder { color: var(--text-4); letter-spacing: 0; }
 
+  /* ---- Buttons ---- */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    height: 44px;
-    padding: 0 18px;
+    height: 48px;
+    padding: 0 20px;
     font-family: var(--sans);
-    font-size: 14px;
-    font-weight: 500;
-    letter-spacing: 0.005em;
-    border-radius: var(--radius-md);
-    transition: transform 100ms ease, background 160ms ease, box-shadow 160ms ease, color 160ms ease, border-color 160ms ease;
+    font-size: 14.5px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    border-radius: 12px;
+    transition: transform 120ms ease, background 180ms ease, box-shadow 180ms ease, color 180ms ease, border-color 180ms ease;
     border: 1px solid transparent;
   }
-  .btn:active { transform: translateY(1px); }
+  .btn:active { transform: translateY(1px) scale(0.99); }
 
   .btn-primary {
-    background: var(--accent);
+    background: linear-gradient(135deg, #f0b355 0%, #e8a544 60%, #d4922e 100%);
     color: #1a1208;
-    font-weight: 600;
+    font-weight: 700;
+    border-color: rgba(232,165,68,0.3);
+    box-shadow: 0 4px 20px rgba(232,165,68,0.2), inset 0 1px 0 rgba(255,255,255,0.2);
+    margin-top: 6px;
   }
-  .btn-primary:hover { background: #f1b25a; box-shadow: 0 6px 20px rgba(232,165,68,0.25); }
-  .btn-primary .arrow { transition: transform 160ms ease; }
-  .btn-primary:hover .arrow { transform: translateX(2px); }
+  .btn-primary:hover {
+    background: linear-gradient(135deg, #f5bc60 0%, #eeaf52 60%, #dba040 100%);
+    box-shadow: 0 8px 32px rgba(232,165,68,0.32), inset 0 1px 0 rgba(255,255,255,0.25);
+    transform: translateY(-1px);
+  }
+  .btn-primary .arrow { transition: transform 180ms ease; }
+  .btn-primary:hover .arrow { transform: translateX(3px); }
 
   .btn-ghost {
     background: transparent;
@@ -234,44 +371,23 @@
   }
   .btn-ghost:hover { background: var(--bg-3); color: var(--text-1); border-color: var(--line-strong); }
 
-  .auth-tabs {
-    display: flex;
-    gap: 4px;
-    background: var(--bg-2);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-md);
-    padding: 4px;
-    width: 100%;
-  }
-  .auth-tab {
-    flex: 1;
-    height: 34px;
-    font-family: var(--mono);
-    font-size: 13px;
-    color: var(--text-3);
-    border-radius: 7px;
-    transition: background 140ms, color 140ms;
-  }
-  .auth-tab.active {
-    background: var(--bg-4);
-    color: var(--text-1);
-  }
-  .auth-tab:hover:not(.active) { color: var(--text-2); }
-
+  /* ---- Status footer ---- */
   .login-foot {
-    margin-top: 18px;
+    margin-top: 22px;
     font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--text-3);
+    font-size: 11px;
+    color: var(--text-4);
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    letter-spacing: 0.04em;
   }
   .pulse-dot {
-    width: 7px; height: 7px; border-radius: 50%;
+    width: 6px; height: 6px; border-radius: 50%;
     background: var(--ok);
     box-shadow: 0 0 0 0 rgba(109,191,138,0.6);
     animation: pulse 2s infinite;
+    flex-shrink: 0;
   }
   @keyframes pulse {
     0%   { box-shadow: 0 0 0 0 rgba(109,191,138,0.5); }
@@ -1874,17 +1990,22 @@
   <!-- ============ LOGIN ============ -->
   <section class="screen" id="login">
     <div class="login-card">
-      <div class="wordmark">
-        <span class="glyph">~</span><span>sage</span><span class="caret"></span>
-      </div>
-      <div class="tagline">
-        Your AI. <span class="dot">·</span> Your machine. <span class="dot">·</span> Your data.
+
+      <!-- Brand -->
+      <div class="login-brand">
+        <div class="login-logo-ring">
+          <span class="login-logo-glyph">~</span>
+        </div>
+        <div class="wordmark">
+          <span>sage</span><span class="caret"></span>
+        </div>
+        <div class="tagline">Your personal AI assistant.</div>
       </div>
 
       <!-- Tab switcher -->
       <div class="auth-tabs">
-        <button class="auth-tab active" id="tabLogin" type="button">Login</button>
-        <button class="auth-tab" id="tabSignup" type="button">Sign up</button>
+        <button class="auth-tab active" id="tabLogin" type="button">Sign in</button>
+        <button class="auth-tab" id="tabSignup" type="button">Create account</button>
       </div>
 
       <!-- Login form -->
@@ -1894,12 +2015,12 @@
           <input id="userInput" type="text" placeholder="Username" autocomplete="username" />
         </div>
         <div class="pw-field">
-          <span class="prompt">$</span>
+          <span class="prompt">🔑</span>
           <input id="pwInput" type="password" placeholder="Password" autocomplete="current-password" />
         </div>
-        <button type="submit" class="btn btn-primary" id="loginBtn">
-          <span>Login</span>
-          <svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14">
+        <button type="submit" class="btn btn-primary" id="loginBtn" style="width:100%;">
+          <span>Continue</span>
+          <svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
             <path d="M3 8h10M9 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
@@ -1910,19 +2031,19 @@
       <form class="pw-form" id="signupForm" autocomplete="on" style="display:none;">
         <div class="pw-field">
           <span class="prompt">@</span>
-          <input id="signupUser" type="text" placeholder="Username (min 3 chars)" autocomplete="username" />
+          <input id="signupUser" type="text" placeholder="Choose a username" autocomplete="username" />
         </div>
         <div class="pw-field">
-          <span class="prompt">$</span>
-          <input id="signupPw" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
+          <span class="prompt">🔑</span>
+          <input id="signupPw" type="password" placeholder="Create a password" autocomplete="new-password" />
         </div>
         <div class="pw-field">
-          <span class="prompt">$</span>
+          <span class="prompt">🔑</span>
           <input id="signupPw2" type="password" placeholder="Confirm password" autocomplete="new-password" />
         </div>
-        <button type="submit" class="btn btn-primary" id="signupBtn">
-          <span>Create account</span>
-          <svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14">
+        <button type="submit" class="btn btn-primary" id="signupBtn" style="width:100%;">
+          <span>Get started</span>
+          <svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
             <path d="M3 8h10M9 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
@@ -1934,11 +2055,6 @@
         <span id="loginFootText">Connecting…</span>
       </div>
 
-      <div class="login-meta">
-        <hr/>
-        <span id="loginMetaText">loading…</span>
-        <hr/>
-      </div>
     </div>
   </section>
 
@@ -2017,7 +2133,7 @@
         <div class="thread-inner">
 
           <div class="session-marker">
-            <hr/><span>session started · 09:14 · local</span><hr/>
+            <hr/><span>session started · 09:14</span><hr/>
           </div>
 
           <!-- Msg 1: user -->
@@ -2116,13 +2232,13 @@
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M3.5 8a4.5 4.5 0 0 0 9 0M8 12.5V14" stroke-linecap="round"/></svg>
             </button>
           </div>
-          <textarea id="composerInput" placeholder="Ask anything. Sage runs locally." rows="1"></textarea>
+          <textarea id="composerInput" placeholder="Ask Sage anything…" rows="1"></textarea>
           <button type="submit" class="send-btn" id="sendBtn" title="Send" aria-label="Send">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l10-5-3 13-2.5-5L3 8z" stroke-linejoin="round" stroke-linecap="round" fill="none"/></svg>
           </button>
         </form>
         <div class="composer-foot">
-          <span class="accent-text">⏎</span> to send · <span class="accent-text">⇧⏎</span> for newline · responses generated locally
+          <span class="accent-text">⏎</span> to send · <span class="accent-text">⇧⏎</span> for newline
         </div>
       </div>
     </div>
@@ -2349,7 +2465,7 @@
         <span class="k"><span class="key">↵</span> insert</span>
         <span class="k"><span class="key">esc</span> close</span>
       </span>
-      <span class="brand"><span class="ok">●</span> local · v0.4.2</span>
+      <span class="brand"><span class="ok">●</span> sage · v0.4.2</span>
     </div>
   </div>
 </div>
@@ -2592,9 +2708,6 @@
       // Don't pre-fill username — user should type their own credentials
 
       document.getElementById('loginFootText').textContent =
-        info.storage.includes('supabase') ? 'Connected to Supabase cloud' : 'Running locally on your machine';
-
-      document.getElementById('loginMetaText').textContent =
         `v${info.version} · ${info.model}`;
 
       document.getElementById('userInput').focus();
@@ -2889,7 +3002,7 @@
       threadInner.innerHTML = `<div class="session-marker"><hr/><span>new session · start typing below</span><hr/></div>`;
       return;
     }
-    let html = `<div class="session-marker"><hr/><span>session started · local</span><hr/></div>`;
+    let html = `<div class="session-marker"><hr/><span>session started</span><hr/></div>`;
     for (const m of messages) {
       if (m.role === 'user') {
         html += `<div class="msg msg-user"><div class="bubble">${escapeHtml(m.content)}</div></div>`;
@@ -2899,7 +3012,7 @@
             <div class="avatar-s">S</div>
             <div class="bubble-wrap">
               <div class="bubble">${renderMarkdown(m.content)}</div>
-              <div class="msg-meta"><span>${formatTime(m.created_at)}</span><span class="sources">· local</span></div>
+              <div class="msg-meta"><span>${formatTime(m.created_at)}</span></div>
             </div>
           </div>`;
       }
@@ -3136,7 +3249,7 @@
 
       const meta = document.createElement('div');
       meta.className = 'msg-meta';
-      meta.innerHTML = `<span>${formatNow()}</span><span class="sources">${srcLabel} · local · ${data.latency_ms}ms</span>`;
+      meta.innerHTML = `<span>${formatNow()}</span><span class="sources">${srcLabel} · ${data.latency_ms}ms</span>`;
       wrap.appendChild(meta);
 
       if (data.ragas?.evaluated) {
