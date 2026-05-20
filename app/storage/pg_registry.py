@@ -729,6 +729,10 @@ class PostgresRegistry:
         if expires is not None and expires.tzinfo is None:
             from datetime import timezone
             data["expires_at"] = expires.replace(tzinfo=timezone.utc)
+        # psycopg2 may return JSONB as a string if register_default_jsonb() was not called
+        payload = data.get("action_payload")
+        if isinstance(payload, str):
+            data["action_payload"] = json.loads(payload)
         return data
 
     def attach_hitl_context(self, id: str, context: Dict[str, object]) -> None:

@@ -127,13 +127,16 @@ async def lifespan(app: FastAPI):
             and _whatsapp_service
             and settings.your_whatsapp_number
         ):
-            schedule_todo_reminder(
-                app.state.scheduler,
-                todo,
-                _whatsapp_service,
-                _registry,
-                settings.your_whatsapp_number,
-            )
+            try:
+                schedule_todo_reminder(
+                    app.state.scheduler,
+                    todo,
+                    _whatsapp_service,
+                    _registry,
+                    settings.your_whatsapp_number,
+                )
+            except Exception:
+                logger.exception("Failed to schedule todo reminder for todo %s", todo.get("id"))
 
     app.state.schedule_todo_callback = schedule_created_todo
     _chat_service = create_chat_service(schedule_todo_callback=schedule_created_todo)

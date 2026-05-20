@@ -194,7 +194,8 @@ def _coerce_datetime(value: Any) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
+        # Strip tz so naive comparisons (datetime.now()) don't raise TypeError
+        return value.astimezone().replace(tzinfo=None) if value.tzinfo is not None else value
     if isinstance(value, str):
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
             try:
