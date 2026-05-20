@@ -1034,6 +1034,14 @@
     body[data-sidebar="open"] .sidebar { transform: translateX(0); }
   }
 
+  /* Desktop sidebar collapse */
+  @media (min-width: 901px) {
+    .sidebar-backdrop { display: none !important; }
+    body[data-sidebar="closed"] #chat { grid-template-columns: 1fr; }
+    body[data-sidebar="closed"] .sidebar { display: none; }
+    body[data-sidebar="closed"] .topbar .menu-btn { display: inline-flex; }
+  }
+
   /* iPhone safe area */
   @supports (padding: env(safe-area-inset-bottom)) {
     .composer-wrap { padding-bottom: max(18px, env(safe-area-inset-bottom)); }
@@ -3880,9 +3888,11 @@
   // Sidebar mobile open/close
   // ================================================================
   const body = document.body;
-  document.getElementById('sbOpen')?.addEventListener('click', () => body.dataset.sidebar = 'open');
-  document.getElementById('sbClose')?.addEventListener('click', () => body.dataset.sidebar = 'closed');
-  document.getElementById('sbBackdrop')?.addEventListener('click', () => body.dataset.sidebar = 'closed');
+  document.getElementById('sbOpen')?.addEventListener('click', () => { body.dataset.sidebar = 'open'; });
+  document.getElementById('sbClose')?.addEventListener('click', () => {
+    body.dataset.sidebar = body.dataset.sidebar === 'closed' ? 'open' : 'closed';
+  });
+  document.getElementById('sbBackdrop')?.addEventListener('click', () => { body.dataset.sidebar = 'closed'; });
 
   // ================================================================
   // Cmd-K / Help palette
