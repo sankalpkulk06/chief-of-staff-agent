@@ -6,12 +6,16 @@ import re
 import time
 import uuid
 from collections import defaultdict
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from app.agents.base import SecurityResult
 from app.agents.prompts import load
 from app.agents.security_policy import SecurityPolicy
-from app.storage.sqlite_registry import SQLiteRegistry
+
+if TYPE_CHECKING:
+    # Type-only import — pulling this at runtime would drag the whole storage
+    # package (and chromadb) into every SecurityAgent import.
+    from app.storage.sqlite_registry import SQLiteRegistry
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +92,7 @@ class SecurityAgent:
 
     def __init__(
         self,
-        registry: Optional[SQLiteRegistry] = None,
+        registry: Optional["SQLiteRegistry"] = None,
         chat_provider: Optional[Any] = None,
         max_input_length: Any = _UNSET,   # legacy param — ignored when policy is given
         enabled: Any = _UNSET,            # legacy param — ignored when policy is given
@@ -157,10 +161,11 @@ class SecurityAgent:
         working_text = text
         sanitized: Optional[str] = None
         if self._policy.html_sanitization_enabled:
-            result = self._sanitize_html(text)
+            result, dangerous = self._sanitize_html(text)
             if result is not None:
                 sanitized = result
                 working_text = result
+            if dangerous:
                 self._log_event(
                     user_id=user_id,
                     event_type="html_injection",
@@ -261,19 +266,32 @@ class SecurityAgent:
         window.append(now)
         return False
 
-    def _sanitize_html(self, text: str) -> Optional[str]:
+    def _sanitize_html(self, text: str) -> tuple[Optional[str], bool]:
         """Strip dangerous HTML constructs.
 
-        Returns cleaned text if anything was removed, or None if the text was clean.
-        Entity decoding runs first to catch obfuscated payloads (&#60;script&#62; etc.).
+        Returns (cleaned_text_or_None, dangerous_content_removed).
+
+        Entity decoding runs first to catch obfuscated payloads (&#60;script&#62;),
+        and the decoded text is returned even when no dangerous pattern matched —
+        the downstream injection scan must see decoded text or entity-encoded
+        attacks slip past the regexes.
+
+        The second element distinguishes "we actually removed an attack" from
+        "we merely decoded entities or collapsed whitespace". Only the former is
+        worth a security_events row; conflating them floods the audit table with
+        html_injection events for benign input like a trailing space.
         """
         decoded = _html_module.unescape(text)
         cleaned = decoded
+        dangerous = False
         for pattern, replacement in _HTML_SANITIZE_PATTERNS:
-            cleaned = pattern.sub(replacement, cleaned)
+            substituted = pattern.sub(replacement, cleaned)
+            if substituted != cleaned:
+                dangerous = True
+                cleaned = substituted
         # Collapse whitespace gaps left by removed tags
         cleaned = re.sub(r" {2,}", " ", cleaned).strip()
-        return cleaned if cleaned != text else None
+        return (cleaned if cleaned != text else None), dangerous
 
     def _has_pii(self, text: str) -> bool:
         return bool(

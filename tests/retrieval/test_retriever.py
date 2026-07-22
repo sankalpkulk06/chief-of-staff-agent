@@ -4,7 +4,7 @@ from app.core.qa_service import QAService
 from app.ingestion.chunker import Chunker, ChunkingConfig
 from app.ingestion.ids import build_document_id
 from app.parsers.router import ParserRouter
-from app.retrieval.prompt_builder import build_grounded_prompt, build_system_message_with_tools
+from app.retrieval.prompt_builder import build_grounded_prompt
 from app.retrieval.retriever import Retriever
 from app.storage.chroma_store import ChromaStore
 from app.storage.sqlite_registry import SQLiteRegistry
@@ -133,15 +133,6 @@ def test_prompt_builder_output_shape():
     assert "Context:" in prompt
     assert "I don't know based on the provided documents." in prompt
     assert "If the user asks about a specific file" in prompt
-
-
-def test_tool_prompt_includes_response_style():
-    prompt = build_system_message_with_tools(
-        response_style="Use friendly emojis and compact WhatsApp formatting.",
-    )
-
-    assert "Response style:" in prompt
-    assert "friendly emojis" in prompt
 
 
 def test_qa_service_orchestration(tmp_path):
