@@ -46,3 +46,6 @@ htmlcov/
 
 # commands - not to be pushed to the repo
 commands/
+# Playwright MCP session artifacts (snapshots, console logs, screenshots)
+.playwright-mcp/
+[0-9][0-9]-*.png
