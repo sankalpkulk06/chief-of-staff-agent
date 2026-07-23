@@ -20,6 +20,7 @@ data/sqlite/
 data/chroma/
 data/cache/
 data/reports/
+data/session.json
 
 # Docs binaries
 docs/*.docx
