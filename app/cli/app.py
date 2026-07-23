@@ -4,6 +4,7 @@ from typing import Optional
 import typer
 
 from app import __version__
+from app.cli.commands_auth import login_command, logout_command, whoami_command
 from app.cli.commands_chat import chat_command
 from app.cli.commands_email import email_personal_command, email_work_command
 from app.config import get_settings
@@ -31,6 +32,24 @@ def root(
     if version:
         typer.echo(f"personal-rag-study-agent {__version__}")
         raise typer.Exit()
+
+
+@cli.command("login")
+def login() -> None:
+    """Log in (or sign up) and persist the session for future commands."""
+    login_command()
+
+
+@cli.command("logout")
+def logout() -> None:
+    """Clear the persisted CLI session."""
+    logout_command()
+
+
+@cli.command("whoami")
+def whoami() -> None:
+    """Show the currently logged-in CLI user."""
+    whoami_command()
 
 
 @cli.command("config")

@@ -142,6 +142,10 @@ def _qa_result(answer: str, sources=None) -> QAResult:
 
 def _patch_chat_dependencies(monkeypatch, responses, chat_service):
     monkeypatch.setattr(
+        "app.cli.commands_chat.resolve_cli_user",
+        lambda *args, **kwargs: {"user_id": "default", "username": "tester"},
+    )
+    monkeypatch.setattr(
         "app.cli.commands_chat.PromptSession",
         lambda *args, **kwargs: _StubPromptSession(responses),
     )

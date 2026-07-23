@@ -1,4 +1,3 @@
-import getpass
 import re
 import uuid
 from datetime import datetime
@@ -21,6 +20,7 @@ from app.cli.commands_ask import (
     create_web_search_service,
 )
 from app.cli.commands_ingest import create_ingest_coordinator
+from app.cli.session import resolve_cli_user
 from app.config import get_settings
 from app.config.validation import CloudConfigurationError, validate_runtime_configuration
 from app.core.habit_service import HabitService
@@ -29,7 +29,6 @@ from app.services.email_service import EmailService
 from app.providers.ollama_embeddings import OllamaProviderError
 from app.providers.factory import create_chat_provider, create_default_chat_provider, ModelSpec
 from app.storage.factory import create_registry
-from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
 _EMAIL_TRIGGERS = {
@@ -404,63 +403,6 @@ def _print_help() -> None:
     console.print()
 
 
-def _prompt_auth(registry: SQLiteRegistry, console: Console) -> dict:
-    """Show login/signup menu and return the authenticated user dict."""
-    import sys
-    if not sys.stdin.isatty():
-        # Non-interactive mode requires authentication — cannot proceed without a real user
-        raise typer.Exit(code=1)
-
-    console.print()
-    console.print("[bold cyan]Welcome to Sage[/bold cyan]")
-    console.print("[dim]━━━━━━━━━━━━━━━━━━━━━━[/dim]")
-
-    while True:
-        console.print("\n[bold]\[1][/bold] Login  [bold]\[2][/bold] Sign up  [bold]\[3][/bold] Exit\n")
-        try:
-            choice = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            raise typer.Exit()
-
-        if choice == "3":
-            raise typer.Exit()
-
-        elif choice == "1":
-            # --- Login ---
-            while True:
-                username = input("Username: ").strip()
-                password = getpass.getpass("Password: ")
-                user = registry.verify_password(username, password)
-                if user:
-                    console.print(f"\n[green]Logged in as {username}.[/green]")
-                    return user
-                console.print("[red]Incorrect username or password. Try again.[/red]")
-
-        elif choice == "2":
-            # --- Sign up ---
-            while True:
-                username = input("Username: ").strip()
-                if len(username) < 3:
-                    console.print("[red]Username must be at least 3 characters.[/red]")
-                    continue
-                if registry.get_user_by_username(username):
-                    console.print("[red]Username already taken. Choose another.[/red]")
-                    continue
-                password = getpass.getpass("Password: ")
-                if len(password) < 6:
-                    console.print("[red]Password must be at least 6 characters.[/red]")
-                    continue
-                confirm = getpass.getpass("Confirm password: ")
-                if password != confirm:
-                    console.print("[red]Passwords do not match.[/red]")
-                    continue
-                user = registry.create_user(username, password)
-                console.print(f"\n[green]Account created. Welcome, {username}![/green]")
-                return user
-        else:
-            console.print("[yellow]Please enter 1, 2, or 3.[/yellow]")
-
-
 def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) -> None:
     """Run an interactive chat session with conversation history."""
     settings = get_settings()
@@ -473,7 +415,7 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
 
     # Bootstrap registry just for auth (before full service creation)
     bootstrap_registry = create_registry(settings.database_url, paths.sqlite_db_path)
-    user = _prompt_auth(bootstrap_registry, console)
+    user = resolve_cli_user(settings, bootstrap_registry, console)
     user_id: str = user["user_id"]
     username: str = user["username"]
     bootstrap_registry.close()

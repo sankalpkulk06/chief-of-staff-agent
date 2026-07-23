@@ -97,6 +97,16 @@ class PostgresRegistry:
             row = cur.fetchone()
         return dict(row) if row else None
 
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, object]]:
+        """Return {user_id, username} for an existing user, or None."""
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT user_id, username FROM users WHERE user_id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+        return {"user_id": row["user_id"], "username": row["username"]} if row else None
+
     def verify_password(self, username: str, password: str) -> Optional[Dict[str, object]]:
         user = self.get_user_by_username(username)
         if user and _verify_password(password, user["password_hash"]):

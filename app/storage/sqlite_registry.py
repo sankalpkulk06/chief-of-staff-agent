@@ -210,6 +210,14 @@ class SQLiteRegistry:
         ).fetchone()
         return dict(row) if row else None
 
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, object]]:
+        """Return {user_id, username} for an existing user, or None."""
+        row = self._connection.execute(
+            "SELECT user_id, username FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return {"user_id": row["user_id"], "username": row["username"]} if row else None
+
     def verify_password(self, username: str, password: str) -> Optional[Dict[str, object]]:
         """Return user dict if credentials are valid, None otherwise."""
         user = self.get_user_by_username(username)
