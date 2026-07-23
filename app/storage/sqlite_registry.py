@@ -127,6 +127,65 @@ class SQLiteRegistry:
             )
         """)
 
+        # user_email_tokens — per-user Google OAuth tokens (Postgres parity).
+        # account_type distinguishes scopes, e.g. 'personal' (Gmail) vs 'google_calendar'.
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS user_email_tokens (
+                user_id      TEXT NOT NULL,
+                account_type TEXT NOT NULL DEFAULT 'personal',
+                token_json   TEXT NOT NULL,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, account_type)
+            )
+        """)
+
+        # oauth_states — short-lived CSRF state tokens for the OAuth consent flow.
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS oauth_states (
+                state      TEXT PRIMARY KEY,
+                user_id    TEXT NOT NULL,
+                expires_at DATETIME DEFAULT (datetime('now', '+10 minutes'))
+            )
+        """)
+
+        # sage_calendar_events — provenance mirror of events Sage writes to Google Calendar.
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS sage_calendar_events (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                google_event_id TEXT,
+                calendar_id     TEXT NOT NULL DEFAULT 'primary',
+                plan_date       TEXT NOT NULL,
+                title           TEXT NOT NULL,
+                start_local     TEXT,
+                end_local       TEXT,
+                source_kind     TEXT,
+                source_ref      TEXT,
+                etag            TEXT,
+                status          TEXT NOT NULL DEFAULT 'active',
+                created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                cancelled_at    DATETIME
+            )
+        """)
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sage_calendar_events_lookup "
+            "ON sage_calendar_events (user_id, plan_date, status)"
+        )
+
+        # pending_prompts — session-keyed multi-turn prompt state (generalizes nudge_context).
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS pending_prompts (
+                session_id  TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                prompt_type TEXT NOT NULL,
+                state_json  TEXT NOT NULL DEFAULT '{}',
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at  DATETIME
+            )
+        """)
+
     def close(self) -> None:
         self._connection.close()
 
@@ -703,6 +762,200 @@ class SQLiteRegistry:
             (user_id, key),
         )
         self._connection.commit()
+
+    # ------------------------------------------------------------------
+    # Google OAuth tokens (Postgres parity)
+    # ------------------------------------------------------------------
+
+    def get_email_token(self, user_id: str, account_type: str = "personal") -> Optional[Dict]:
+        row = self._connection.execute(
+            "SELECT token_json FROM user_email_tokens WHERE user_id = ? AND account_type = ?",
+            (user_id, account_type),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["token_json"])
+
+    def upsert_email_token(self, user_id: str, token_json: dict, account_type: str = "personal") -> None:
+        self._connection.execute(
+            """
+            INSERT INTO user_email_tokens (user_id, account_type, token_json, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, account_type) DO UPDATE SET
+                token_json = excluded.token_json,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, account_type, json.dumps(token_json)),
+        )
+        self._connection.commit()
+
+    def delete_email_token(self, user_id: str, account_type: str = "personal") -> None:
+        self._connection.execute(
+            "DELETE FROM user_email_tokens WHERE user_id = ? AND account_type = ?",
+            (user_id, account_type),
+        )
+        self._connection.commit()
+
+    def has_email_token(self, user_id: str, account_type: str = "personal") -> bool:
+        row = self._connection.execute(
+            "SELECT 1 FROM user_email_tokens WHERE user_id = ? AND account_type = ?",
+            (user_id, account_type),
+        ).fetchone()
+        return row is not None
+
+    # ------------------------------------------------------------------
+    # OAuth state (CSRF token for the OAuth consent flow)
+    # ------------------------------------------------------------------
+
+    def store_oauth_state(self, state: str, user_id: str) -> None:
+        # Set expiry explicitly (local-naive) so comparisons stay consistent with
+        # _format_datetime elsewhere, rather than relying on SQLite's UTC default.
+        now = datetime.now()
+        self._connection.execute(
+            "DELETE FROM oauth_states WHERE expires_at < ?",
+            (self._format_datetime(now),),
+        )
+        self._connection.execute(
+            """
+            INSERT INTO oauth_states (state, user_id, expires_at) VALUES (?, ?, ?)
+            ON CONFLICT(state) DO NOTHING
+            """,
+            (state, user_id, self._format_datetime(now + timedelta(minutes=10))),
+        )
+        self._connection.commit()
+
+    def pop_oauth_state(self, state: str) -> Optional[str]:
+        """Validate and consume a state token. Returns user_id or None if invalid/expired."""
+        now = self._format_datetime(datetime.now())
+        row = self._connection.execute(
+            "SELECT user_id FROM oauth_states WHERE state = ? AND expires_at > ?",
+            (state, now),
+        ).fetchone()
+        self._connection.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+        self._connection.commit()
+        return row["user_id"] if row else None
+
+    # ------------------------------------------------------------------
+    # Sage calendar events (provenance mirror for the daily planner)
+    # ------------------------------------------------------------------
+
+    def insert_calendar_event(self, row: Dict[str, object]) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO sage_calendar_events
+                (id, user_id, google_event_id, calendar_id, plan_date, title,
+                 start_local, end_local, source_kind, source_ref, etag, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"], row["user_id"], row.get("google_event_id"),
+                row.get("calendar_id", "primary"), row["plan_date"], row["title"],
+                row.get("start_local"), row.get("end_local"), row.get("source_kind"),
+                row.get("source_ref"), row.get("etag"), row.get("status", "active"),
+            ),
+        )
+        self._connection.commit()
+
+    def set_calendar_event_google_id(self, event_id: str, google_event_id: str, etag: Optional[str]) -> None:
+        self._connection.execute(
+            "UPDATE sage_calendar_events SET google_event_id = ?, etag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (google_event_id, etag, event_id),
+        )
+        self._connection.commit()
+
+    def update_calendar_event(
+        self, event_id: str, *, title: Optional[str] = None,
+        start_local: Optional[str] = None, end_local: Optional[str] = None, etag: Optional[str] = None,
+    ) -> None:
+        self._connection.execute(
+            """
+            UPDATE sage_calendar_events
+            SET title = COALESCE(?, title),
+                start_local = COALESCE(?, start_local),
+                end_local = COALESCE(?, end_local),
+                etag = COALESCE(?, etag),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (title, start_local, end_local, etag, event_id),
+        )
+        self._connection.commit()
+
+    def soft_cancel_calendar_event(self, event_id: str) -> None:
+        self._connection.execute(
+            "UPDATE sage_calendar_events SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (event_id,),
+        )
+        self._connection.commit()
+
+    def list_managed_calendar_events(
+        self, user_id: str, plan_date: str, status: str = "active"
+    ) -> List[Dict[str, object]]:
+        rows = self._connection.execute(
+            "SELECT * FROM sage_calendar_events WHERE user_id = ? AND plan_date = ? AND status = ? "
+            "ORDER BY start_local ASC",
+            (user_id, plan_date, status),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_calendar_event(self, event_id: str) -> Optional[Dict[str, object]]:
+        row = self._connection.execute(
+            "SELECT * FROM sage_calendar_events WHERE id = ?", (event_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Pending prompts (session-keyed multi-turn state)
+    # ------------------------------------------------------------------
+
+    def set_pending_prompt(
+        self, session_id: str, user_id: str, prompt_type: str,
+        state: Dict[str, object], ttl_minutes: int = 30,
+    ) -> None:
+        expires_at = self._format_datetime(datetime.now() + timedelta(minutes=ttl_minutes))
+        self._connection.execute(
+            """
+            INSERT INTO pending_prompts (session_id, user_id, prompt_type, state_json, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                user_id = excluded.user_id,
+                prompt_type = excluded.prompt_type,
+                state_json = excluded.state_json,
+                created_at = CURRENT_TIMESTAMP,
+                expires_at = excluded.expires_at
+            """,
+            (session_id, user_id, prompt_type, json.dumps(state), expires_at),
+        )
+        self._connection.commit()
+
+    def get_pending_prompt(self, session_id: str) -> Optional[Dict[str, object]]:
+        now = self._format_datetime(datetime.now())
+        row = self._connection.execute(
+            "SELECT * FROM pending_prompts WHERE session_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+            (session_id, now),
+        ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["state"] = json.loads(data.get("state_json") or "{}")
+        return data
+
+    def clear_pending_prompt(self, session_id: str) -> None:
+        self._connection.execute(
+            "DELETE FROM pending_prompts WHERE session_id = ?", (session_id,)
+        )
+        self._connection.commit()
+
+    def append_pending_prompt_note(self, session_id: str, note: str) -> None:
+        current = self.get_pending_prompt(session_id)
+        if current is None:
+            return
+        state = current["state"]
+        notes = state.get("gathered_notes") or []
+        notes.append(note)
+        state["gathered_notes"] = notes
+        self.set_pending_prompt(session_id, current["user_id"], current["prompt_type"], state)
 
     def log_security_event(self, event_id: str, user_id: str, event_type: str, severity: str, snippet: str) -> None:
         self._connection.execute(

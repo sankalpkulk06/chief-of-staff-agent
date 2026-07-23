@@ -56,6 +56,7 @@ class ChatService:
         habit_service: Optional[HabitService] = None,
         url_ingestion_service: Optional[URLIngestionService] = None,
         email_service: Optional[EmailService] = None,
+        calendar_service: Optional[Any] = None,
         schedule_todo_callback: Optional[Callable[[dict[str, Any]], None]] = None,
         twilio_daily_message_limit: int = 50,
         max_prompt_chunks: int = 5,
@@ -76,6 +77,7 @@ class ChatService:
         self._habit_service = habit_service
         self._url_ingestion_service = url_ingestion_service
         self._email_service = email_service
+        self._calendar_service = calendar_service
         self._schedule_todo_callback = schedule_todo_callback
         self._twilio_daily_message_limit = twilio_daily_message_limit
         self._max_prompt_chunks = max_prompt_chunks
@@ -84,6 +86,21 @@ class ChatService:
         self._user_id = user_id
         self._rag_fallback_distance_threshold = rag_fallback_distance_threshold
         self._security_agent = security_agent
+
+        # Daily planner — only usable when a calendar service is wired. Built before the
+        # runner so it can also be routed to via natural language by the orchestrator.
+        self._planner_service = None
+        if calendar_service is not None:
+            from app.config.settings import get_settings
+            from app.core.planner_service import PlannerService
+
+            self._planner_service = PlannerService(
+                registry=registry,
+                calendar_service=calendar_service,
+                chat_provider=chat_provider,
+                default_timezone=get_settings().default_timezone,
+                assistant_name=assistant_name,
+            )
 
         self._agent_runner = AgentRunner(
             chat_provider=chat_provider,
@@ -96,6 +113,7 @@ class ChatService:
             web_search_service=web_search_service,
             habit_service=habit_service,
             email_service=email_service,
+            planner_service=self._planner_service,
             schedule_todo_callback=schedule_todo_callback,
             assistant_name=assistant_name,
             rag_top_k=max_prompt_chunks,
@@ -159,7 +177,20 @@ class ChatService:
                 history=history,
             )
 
-        # Explicit slash commands (/todo, /facts, /habits, etc.) → bypass agents
+        # /plan bootstrap — needs session_id + returns a full QAResult, so it lives here
+        # (not in the string-only slash handler). Works on web + WhatsApp alike.
+        plan_bootstrap = self._maybe_start_plan(
+            question, session_id=session_id, user_id=effective_uid
+        )
+        if plan_bootstrap is not None:
+            return self._record_answer(
+                session_id=session_id, question=question,
+                answer=plan_bootstrap[0], history=history,
+            )
+
+        # Explicit slash commands (/todo, /facts, /habits, etc.) → bypass agents.
+        # Runs BEFORE the pending-prompt check so a known command still escapes a
+        # live plan check-in.
         direct_answer = self._answer_direct_command(
             question, response_style=response_style, user_id=effective_uid
         )
@@ -169,6 +200,17 @@ class ChatService:
                 question=question,
                 answer=direct_answer,
                 history=history,
+            )
+
+        # Captured answer to a pending plan check-in → build the plan (both surfaces).
+        plan_followup = self._maybe_continue_plan(
+            question, session_id=session_id, user_id=effective_uid
+        )
+        if plan_followup is not None:
+            answer, hitl_pending, hitl_id = plan_followup
+            return self._record_answer(
+                session_id=session_id, question=question, answer=answer,
+                history=history, hitl_pending=hitl_pending, hitl_id=hitl_id,
             )
 
         # All other natural language → multi-agent orchestration: plan → dispatch → synthesize
@@ -386,6 +428,56 @@ class ChatService:
             },
         ]
         return self._chat_provider.chat(messages=messages)
+
+    def _maybe_start_plan(
+        self, question: str, session_id: str, user_id: str
+    ) -> Optional[tuple]:
+        """Handle the `/plan [tomorrow|today|YYYY-MM-DD]` bootstrap. Returns (message,) or None."""
+        command = question.strip()
+        lowered = command.lower()
+        if lowered != "/plan" and not lowered.startswith("/plan "):
+            return None
+        if not self._planner_service or not self._planner_service.available:
+            return ("The daily planner isn't available on this server (Google Calendar isn't configured).",)
+
+        arg = command[len("/plan"):].strip()
+        start = self._planner_service.start_checkin(user_id=user_id, plan_date_arg=arg)
+        if start.connected:
+            self._registry.set_pending_prompt(
+                session_id, user_id, "plan_checkin",
+                {"plan_date": start.plan_date.isoformat(), "stage": "awaiting_notes", "gathered_notes": []},
+            )
+        return (start.message,)
+
+    def _maybe_continue_plan(
+        self, question: str, session_id: str, user_id: str
+    ) -> Optional[tuple]:
+        """If a plan check-in is pending for this session, treat the message as the answer.
+
+        Returns (answer, hitl_pending, hitl_id) or None to fall through to the orchestrator.
+        """
+        if not self._planner_service or not self._planner_service.available:
+            return None
+        pending = self._registry.get_pending_prompt(session_id)
+        if not pending or pending.get("prompt_type") != "plan_checkin":
+            return None
+
+        state = pending.get("state") or {}
+        from datetime import date as _date
+        try:
+            plan_date = _date.fromisoformat(state["plan_date"])
+        except (KeyError, ValueError):
+            self._registry.clear_pending_prompt(session_id)
+            return None
+
+        notes = list(state.get("gathered_notes") or [])
+        notes.append(question)
+        self._registry.clear_pending_prompt(session_id)  # single-round check-in
+
+        result = self._planner_service.build_plan(
+            user_id=user_id, session_id=session_id, plan_date=plan_date, notes=notes,
+        )
+        return (result.message, result.hitl_pending, result.hitl_id)
 
     def _answer_direct_command(
         self, question: str, response_style: Optional[str] = None, user_id: Optional[str] = None

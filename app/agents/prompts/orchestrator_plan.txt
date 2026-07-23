@@ -35,6 +35,16 @@ email_agent — reads and triages the user's Gmail inbox
   • Also use for paraphrased requests: "what's new in my inbox?", "any messages?",
     "pull up my mail", "do I have anything urgent?", "unread emails"
 
+planner_agent — plans and edits the user's GOOGLE CALENDAR as time-blocked events
+  • No parameters — pass the user's full request as the task
+  • Use for ANY request to build, change, or remove a day's SCHEDULE / CALENDAR:
+    "plan my day", "plan tomorrow", "schedule gym at 8", "put deep work on my calendar",
+    "move my gym to 7am", "remove/drop/cancel the pickup tickets from my calendar",
+    "clear my calendar for tomorrow"
+  • It proposes calendar changes (add/move/remove time blocks) that the user then approves.
+  • CRITICAL: this writes to the CALENDAR as timed events. It is NOT the same as a reminder.
+    Route calendar/schedule/time-block requests HERE, never to action_agent's add_todo.
+
 conversational — handles direct replies, greetings, acknowledgements, and synthesis
   • No tools — responds using LLM knowledge and injected personal context
   • Use for pure conversation, greetings, general knowledge, acknowledgements

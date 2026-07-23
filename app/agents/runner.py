@@ -8,6 +8,7 @@ from app.agents.action_agent import ActionAgent
 from app.agents.conversational_agent import ConversationalAgent
 from app.agents.email_agent import EmailAgent
 from app.agents.orchestrator import OrchestratorAgent
+from app.agents.planner_agent import PlannerAgent
 from app.agents.rag_agent import RAGAgent
 from app.agents.research_agent import ResearchAgent
 from app.agents.security_agent import SecurityAgent
@@ -86,6 +87,7 @@ class AgentRunner:
         web_search_service: Optional[WebSearchService] = None,
         habit_service: Optional[HabitService] = None,
         email_service: Optional[Any] = None,
+        planner_service: Optional[Any] = None,
         schedule_todo_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         assistant_name: str = "Sage",
         rag_top_k: int = 5,
@@ -104,6 +106,7 @@ class AgentRunner:
         self._web_search_service = web_search_service
         self._habit_service = habit_service
         self._email_service = email_service
+        self._planner_service = planner_service
         self._schedule_todo_callback = schedule_todo_callback
         self._assistant_name = assistant_name
         self._rag_top_k = rag_top_k
@@ -161,6 +164,11 @@ class AgentRunner:
             if self._email_service
             else None
         )
+        self._planner = (
+            PlannerAgent(self._planner_service, assistant_name=self._assistant_name)
+            if self._planner_service is not None
+            else None
+        )
 
     def set_agent_provider(self, agent_name: str, provider: Any, model_spec: str) -> None:
         self._agent_chat_providers[agent_name] = provider
@@ -171,7 +179,7 @@ class AgentRunner:
         return dict(self._agent_model_specs)
 
     _VALID_AGENTS: frozenset = frozenset(
-        {"rag_agent", "research_agent", "action_agent", "conversational", "email_agent"}
+        {"rag_agent", "research_agent", "action_agent", "conversational", "email_agent", "planner_agent"}
     )
     _MAX_STEPS: int = 5          # hard cap on plan steps per turn
     _MAX_HISTORY: int = 20       # max history turns passed to LLM context
@@ -519,6 +527,15 @@ class AgentRunner:
                 user_id=user_id,
                 response_style=response_style,
             )
+        elif step.agent == "planner_agent":
+            result = self._planner.execute(
+                task=step.task,
+                original_question=question,
+                history=history,
+                previous_results=previous_results,
+                user_id=user_id,
+                response_style=response_style,
+            )
         elif step.agent == "rag_agent":
             original_top_k = self._rag._top_k
             if top_k is not None:
@@ -579,4 +596,5 @@ class AgentRunner:
             "action_agent": self._action,
             "conversational": self._conversational,
             "email_agent": self._email,
+            "planner_agent": self._planner,
         }.get(agent_name)

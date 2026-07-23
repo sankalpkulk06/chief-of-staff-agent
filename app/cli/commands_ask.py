@@ -13,6 +13,7 @@ from app.core.ingest_coordinator import IngestCoordinator
 from app.core.qa_service import QAService
 from app.ingestion.ingest_service import IngestService
 from app.config.settings import get_google_client_secrets
+from app.services.calendar_service import CalendarService
 from app.services.email_service import EmailService
 from app.services.news_service import NewsService
 from app.services.url_ingestion_service import URLIngestionService
@@ -132,10 +133,12 @@ def create_chat_service(
     # corrupt the retriever's connection state.
     url_ingestion_service = create_url_ingestion_service(registry, chat_provider) if settings.url_ingestion_enabled else None
 
-    # Gmail service — tokens are stored per-user in Supabase; client secret from env var.
+    # Gmail + Calendar services — tokens are stored per-user; client secret from env var.
     client_secrets = get_google_client_secrets(settings)
     email_service = EmailService(client_secrets=client_secrets) if client_secrets else None
+    calendar_service = CalendarService(client_secrets=client_secrets) if client_secrets else None
     return ChatService(
+        calendar_service=calendar_service,
         retriever=retriever,
         chat_provider=chat_provider,
         registry=registry,

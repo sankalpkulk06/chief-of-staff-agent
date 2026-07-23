@@ -1,0 +1,6 @@
+# Local-only test override: forces SQLite + ChromaDB instead of Supabase.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+services:
+  sage:
+    environment:
+      DATABASE_URL: ""

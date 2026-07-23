@@ -13,6 +13,8 @@ class Settings(BaseModel):
     app_name: str = "Sage — Personal RAG Agent"
     app_env: str = "development"
     assistant_name: str = "Sage"
+    # IANA timezone used when a user has not set their own (via user_settings "timezone").
+    default_timezone: str = "UTC"
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_chat_model: str = "llama3.2:3b"

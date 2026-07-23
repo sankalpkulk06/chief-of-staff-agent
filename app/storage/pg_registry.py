@@ -835,6 +835,135 @@ class PostgresRegistry:
         return row["user_id"] if row else None
 
     # ------------------------------------------------------------------
+    # Sage calendar events (provenance mirror for the daily planner)
+    # ------------------------------------------------------------------
+
+    def insert_calendar_event(self, row: Dict[str, object]) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sage_calendar_events
+                    (id, user_id, google_event_id, calendar_id, plan_date, title,
+                     start_local, end_local, source_kind, source_ref, etag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    row["id"], row["user_id"], row.get("google_event_id"),
+                    row.get("calendar_id", "primary"), row["plan_date"], row["title"],
+                    row.get("start_local"), row.get("end_local"), row.get("source_kind"),
+                    row.get("source_ref"), row.get("etag"), row.get("status", "active"),
+                ),
+            )
+        self._commit()
+
+    def set_calendar_event_google_id(self, event_id: str, google_event_id: str, etag: Optional[str]) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE sage_calendar_events SET google_event_id = %s, etag = %s, updated_at = NOW() WHERE id = %s",
+                (google_event_id, etag, event_id),
+            )
+        self._commit()
+
+    def update_calendar_event(
+        self, event_id: str, *, title: Optional[str] = None,
+        start_local: Optional[str] = None, end_local: Optional[str] = None, etag: Optional[str] = None,
+    ) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                UPDATE sage_calendar_events
+                SET title = COALESCE(%s, title),
+                    start_local = COALESCE(%s, start_local),
+                    end_local = COALESCE(%s, end_local),
+                    etag = COALESCE(%s, etag),
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (title, start_local, end_local, etag, event_id),
+            )
+        self._commit()
+
+    def soft_cancel_calendar_event(self, event_id: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE sage_calendar_events SET status = 'cancelled', cancelled_at = NOW(), "
+                "updated_at = NOW() WHERE id = %s",
+                (event_id,),
+            )
+        self._commit()
+
+    def list_managed_calendar_events(
+        self, user_id: str, plan_date: str, status: str = "active"
+    ) -> List[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sage_calendar_events WHERE user_id = %s AND plan_date = %s AND status = %s "
+                "ORDER BY start_local ASC",
+                (user_id, plan_date, status),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_calendar_event(self, event_id: str) -> Optional[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM sage_calendar_events WHERE id = %s", (event_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Pending prompts (session-keyed multi-turn state)
+    # ------------------------------------------------------------------
+
+    def set_pending_prompt(
+        self, session_id: str, user_id: str, prompt_type: str,
+        state: Dict[str, object], ttl_minutes: int = 30,
+    ) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO pending_prompts (session_id, user_id, prompt_type, state_json, created_at, expires_at)
+                VALUES (%s, %s, %s, %s::jsonb, NOW(), NOW() + make_interval(mins => %s))
+                ON CONFLICT (session_id) DO UPDATE SET
+                    user_id = EXCLUDED.user_id,
+                    prompt_type = EXCLUDED.prompt_type,
+                    state_json = EXCLUDED.state_json,
+                    created_at = NOW(),
+                    expires_at = EXCLUDED.expires_at
+                """,
+                (session_id, user_id, prompt_type, json.dumps(state), ttl_minutes),
+            )
+        self._commit()
+
+    def get_pending_prompt(self, session_id: str) -> Optional[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT * FROM pending_prompts WHERE session_id = %s AND (expires_at IS NULL OR expires_at > NOW())",
+                (session_id,),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        if row is None:
+            return None
+        data = dict(row)
+        raw = data.get("state_json")
+        data["state"] = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+        return data
+
+    def clear_pending_prompt(self, session_id: str) -> None:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM pending_prompts WHERE session_id = %s", (session_id,))
+        self._commit()
+
+    def append_pending_prompt_note(self, session_id: str, note: str) -> None:
+        current = self.get_pending_prompt(session_id)
+        if current is None:
+            return
+        state = current["state"]
+        notes = state.get("gathered_notes") or []
+        notes.append(note)
+        state["gathered_notes"] = notes
+        self.set_pending_prompt(session_id, current["user_id"], current["prompt_type"], state)
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
