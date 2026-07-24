@@ -93,10 +93,58 @@ class EmailAgent:
                 success=False, error=str(exc),
             )
 
+        request = (original_question or task or "").strip()
+        answer = self._answer_from_emails(request, triaged)
+        if answer is None:
+            answer = self._canned_triage(triaged)
+
+        return AgentResult(
+            agent="email_agent",
+            task=task,
+            output=answer,
+            success=True,
+        )
+
+    # ------------------------------------------------------------------
+    # Response synthesis
+    # ------------------------------------------------------------------
+
+    def _answer_from_emails(self, request: str, triaged: list) -> Optional[str]:
+        """Answer the user's actual request using the triaged emails. None on failure."""
+        if not request:
+            return None
+
+        context = "\n".join(
+            f"{i}. [{t.category.upper()}] From: {t.email.sender} | "
+            f"Subject: {t.email.subject} | {t.email.snippet[:200]} "
+            f"(triage note: {t.reason})"
+            for i, t in enumerate(triaged, 1)
+        )
+        prompt = (
+            f"You are {self._assistant_name}, the user's email assistant. "
+            f"The user asked:\n\"{request}\"\n\n"
+            f"Here are their most recent emails (already triaged as ACTION / FYI / IGNORE):\n"
+            f"{context}\n\n"
+            f"Answer the user's request directly and concisely using these emails. "
+            f"If they asked for a summary, summarize; if they asked about specific emails or "
+            f"senders, focus on those. Refer to senders by name, keep it brief, and don't "
+            f"invent details that aren't in the emails."
+        )
+        try:
+            out = self._provider.generate(prompt)
+        except Exception as exc:
+            log.warning("EmailAgent: synthesis failed, falling back to triage list: %s", exc)
+            return None
+        out = (out or "").strip()
+        return out or None
+
+    @staticmethod
+    def _canned_triage(triaged: list) -> str:
+        """Deterministic ACTION/FYI list — fallback when LLM synthesis is unavailable."""
         action_items = [t for t in triaged if t.category == "action"]
         fyi_items    = [t for t in triaged if t.category == "fyi"]
 
-        lines = [f"Checked {len(emails)} emails. Here's what needs your attention:\n"]
+        lines = [f"Checked {len(triaged)} emails. Here's what needs your attention:\n"]
         if action_items:
             lines.append(f"**ACTION NEEDED ({len(action_items)})**")
             for i, item in enumerate(action_items, 1):
@@ -110,9 +158,4 @@ class EmailAgent:
             for i, item in enumerate(fyi_items, 1):
                 lines.append(f"{i}. **{item.email.sender}** — {item.email.subject}\n   → {item.reason}")
 
-        return AgentResult(
-            agent="email_agent",
-            task=task,
-            output="\n".join(lines),
-            success=True,
-        )
+        return "\n".join(lines)

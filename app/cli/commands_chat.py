@@ -22,6 +22,7 @@ from app.cli.commands_ask import (
 from app.cli.commands_ingest import create_ingest_coordinator
 from app.cli.session import resolve_cli_user
 from app.config import get_settings
+from app.config.settings import get_google_client_secrets
 from app.config.validation import CloudConfigurationError, validate_runtime_configuration
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
@@ -31,38 +32,31 @@ from app.providers.factory import create_chat_provider, create_default_chat_prov
 from app.storage.factory import create_registry
 from app.ui.spinner import thinking_spinner
 
-_EMAIL_TRIGGERS = {
-    "check my email", "check email", "any emails", "any email",
-    "show my email", "show email", "read my email", "read email",
-    "email inbox", "check inbox", "what emails", "do i have email",
-    "email triage", "triage email", "triage my email",
-}
-_EMAIL_ACTION_WORDS = {"check", "any", "show", "read", "triage", "fetch", "get", "what", "action"}
+def _handle_email_personal(console: Console, settings, registry, user_id: str) -> None:
+    token_json = registry.get_email_token(user_id, "personal")
+    if not token_json:
+        console.print("\n[yellow]Gmail (personal) isn't connected.[/yellow] Run `sage email connect`.\n")
+        return
+    client_secrets = get_google_client_secrets(settings)
+    if not client_secrets:
+        console.print("\n[red]Gmail OAuth is not configured[/red] (set GOOGLE_CLIENT_SECRETS_JSON).\n")
+        return
 
-
-def _is_email_request(text: str) -> bool:
-    t = text.lower()
-    if t in _EMAIL_TRIGGERS:
-        return True
-    if ("email" in t or "inbox" in t) and any(w in t for w in _EMAIL_ACTION_WORDS):
-        return True
-    return False
-
-
-def _handle_email_personal(console: Console, settings) -> None:
-    paths = settings.resolve_paths()
-    service = EmailService(credentials_dir=paths.credentials_dir, account_type="personal")
+    service = EmailService(client_secrets=client_secrets, account_type="personal")
     chat_provider = create_default_chat_provider(settings)
 
     try:
         with thinking_spinner("fetching personal emails..."):
-            emails = service.fetch_recent(max_results=settings.email_max_results)
-    except FileNotFoundError as exc:
-        console.print(f"\n[red]Setup required:[/red] {exc}\n")
-        return
+            emails, refreshed_token = service.fetch_recent(token_json, max_results=settings.email_max_results)
     except Exception as exc:
         console.print(f"\n[red]Error fetching emails:[/red] {exc}\n")
         return
+
+    if refreshed_token:
+        try:
+            registry.upsert_email_token(user_id, refreshed_token, "personal")
+        except Exception:
+            pass
 
     console.print()
     console.print("[bold cyan]╭─ Personal Email ─╮[/bold cyan]")
@@ -282,41 +276,37 @@ def _handle_configure(args: str, user_id: str, registry, settings, paths) -> str
     if not parts:
         return (
             "Usage:\n"
-            "  /configure email   — connect your Gmail account\n"
-            "  /configure status  — show what's configured for your account"
+            "  /configure email     — how to connect your Gmail account\n"
+            "  /configure calendar  — how to connect your Google Calendar\n"
+            "  /configure status    — show what's connected for your account"
         )
 
     sub = parts[0].lower()
 
     if sub == "status":
-        gmail_configured = (paths.user_credentials_dir(user_id) / "personal_token.json").exists()
+        gmail = registry.has_email_token(user_id, "personal")
+        calendar = registry.has_email_token(user_id, "google_calendar")
         lines = ["Your configuration:"]
-        lines.append(f"  Gmail: {'✓ connected' if gmail_configured else '✗ not connected  →  run /configure email'}")
+        lines.append(f"  Gmail:    {'✓ connected' if gmail else '✗ not connected  →  run `sage email connect`'}")
+        lines.append(f"  Calendar: {'✓ connected' if calendar else '✗ not connected  →  run `sage calendar connect`'}")
         return "\n".join(lines)
 
     if sub == "email":
-        from app.services.email_service import EmailService
-        user_creds_dir = paths.user_credentials_dir(user_id)
-        client_secrets = paths.credentials_dir / "credentials.json"
-        if not client_secrets.exists():
-            return (
-                "Gmail client secret not found.\n"
-                "Download OAuth 2.0 credentials (Desktop app) from Google Cloud Console\n"
-                "and save as data/credentials/credentials.json, then try again."
-            )
-        console.print("\n[yellow]Opening browser for Gmail authorization...[/yellow]")
-        try:
-            svc = EmailService(
-                credentials_dir=paths.credentials_dir,
-                account_type="personal",
-                token_dir=user_creds_dir,
-            )
-            svc._authenticate()
-            return "Gmail connected. Your token is stored privately for your account only."
-        except Exception as exc:
-            return f"Gmail setup failed: {exc}"
+        return (
+            "Connecting Gmail opens a browser, so run it from your terminal (not inside chat):\n"
+            "  sage email connect            # personal Gmail\n"
+            "  sage email connect --work     # work Gmail\n"
+            "Then come back here and ask me to check your email."
+        )
 
-    return f"Unknown configure option '{sub}'. Use: email, status."
+    if sub == "calendar":
+        return (
+            "Connecting Google Calendar opens a browser, so run it from your terminal:\n"
+            "  sage calendar connect\n"
+            "Then ask me to plan your day."
+        )
+
+    return f"Unknown configure option '{sub}'. Use: email, calendar, status."
 
 
 _AGENT_LABELS = {
@@ -565,8 +555,11 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             except Exception as e:
                 console.print(f"\n[red]✗[/red] Error: {e}\n")
             continue
-        if lowered in ("/email", "/email-personal") or _is_email_request(lowered):
-            _handle_email_personal(console, settings)
+        # Explicit command → quick canned triage view. Natural-language email
+        # requests ("summarize my inbox", "anything urgent?") fall through to the
+        # agent, which is instruction-aware and answers the actual question.
+        if lowered in ("/email", "/email-personal"):
+            _handle_email_personal(console, settings, registry, user_id)
             continue
         if lowered.startswith("/news"):
             query = question[len("/news"):].strip()
