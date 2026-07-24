@@ -114,21 +114,24 @@ class EmailAgent:
         if not request:
             return None
 
-        context = "\n".join(
-            f"{i}. [{t.category.upper()}] From: {t.email.sender} | "
-            f"Subject: {t.email.subject} | {t.email.snippet[:200]} "
-            f"(triage note: {t.reason})"
+        context = "\n\n".join(
+            f"{i}. [{t.category.upper()}] From: {t.email.sender} | Subject: {t.email.subject}\n"
+            f"   Content: {(t.email.body or t.email.snippet)[:600]}"
             for i, t in enumerate(triaged, 1)
         )
         prompt = (
             f"You are {self._assistant_name}, the user's email assistant. "
             f"The user asked:\n\"{request}\"\n\n"
-            f"Here are their most recent emails (already triaged as ACTION / FYI / IGNORE):\n"
+            f"Their most recent emails (already triaged as ACTION / FYI / IGNORE), with content:\n"
             f"{context}\n\n"
-            f"Answer the user's request directly and concisely using these emails. "
-            f"If they asked for a summary, summarize; if they asked about specific emails or "
-            f"senders, focus on those. Refer to senders by name, keep it brief, and don't "
-            f"invent details that aren't in the emails."
+            "Write a clear, well-formatted Markdown reply that DIRECTLY answers the request. Rules:\n"
+            "- When summarizing, summarize what each email actually SAYS or WANTS (from its content) "
+            "— never just restate the subject, and never say 'this email likely contains'.\n"
+            "- Group with short emoji headers when it helps (🔴 Action needed, 📄 FYI). For each email, "
+            "one tight line: **Sender** — the gist / what to do.\n"
+            "- If the user named specific emails or senders, focus only on those.\n"
+            "- Be specific and concise. No filler preamble like 'Here's a look at your inbox'. "
+            "Don't invent details that aren't in the content."
         )
         try:
             out = self._provider.generate(prompt)

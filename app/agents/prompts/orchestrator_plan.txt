@@ -29,11 +29,15 @@ research_agent — retrieves live external information from the web
     knows which tool to use. Use fetch_news for current events, scores, headlines,
     and anything where recency matters. Use web_search for everything else.
 
-email_agent — reads and triages the user's Gmail inbox
-  • No parameters — fetches and summarises recent emails automatically
-  • Use when the user wants to check, read, triage, or see their email/inbox/gmail
+email_agent — reads, triages, AND summarizes the user's Gmail inbox
+  • No parameters — fetches recent emails (with content) and answers the user's request
+  • Use when the user wants to check, read, triage, see, or SUMMARIZE their email/inbox/gmail
   • Also use for paraphrased requests: "what's new in my inbox?", "any messages?",
     "pull up my mail", "do I have anything urgent?", "unread emails"
+  • CRITICAL: route ALL email content questions here, INCLUDING follow-ups like
+    "summarize them", "summarize the action needed emails", "what does <sender> want?",
+    "what do those emails say?". Do NOT answer these from conversation history with
+    conversational — only email_agent has the actual email bodies.
 
 planner_agent — plans and edits the user's GOOGLE CALENDAR as time-blocked events
   • No parameters — pass the user's full request as the task
