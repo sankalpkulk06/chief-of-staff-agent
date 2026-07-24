@@ -15,6 +15,7 @@ from app.cli.commands_connect import (
     email_status_command,
 )
 from app.cli.commands_email import email_personal_command, email_work_command
+from app.cli.commands_profile import profile_delete_command, profile_show_command
 from app.cli.commands_sessions import (
     sessions_delete_command,
     sessions_list_command,
@@ -210,6 +211,22 @@ def email_disconnect(
 ) -> None:
     """Remove the stored Gmail token."""
     email_disconnect_command(work=work)
+
+
+profile_app = typer.Typer(no_args_is_help=True, help="View or delete your account.")
+cli.add_typer(profile_app, name="profile")
+
+
+@profile_app.command("show")
+def profile_show() -> None:
+    """Show your account summary."""
+    profile_show_command()
+
+
+@profile_app.command("delete")
+def profile_delete() -> None:
+    """Permanently delete your account and all its data."""
+    profile_delete_command()
 
 
 sessions_app = typer.Typer(no_args_is_help=True, help="List, rename, delete, and resume chat sessions.")
