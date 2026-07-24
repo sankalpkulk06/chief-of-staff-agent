@@ -61,6 +61,32 @@ def now_local(tz: ZoneInfo) -> datetime:
     return datetime.now(tz)
 
 
+def describe_now(registry: Any = None, user_id: str = "", default: str = "UTC") -> str:
+    """Human-readable current date, day, and time in the user's timezone.
+
+    Single source of truth for "what time/date is it" — used both by the
+    ``get_current_datetime`` tool and as ambient context injected into agent
+    prompts. Never raises: falls back to the server's local clock if the
+    user's timezone can't be resolved.
+
+    Example: ``"Thursday, July 23, 2026 at 10:02 PM PDT (America/Los_Angeles)"``.
+    """
+    tz: Optional[ZoneInfo] = None
+    if registry is not None:
+        tz = resolve_tz(registry, user_id or "", default=default)
+    elif is_valid_timezone(default):
+        tz = ZoneInfo(default)
+
+    now = datetime.now(tz) if tz is not None else datetime.now()
+    stamp = now.strftime("%A, %B %-d, %Y at %-I:%M %p")
+    zone_abbrev = now.strftime("%Z")
+    if zone_abbrev:
+        stamp += f" {zone_abbrev}"
+    if tz is not None:
+        stamp += f" ({tz.key})"
+    return stamp
+
+
 def to_rfc3339(dt: datetime, tz: Optional[ZoneInfo] = None) -> str:
     """Serialize a datetime to an RFC3339 string with offset.
 

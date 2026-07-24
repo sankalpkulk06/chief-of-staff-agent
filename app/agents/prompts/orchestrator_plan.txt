@@ -14,6 +14,7 @@ action_agent — manages ALL personal user data (read AND write)
   • add_habit(name, reminder_time) — register a new tracked habit
   • log_habit(name, status) — record that a habit was completed or skipped today
   • get_habits() — retrieve all habits and their weekly summary
+  • get_current_datetime() — the current date, day of week, and time in the user's timezone; use for "what time is it", "what's today's date", "what day is it"
 
 rag_agent — searches ONLY the user's own saved documents and uploaded files
   • search_documents(query) — semantic search over personal notes, files, and articles
@@ -213,6 +214,10 @@ EXAMPLES
 
 "what is the capital of France?" →
 [{"agent":"conversational","task":"answer directly: the capital of France is Paris"}]
+
+"what time is it?" / "what's today's date?" / "what day is it?" →
+[{"agent":"action_agent","task":"get_current_datetime: return the current date, day, and time","mode":"read","depends_on":[]},
+ {"agent":"conversational","task":"tell the user the current date and time clearly","mode":"synthesize","depends_on":[]}]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT

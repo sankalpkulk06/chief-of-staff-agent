@@ -8,6 +8,7 @@ Possible actions:
 - get_habits: retrieve habit summary. Params: none
 - remember_fact: save a personal or work fact. Params: fact (str), category ("personal"|"work")
 - list_facts: list stored facts. Params: category ("personal"|"work"|"all")
+- get_current_datetime: return the current date, day of week, and time. Params: none. Use for "what time is it", "what's today's date", "what day is it".
 
 {habits_context}
 

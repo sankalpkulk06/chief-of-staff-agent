@@ -7,6 +7,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from app.agents.base import AgentResult
 from app.agents.prompts import load
+from app.config.settings import get_settings
+from app.core import timezone_util as tzu
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
@@ -157,6 +159,7 @@ class ActionAgent:
             "get_habits": lambda p, t: self._get_habits(p, t, habit_svc),
             "remember_fact": lambda p, t: self._remember_fact(p, t, fact_svc),
             "list_facts": lambda p, t: self._list_facts(p, t, fact_svc),
+            "get_current_datetime": lambda p, t: self._get_current_datetime(p, t, user_id=user_id),
         }
         handler = handlers.get(action)
         if not handler:
@@ -346,3 +349,19 @@ class ActionAgent:
         for f in facts[:20]:
             lines.append(f"• {f.content} ({f.category})")
         return AgentResult(agent="action_agent", task=task, output="\n".join(lines), success=True)
+
+    def _get_current_datetime(self, params: dict, task: str, user_id: Optional[str] = None) -> AgentResult:
+        """Return the current date and time in the user's timezone.
+
+        Read-only, no HITL. The clock is read here in Python — the LLM only
+        picks the action — so the answer is always factual, never hallucinated.
+        """
+        stamp = tzu.describe_now(
+            self._registry, user_id or "", default=get_settings().default_timezone
+        )
+        return AgentResult(
+            agent="action_agent",
+            task=task,
+            output=f"The current date and time is {stamp}.",
+            success=True,
+        )

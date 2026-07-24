@@ -3,6 +3,8 @@ from typing import Any, List, Optional
 
 from app.agents.base import AgentResult
 from app.agents.prompts import load
+from app.config.settings import get_settings
+from app.core import timezone_util as tzu
 from app.core.fact_service import FactService
 from app.providers.ollama_chat import OllamaChatProvider
 from app.storage.sqlite_registry import SQLiteRegistry
@@ -58,9 +60,14 @@ class ConversationalAgent:
             if not agent_results:
                 agent_results = "None — you are the only agent responding."
 
+            current_datetime = tzu.describe_now(
+                self._registry, user_id or "", default=get_settings().default_timezone
+            )
+
             system = (
                 _SYSTEM_BASE
                 .replace("{assistant_name}", self._assistant_name)
+                .replace("{current_datetime}", current_datetime)
                 .replace("{user_facts}", user_facts)
                 .replace("{agent_results}", agent_results)
             )
