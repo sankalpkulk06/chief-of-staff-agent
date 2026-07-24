@@ -27,7 +27,7 @@ the CLI, and the plan to close the rest.
 | 2 | P1 | **Gmail OAuth connect** (`sage email connect`) | ✅ Done | Localhost loopback OAuth: `sage email connect [--work]` / `status` / `disconnect`. Shared helper `app/cli/oauth_flow.py`. |
 | 3 | P2 | **Calendar/Tasks OAuth connect** | ✅ Done | `sage calendar connect` / `status` / `disconnect` on the same shared loopback helper (`account_type="google_calendar"`). |
 | 9 | P3 | **CLI HITL resolver** (approve/deny) | ✅ Done | `sage chat` prompts `[y/n]` on any approval request and runs it via the shared `execute_approved_by_type` dispatch (same as web/WhatsApp). |
-| 6 | P4 | **Session CRUD** (list/rename/delete) | 🔜 Planned | Local DB ops; quality-of-life. Today the CLI only supports `--resume`. |
+| 6 | P4 | **Session CRUD** (list/rename/delete) | ✅ Done | `sage sessions list / rename / delete / resume` (unique-prefix ids, ownership-checked, `[y/n]` confirm on delete). |
 | 5 | P5 | **Profile** (get/delete) | 🔜 Planned | Trivial wrap; depends on #1 (done). |
 | 4 | P6 | **Analytics / usage** | ✅ Done | Unified windowed metrics engine → dedicated web Analytics page (SVG charts) + `sage stats` (rich terminal charts) + LLM insights digest. Habits, todos, usage, feature/agent usage. |
 | 8 | — | **Web document upload** | ✅ N/A (already covered) | `sage ingest` is the CLI equivalent — no real gap. |

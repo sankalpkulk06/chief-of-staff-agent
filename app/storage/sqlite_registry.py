@@ -458,6 +458,8 @@ class SQLiteRegistry:
     def delete_session(self, session_id: str) -> None:
         self._connection.execute("DELETE FROM chat_turns WHERE session_id = ?", (session_id,))
         self._connection.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
+        # Clear any named alias (e.g. cli:<user>:default) so it isn't left dangling.
+        self._connection.execute("DELETE FROM named_sessions WHERE session_id = ?", (session_id,))
         self._connection.commit()
 
     def get_or_create_named_session(self, name: str, user_id: str = "") -> str:

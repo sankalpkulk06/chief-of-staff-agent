@@ -330,6 +330,8 @@ class PostgresRegistry:
         with self._cursor() as cur:
             cur.execute("DELETE FROM chat_turns WHERE session_id = %s", (session_id,))
             cur.execute("DELETE FROM chat_sessions WHERE session_id = %s", (session_id,))
+            # Clear any named alias (e.g. cli:<user>:default) so it isn't left dangling.
+            cur.execute("DELETE FROM named_sessions WHERE session_id = %s", (session_id,))
         self._commit()
 
     def get_or_create_named_session(self, name: str, user_id: str = "") -> str:

@@ -15,6 +15,12 @@ from app.cli.commands_connect import (
     email_status_command,
 )
 from app.cli.commands_email import email_personal_command, email_work_command
+from app.cli.commands_sessions import (
+    sessions_delete_command,
+    sessions_list_command,
+    sessions_rename_command,
+    sessions_resume_command,
+)
 from app.cli.commands_stats import stats_command
 from app.cli.oauth_flow import OAUTH_LOOPBACK_PORT
 from app.config import get_settings
@@ -204,6 +210,41 @@ def email_disconnect(
 ) -> None:
     """Remove the stored Gmail token."""
     email_disconnect_command(work=work)
+
+
+sessions_app = typer.Typer(no_args_is_help=True, help="List, rename, delete, and resume chat sessions.")
+cli.add_typer(sessions_app, name="sessions")
+
+
+@sessions_app.command("list")
+def sessions_list() -> None:
+    """List your chat sessions."""
+    sessions_list_command()
+
+
+@sessions_app.command("rename")
+def sessions_rename(
+    session: str = typer.Argument(..., help="Session id or unique prefix (see `sage sessions list`)."),
+    title: str = typer.Argument(..., help="New title."),
+) -> None:
+    """Rename a chat session."""
+    sessions_rename_command(session, title)
+
+
+@sessions_app.command("delete")
+def sessions_delete(
+    session: str = typer.Argument(..., help="Session id or unique prefix."),
+) -> None:
+    """Delete a chat session and its messages."""
+    sessions_delete_command(session)
+
+
+@sessions_app.command("resume")
+def sessions_resume(
+    session: str = typer.Argument(..., help="Session id or unique prefix."),
+) -> None:
+    """Resume a chat session."""
+    sessions_resume_command(session)
 
 
 calendar_app = typer.Typer(no_args_is_help=True, help="Connect and manage Google Calendar + Tasks.")
