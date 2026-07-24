@@ -26,7 +26,7 @@ the CLI, and the plan to close the rest.
 | 1 | P0 | **Multi-user auth / CLI identity** | ✅ Done | `sage login`/`logout`/`whoami`, persisted `data/session.json` (mode 600, no password on disk), auto local-user mode when auth is disabled, shared `resolve_cli_user`. Commits `f357bda`, `80610fc`. |
 | 2 | P1 | **Gmail OAuth connect** (`sage email connect`) | ✅ Done | Localhost loopback OAuth: `sage email connect [--work]` / `status` / `disconnect`. Shared helper `app/cli/oauth_flow.py`. |
 | 3 | P2 | **Calendar/Tasks OAuth connect** | ✅ Done | `sage calendar connect` / `status` / `disconnect` on the same shared loopback helper (`account_type="google_calendar"`). |
-| 9 | P3 | **CLI HITL resolver** (approve/deny) | 🔜 Planned | Pure local op; no OAuth/push dependency. Independent of #2/#3. |
+| 9 | P3 | **CLI HITL resolver** (approve/deny) | ✅ Done | `sage chat` prompts `[y/n]` on any approval request and runs it via the shared `execute_approved_by_type` dispatch (same as web/WhatsApp). |
 | 6 | P4 | **Session CRUD** (list/rename/delete) | 🔜 Planned | Local DB ops; quality-of-life. Today the CLI only supports `--resume`. |
 | 5 | P5 | **Profile** (get/delete) | 🔜 Planned | Trivial wrap; depends on #1 (done). |
 | 4 | P6 | **Analytics / usage** | 🔜 Planned | Read-only `sage stats`; low urgency. |

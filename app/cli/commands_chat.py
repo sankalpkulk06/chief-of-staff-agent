@@ -1,6 +1,6 @@
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -11,6 +11,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 from app.cli.commands_ask import (
@@ -31,6 +32,72 @@ from app.providers.ollama_embeddings import OllamaProviderError
 from app.providers.factory import create_chat_provider, create_default_chat_provider, ModelSpec
 from app.storage.factory import create_registry
 from app.ui.spinner import thinking_spinner
+
+def _print_response(console: Console, text: str) -> None:
+    """Render the assistant reply as Markdown (bold, bullets, headers); plain-text fallback."""
+    try:
+        console.print(Markdown(text or ""))
+    except Exception:
+        console.print(text or "", markup=False)
+
+
+def _prompt_yes_no(console: Console, question: str = "Approve?") -> bool:
+    """Modal [y/n] prompt. EOF/Ctrl-C is treated as 'no' (safe default)."""
+    while True:
+        try:
+            ans = input(f"{question} [y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("[yellow]Treating as no.[/yellow]")
+            return False
+        if ans in ("y", "yes"):
+            return True
+        if ans in ("n", "no"):
+            return False
+        console.print("[yellow]Please answer y or n.[/yellow]")
+
+
+def _resolve_hitl(registry, hitl_id: str, user_id: str, approved: bool) -> str:
+    """Approve/reject a pending HITL request from the CLI, mirroring app/api/hitl.py.
+
+    Reuses the shared executor (execute_approved_by_type) so the CLI, web, and
+    WhatsApp resolve paths run identical action logic.
+    """
+    from app.agents.hitl_dispatch import execute_approved_by_type
+
+    row = registry.get_hitl_request(hitl_id)
+    if not row or row.get("user_id") != user_id:
+        return "That approval request is no longer available."
+    if row.get("status") != "pending":
+        return "That request was already resolved."
+
+    expires_at = row.get("expires_at")
+    if expires_at and datetime.now(timezone.utc) > expires_at:
+        registry.resolve_hitl_request(hitl_id, "expired")
+        return "That request expired — no action was taken."
+
+    context = (row.get("action_payload") or {}).get("__hitl_context") or {}
+    continuation = context.get("continuation_output")
+
+    if not approved:
+        registry.resolve_hitl_request(hitl_id, "rejected")
+        return (
+            f"Okay, cancelled — no action taken.\n\n{continuation}"
+            if continuation else "Okay, cancelled — no action taken."
+        )
+
+    try:
+        result = execute_approved_by_type(
+            row, user_id, registry=registry, schedule_todo_callback=None
+        )
+    except Exception as exc:
+        return f"Failed to run the action: {exc}"
+    registry.resolve_hitl_request(hitl_id, "approved")
+
+    reply = result.output or ""
+    if continuation:
+        reply = f"{reply}\n\n{continuation}" if reply else continuation
+    return reply or "Done."
+
 
 def _handle_email_personal(console: Console, settings, registry, user_id: str) -> None:
     token_json = registry.get_email_token(user_id, "personal")
@@ -754,8 +821,19 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
         console.print()
         console.print("[bold cyan]╭─ Sage ─╮[/bold cyan]")
         console.print()
-        console.print(result.answer)
+        _print_response(console, result.answer)
         console.print()
+
+        # Human-in-the-loop: the agent is asking for approval before a write action.
+        if result.hitl_pending and result.hitl_id:
+            approved = _prompt_yes_no(console)
+            reply = _resolve_hitl(registry, result.hitl_id, user_id, approved)
+            console.print()
+            console.print("[bold cyan]╭─ Sage ─╮[/bold cyan]")
+            console.print()
+            _print_response(console, reply)
+            console.print()
+            continue
 
         if result.web_sources or result.news_sources or (result.sources_used and result.sources):
             console.print("[bold cyan]─ Sources ─[/bold cyan]")
