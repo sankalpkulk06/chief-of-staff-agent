@@ -1,6 +1,6 @@
 # CLI OAuth Connect — `sage email connect` & `sage calendar connect`
 
-_Roadmap: P1 (#2) + P2 (#3) in `docs/cli-feature-parity.md`. Status: planned, not started._
+_Roadmap: P1 (#2) + P2 (#3) in `docs/cli-feature-parity.md`. Status: ✅ implemented — see `app/cli/oauth_flow.py`, `app/cli/commands_connect.py`, `tests/cli/test_oauth_flow.py`._
 
 ## Context
 

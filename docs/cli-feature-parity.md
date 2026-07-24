@@ -24,8 +24,8 @@ the CLI, and the plan to close the rest.
 | # | Priority | Feature (Web/API-only gap) | Status | Notes |
 |---|----------|----------------------------|--------|-------|
 | 1 | P0 | **Multi-user auth / CLI identity** | ✅ Done | `sage login`/`logout`/`whoami`, persisted `data/session.json` (mode 600, no password on disk), auto local-user mode when auth is disabled, shared `resolve_cli_user`. Commits `f357bda`, `80610fc`. |
-| 2 | P1 | **Gmail OAuth connect** (`sage email connect`) | 🔜 Planned | Seam ready — `email-personal` already prints "run `sage email connect`". Needs the OAuth loopback flow → `registry.upsert_email_token(user_id, …)`. |
-| 3 | P2 | **Calendar/Tasks OAuth connect** | 🔜 Planned | Same loopback pattern as #2; shares the helper. Unblocks the CLI daily-planner end-to-end. |
+| 2 | P1 | **Gmail OAuth connect** (`sage email connect`) | ✅ Done | Localhost loopback OAuth: `sage email connect [--work]` / `status` / `disconnect`. Shared helper `app/cli/oauth_flow.py`. |
+| 3 | P2 | **Calendar/Tasks OAuth connect** | ✅ Done | `sage calendar connect` / `status` / `disconnect` on the same shared loopback helper (`account_type="google_calendar"`). |
 | 9 | P3 | **CLI HITL resolver** (approve/deny) | 🔜 Planned | Pure local op; no OAuth/push dependency. Independent of #2/#3. |
 | 6 | P4 | **Session CRUD** (list/rename/delete) | 🔜 Planned | Local DB ops; quality-of-life. Today the CLI only supports `--resume`. |
 | 5 | P5 | **Profile** (get/delete) | 🔜 Planned | Trivial wrap; depends on #1 (done). |
@@ -70,14 +70,20 @@ for per-user OAuth tokens in #2/#3.
 temp `DATA_DIR`) smoke test covering all non-interactive P0 checks (12/12 passing). The
 interactive login menu needs a real TTY, so it's exercised manually.
 
-## Next up — P1 (`sage email connect`)
+## P1 + P2 — what shipped (`sage email connect` / `sage calendar connect`)
 
-Both credentials-obtaining helpers already exist and don't need the web server:
-`EmailService.get_oauth_url()` and `.exchange_code()` (`app/services/email_service.py`). The
-CLI flow: print/open the consent URL → capture the redirect via a `localhost` loopback (or
-paste-the-code fallback) → `exchange_code()` → `registry.upsert_email_token(user_id, …)` using
-the `user_id` P0 now provides. One config wrinkle: the current Google client is a **"web"**
-type, so a `localhost` redirect URI must be registered (or add a **"desktop"** client type).
+Localhost loopback OAuth, no web server. `app/cli/oauth_flow.py:run_loopback_oauth()` is a
+shared helper (duck-typed over `EmailService`/`CalendarService`): opens the consent URL,
+captures the redirect on a one-shot `http://localhost:8765/callback` server, calls
+`exchange_code()`, and stores the token via `upsert_email_token(user_id, …, account_type)`.
+Commands in `app/cli/commands_connect.py`, wired as Typer sub-apps in `app/cli/app.py`.
+
+**One-time prerequisite:** add `http://localhost:8765/callback` to the OAuth client's
+Authorized redirect URIs in the Google Cloud Console (the same "web" client in
+`GOOGLE_CLIENT_SECRETS_JSON`; web clients allow localhost — no "desktop" client needed).
+
+**Tests:** `tests/cli/test_oauth_flow.py` drives the loopback with a stub service (happy path,
+user-denied, state-mismatch) — no real Google round-trip.
 
 ## CLI command reference (current)
 
@@ -88,6 +94,8 @@ type, so a `localhost` redirect URI must be registered (or add a **"desktop"** c
 | `sage ask "<q>"` | — | One-shot RAG Q&A (RAG-only, no tools). |
 | `sage ingest -p <path>` | — | Ingest a file/dir into the RAG store. |
 | `sage sources` | — | List ingested sources. |
-| `sage email-personal` / `email-work` | ✅ identity | Fetch + AI-triage Gmail (needs a connected token — see #2). |
+| `sage email connect [--work]` / `status` / `disconnect` | ✅ identity | Connect/manage Gmail via loopback OAuth (P1). |
+| `sage calendar connect` / `status` / `disconnect` | ✅ identity | Connect/manage Google Calendar + Tasks via loopback OAuth (P2). |
+| `sage email-personal` / `email-work` | ✅ identity | Fetch + AI-triage Gmail (needs `email connect` first). |
 | `sage config` | — | Show resolved settings. |
 | `sage serve [--port]` | — | Boot the FastAPI server (web UI + API + WhatsApp webhook). |

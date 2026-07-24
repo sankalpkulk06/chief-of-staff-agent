@@ -35,10 +35,8 @@ def _run_email_command(
 
     token_json = registry.get_email_token(user_id, account_type)
     if not token_json:
-        typer.echo(
-            f"Gmail ({account_type}) isn't connected. "
-            "Run `sage email connect` (coming soon) or connect via the web UI."
-        )
+        connect_cmd = "sage email connect --work" if account_type == "work" else "sage email connect"
+        typer.echo(f"Gmail ({account_type}) isn't connected. Run `{connect_cmd}`.")
         raise typer.Exit(code=1)
 
     client_secrets = get_google_client_secrets(settings)

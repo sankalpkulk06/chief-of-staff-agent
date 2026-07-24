@@ -6,7 +6,16 @@ import typer
 from app import __version__
 from app.cli.commands_auth import login_command, logout_command, whoami_command
 from app.cli.commands_chat import chat_command
+from app.cli.commands_connect import (
+    calendar_connect_command,
+    calendar_disconnect_command,
+    calendar_status_command,
+    email_connect_command,
+    email_disconnect_command,
+    email_status_command,
+)
 from app.cli.commands_email import email_personal_command, email_work_command
+from app.cli.oauth_flow import OAUTH_LOOPBACK_PORT
 from app.config import get_settings
 from app.cli.commands_ask import ask_command
 from app.cli.commands_ingest import ingest_command
@@ -153,3 +162,60 @@ def email_work(
     no_triage: bool = typer.Option(False, "--no-triage", help="Skip AI triage, list emails only."),
 ) -> None:
     email_work_command(max_results=max_results, no_triage=no_triage)
+
+
+# ---------------------------------------------------------------------------
+# Google account connects (loopback OAuth)
+# ---------------------------------------------------------------------------
+
+email_app = typer.Typer(no_args_is_help=True, help="Connect and manage Gmail.")
+cli.add_typer(email_app, name="email")
+
+
+@email_app.command("connect")
+def email_connect(
+    work: bool = typer.Option(False, "--work", help="Connect the work Gmail account instead of personal."),
+    port: int = typer.Option(OAUTH_LOOPBACK_PORT, "--port", help="Localhost port for the OAuth redirect."),
+) -> None:
+    """Connect a Gmail account via browser OAuth."""
+    email_connect_command(work=work, port=port)
+
+
+@email_app.command("status")
+def email_status(
+    work: bool = typer.Option(False, "--work", help="Check the work account instead of personal."),
+) -> None:
+    """Show whether Gmail is connected."""
+    email_status_command(work=work)
+
+
+@email_app.command("disconnect")
+def email_disconnect(
+    work: bool = typer.Option(False, "--work", help="Disconnect the work account instead of personal."),
+) -> None:
+    """Remove the stored Gmail token."""
+    email_disconnect_command(work=work)
+
+
+calendar_app = typer.Typer(no_args_is_help=True, help="Connect and manage Google Calendar + Tasks.")
+cli.add_typer(calendar_app, name="calendar")
+
+
+@calendar_app.command("connect")
+def calendar_connect(
+    port: int = typer.Option(OAUTH_LOOPBACK_PORT, "--port", help="Localhost port for the OAuth redirect."),
+) -> None:
+    """Connect Google Calendar + Tasks via browser OAuth."""
+    calendar_connect_command(port=port)
+
+
+@calendar_app.command("status")
+def calendar_status() -> None:
+    """Show whether Google Calendar is connected."""
+    calendar_status_command()
+
+
+@calendar_app.command("disconnect")
+def calendar_disconnect() -> None:
+    """Remove the stored Google Calendar token."""
+    calendar_disconnect_command()
