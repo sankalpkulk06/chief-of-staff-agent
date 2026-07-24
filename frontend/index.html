@@ -105,9 +105,15 @@
   body[data-screen="login"] #chat,
   body[data-screen="login"] #profile { opacity: 0; transform: translateY(8px); pointer-events: none; }
   body[data-screen="chat"]  #login,
-  body[data-screen="profile"] #login { opacity: 0; transform: scale(0.985); filter: blur(6px); pointer-events: none; }
+  body[data-screen="profile"] #login,
+  body[data-screen="analytics"] #login { opacity: 0; transform: scale(0.985); filter: blur(6px); pointer-events: none; }
   body[data-screen="chat"]  #profile { opacity: 0; transform: translateY(8px); pointer-events: none; }
   body[data-screen="profile"] #chat { opacity: 0; transform: scale(0.99); pointer-events: none; }
+  body[data-screen="login"] #analytics,
+  body[data-screen="chat"]  #analytics,
+  body[data-screen="profile"] #analytics { opacity: 0; transform: translateY(8px); pointer-events: none; }
+  body[data-screen="analytics"] #chat,
+  body[data-screen="analytics"] #profile { opacity: 0; transform: scale(0.99); pointer-events: none; }
 
   /* ===================================================================
      LOGIN
@@ -693,6 +699,65 @@
     transition: border-color 140ms;
   }
   .topbar-avatar:hover { border-color: var(--accent-line); }
+
+  .topbar-analytics {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: transparent; border: 1px solid var(--line-strong);
+    display: grid; place-items: center; color: var(--text-3);
+    cursor: pointer; transition: border-color 140ms, color 140ms;
+  }
+  .topbar-analytics:hover { border-color: var(--accent-line); color: var(--text-1); }
+
+  /* ---------- Analytics page ---------- */
+  :root {
+    --an-heat0: var(--bg-3);
+    --an-heat1: rgba(232,165,68,0.22);
+    --an-heat2: rgba(232,165,68,0.45);
+    --an-heat3: rgba(232,165,68,0.70);
+    --an-heat4: var(--accent);
+  }
+  #analytics { overflow-y: auto; background: var(--bg-1); }
+  .an-shell { max-width: 1080px; margin: 0 auto; }
+  .an-seg { display: inline-flex; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+  .an-seg button { border: 0; background: transparent; color: var(--text-3); font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 7px; cursor: pointer; }
+  .an-seg button.on { background: var(--accent); color: #10140f; font-weight: 600; }
+  .an-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px; }
+  @media (max-width: 720px) { .an-kpis { grid-template-columns: repeat(2, 1fr); } }
+  .an-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+  .an-col5 { grid-column: span 5; } .an-col7 { grid-column: span 7; } .an-col12 { grid-column: span 12; }
+  @media (max-width: 820px) { .an-col5, .an-col7 { grid-column: span 12; } }
+  .an-panel { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .an-kpi .an-lab { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+  .an-kpi .an-big { font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; color: var(--text-1); }
+  .an-kpi .an-unit { font-size: 15px; color: var(--text-3); margin-left: 2px; }
+  .an-kpi .an-spark { height: 38px; margin: 6px 0 2px; }
+  .an-kpi .an-spark svg { width: 100%; height: 38px; }
+  .an-kpi .an-foot { font-size: 12px; color: var(--text-3); }
+  .an-ptitle { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .an-ptitle h2 { font-size: 12px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); margin: 0; }
+  .an-meta { font-size: 12px; color: var(--text-4); }
+  .an-hrow { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .an-hrow:first-child { border-top: 0; }
+  .an-hname { font-size: 14px; color: var(--text-1); }
+  .an-track { height: 8px; background: var(--bg-3); border-radius: 6px; overflow: hidden; }
+  .an-fill { height: 100%; background: var(--accent); border-radius: 6px; }
+  .an-hpct { font-family: var(--mono); font-size: 12px; color: var(--text-3); white-space: nowrap; }
+  .an-gaugewrap { display: flex; align-items: flex-start; gap: 16px; }
+  .an-flex1 { flex: 1; }
+  .an-fbar { display: grid; grid-template-columns: 66px 1fr 40px; align-items: center; gap: 10px; padding: 4px 0; }
+  .an-fbar .l { font-size: 13px; color: var(--text-1); }
+  .an-fbar .t { height: 8px; background: var(--bg-3); border-radius: 5px; overflow: hidden; }
+  .an-fbar .t > span { display: block; height: 100%; border-radius: 5px; }
+  .an-fbar .v { font-family: var(--mono); font-size: 12px; color: var(--text-3); text-align: right; }
+  .an-tstats { display: flex; flex-direction: column; gap: 10px; }
+  .an-tstats > div { display: flex; flex-direction: column; }
+  .an-tstats b { font-size: 20px; color: var(--text-1); } .an-tstats b.crit { color: #e0645a; }
+  .an-tstats span { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+  .an-thr { margin-top: 14px; }
+  .an-hmwrap { overflow-x: auto; }
+  .an-insights { background: linear-gradient(180deg, var(--bg-2), var(--bg-1)); }
+  .an-insight { font-size: 15px; line-height: 1.6; color: var(--text-1); margin: 0; min-height: 22px; }
+  .an-empty { font-size: 13px; color: var(--text-4); padding: 8px 0; }
 
   /* ---------- Thread ---------- */
   .thread {
@@ -2274,6 +2339,11 @@
             <span class="label">Commands</span>
             <span class="keys"><span class="key">⌘</span><span class="key">K</span></span>
           </button>
+          <button class="topbar-analytics" id="topAnalytics" title="Analytics" aria-label="Analytics">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="6" y1="20" x2="6" y2="13"/><line x1="12" y1="20" x2="12" y2="8"/><line x1="18" y1="20" x2="18" y2="4"/>
+            </svg>
+          </button>
           <button class="topbar-avatar" id="topAvatar" title="Profile" aria-label="Profile">?</button>
         </div>
       </header>
@@ -2493,34 +2563,7 @@
         </div>
       </div>
 
-      <!-- Activity & topics -->
-      <div class="section">
-        <div class="section-head">
-          <h2><span class="glyph">▍</span>Activity</h2>
-          <span class="meta">past 14 days · most active 09:00–11:00</span>
-        </div>
-        <div class="activity-grid">
-          <div class="panel">
-            <div class="panel-title">Conversation heatmap <span class="hint">turns per hour</span></div>
-            <div class="heatmap" id="heatmap"></div>
-            <div class="heatmap-legend">
-              less
-              <span class="scale">
-                <span style="background:var(--bg-3)"></span>
-                <span style="background:rgba(232,165,68,0.18)"></span>
-                <span style="background:rgba(232,165,68,0.36)"></span>
-                <span style="background:rgba(232,165,68,0.6)"></span>
-                <span style="background:var(--accent)"></span>
-              </span>
-              more
-            </div>
-          </div>
-          <div class="panel">
-            <div class="panel-title">Top topics <span class="hint">last 30 days</span></div>
-            <div class="topic-list" id="topicList"></div>
-          </div>
-        </div>
-      </div>
+      <!-- Analytics moved to its own screen (#analytics) — see the chart icon in the top bar. -->
 
       <!-- Knowledge base — populated by renderSources() -->
       <div class="section">
@@ -2576,6 +2619,48 @@
         </div>
       </div>
 
+    </div>
+  </section>
+
+  <!-- ============ ANALYTICS ============ -->
+  <section class="screen" id="analytics" hidden>
+    <header class="profile-topbar">
+      <div class="left">
+        <button class="btn-sm" id="anBack" title="Back to chat">← Chat</button>
+        <span class="crumb"><span class="glyph">~</span><span>sage</span><span class="sep">/</span><span class="here">analytics</span></span>
+      </div>
+      <div class="right">
+        <div class="an-seg" id="anWindow" role="group" aria-label="Time window">
+          <button type="button" data-w="7">7d</button>
+          <button type="button" data-w="30" class="on">30d</button>
+          <button type="button" data-w="90">90d</button>
+        </div>
+      </div>
+    </header>
+    <div class="profile-shell an-shell">
+      <div class="an-kpis" id="anKpis"></div>
+      <div class="an-grid">
+        <div class="an-panel an-col7">
+          <div class="an-ptitle"><h2>Habits</h2><span class="an-meta">consistency</span></div>
+          <div id="anHabits"></div>
+        </div>
+        <div class="an-panel an-col5">
+          <div class="an-ptitle"><h2>Feature usage</h2><span class="an-meta">which agents you use</span></div>
+          <div class="an-gaugewrap" id="anFeatures"></div>
+        </div>
+        <div class="an-panel an-col5">
+          <div class="an-ptitle"><h2>Productivity</h2><span class="an-meta">todos</span></div>
+          <div id="anTodos"></div>
+        </div>
+        <div class="an-panel an-col7">
+          <div class="an-ptitle"><h2>Activity</h2><span class="an-meta" id="anActivityMeta"></span></div>
+          <div class="an-hmwrap" id="anActivity"></div>
+        </div>
+        <div class="an-panel an-col12 an-insights">
+          <div class="an-ptitle"><h2>💡 Insights</h2><span class="an-meta">generated from your stats</span></div>
+          <p id="anInsight" class="an-insight"></p>
+        </div>
+      </div>
     </div>
   </section>
 </div>
@@ -3595,11 +3680,10 @@
 
   async function loadProfile() {
     // Fire all requests in parallel
-    const [profile, facts, habits, analytics, sources, todosRes] = await Promise.allSettled([
+    const [profile, facts, habits, sources, todosRes] = await Promise.allSettled([
       apiFetch('GET', '/profile'),
       apiFetch('GET', '/facts'),
       apiFetch('GET', '/habits'),
-      apiFetch('GET', '/analytics'),
       apiFetch('GET', '/sources'),
       apiFetch('GET', '/todos'),
     ]);
@@ -3607,7 +3691,6 @@
     if (profile.status === 'fulfilled') renderProfileHero(profile.value);
     if (facts.status === 'fulfilled')   renderFacts(facts.value);
     if (habits.status === 'fulfilled')  renderHabits(habits.value);
-    if (analytics.status === 'fulfilled') renderAnalytics(analytics.value);
     if (sources.status === 'fulfilled') renderSources(sources.value);
     if (todosRes.status === 'fulfilled') renderTodos(todosRes.value);
 
@@ -3995,52 +4078,198 @@
   }
 
   // ---- Activity heatmap + topics ----
-  function renderAnalytics(data) {
-    const heatEl = document.getElementById('heatmap');
-    if (heatEl) {
-      const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-      const flat = data.heatmap.flat();
-      const maxVal = Math.max(...flat, 1);
+  // ===================================================================
+  // ANALYTICS PAGE — dependency-free inline-SVG charts
+  // ===================================================================
+  const AN_NS = 'http://www.w3.org/2000/svg';
+  const anEl = (t, a = {}) => { const e = document.createElementNS(AN_NS, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const AN_HEAT = ['--an-heat0','--an-heat1','--an-heat2','--an-heat3','--an-heat4'];
 
-      let html = '';
-      for (let d = 0; d < 7; d++) {
-        html += `<span class="day-label">${days[d]}</span>`;
-        for (let h = 0; h < 24; h++) {
-          const cnt = data.heatmap[d][h];
-          const v = cnt === 0 ? 0 : Math.ceil((cnt / maxVal) * 4);
-          html += `<span class="cell" data-v="${v}" title="${days[d]} · ${String(h).padStart(2,'0')}:00 · ${cnt} turns"></span>`;
-        }
-      }
-      html += `<div class="heatmap-axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>`;
-      heatEl.innerHTML = html;
-    }
+  function anSpark(vals, { w = 190, h = 38, color = 'var(--accent)' } = {}) {
+    if (!vals || !vals.length) return '';
+    const min = Math.min(...vals), max = Math.max(...vals), pad = 3;
+    const x = i => pad + i * (w - 2 * pad) / Math.max(1, vals.length - 1);
+    const y = v => h - pad - (max === min ? 0.5 : (v - min) / (max - min)) * (h - 2 * pad);
+    const svg = anEl('svg', { width: w, height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none' });
+    const line = vals.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+    svg.append(anEl('polygon', { points: `${pad},${h} ${line} ${w - pad},${h}`, fill: color, opacity: 0.12 }));
+    svg.append(anEl('polyline', { points: line, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    svg.append(anEl('circle', { cx: x(vals.length - 1), cy: y(vals[vals.length - 1]), r: 2.6, fill: color }));
+    return svg;
+  }
 
-    // Update "most active" label
-    const actMeta = document.querySelector('.section[data-section="activity"] .meta') ||
-      [...document.querySelectorAll('.section-head .meta')].find(el => el.closest('.section')?.querySelector('h2')?.textContent.includes('Activity'));
-    if (actMeta && data.most_active_hour != null) {
-      const h = data.most_active_hour;
-      actMeta.textContent = `past 14 days · most active ${String(h).padStart(2,'0')}:00–${String(h+1).padStart(2,'0')}:00`;
-    }
+  function anHeatLevel(c, mx) { return (c <= 0 || mx <= 0) ? 0 : Math.min(4, 1 + Math.floor(c / mx * 3.99)); }
 
-    const tList = document.getElementById('topicList');
-    if (tList) {
-      if (!data.topics.length) {
-        tList.innerHTML = '<div style="color:var(--text-4);font-size:13px;">Not enough data yet</div>';
-        return;
-      }
-      tList.innerHTML = data.topics.map(t => `
-        <div class="topic">
-          <div class="label"><span class="tag">#${escapeHtml(t.label)}</span>${escapeHtml(t.label)}</div>
-          <div class="count">${t.count}</div>
-          <div class="bar"><div class="fill" data-w="${t.pct}%"></div></div>
-        </div>
-      `).join('');
-      requestAnimationFrame(() => {
-        tList.querySelectorAll('.fill').forEach(el => el.style.width = el.dataset.w);
+  function anDayHour(matrix) {
+    const cell = 13, g = 3, labW = 20, topH = 14, days = ['M','T','W','T','F','S','S'];
+    const mx = Math.max(1, ...matrix.flat());
+    const W = labW + 24 * (cell + g);
+    const svg = anEl('svg', { width: W, height: topH + 7 * (cell + g), viewBox: `0 0 ${W} ${topH + 7 * (cell + g)}` });
+    [0,6,12,18].forEach(hh => { const t = anEl('text', { x: labW + hh * (cell + g), y: 10, fill: 'var(--text-4)', 'font-size': 9 }); t.textContent = String(hh).padStart(2,'0'); svg.append(t); });
+    matrix.forEach((row, d) => {
+      const t = anEl('text', { x: 0, y: topH + d * (cell + g) + 11, fill: 'var(--text-4)', 'font-size': 9 }); t.textContent = days[d]; svg.append(t);
+      row.forEach((c, h) => {
+        const r = anEl('rect', { x: labW + h * (cell + g), y: topH + d * (cell + g), width: cell, height: cell, rx: 2.5, fill: `var(${AN_HEAT[anHeatLevel(c, mx)]})` });
+        const ti = anEl('title'); ti.textContent = `${days[d]} ${h}:00 · ${c}`; r.append(ti); svg.append(r);
       });
+    });
+    return svg;
+  }
+
+  function anDonut(segs) {
+    const cx = 60, cy = 60, r = 44, C = 2 * Math.PI * r; let off = 0;
+    const cols = ['var(--accent)','#57c08a','#7fb8d8','#e0a23c','#9b8cd0','var(--text-4)'];
+    const svg = anEl('svg', { width: 120, height: 120, viewBox: '0 0 120 120' });
+    const total = segs.reduce((s, x) => s + x.pct, 0) || 1;
+    segs.forEach((s, i) => {
+      const len = s.pct / total * C;
+      svg.append(anEl('circle', { cx, cy, r, fill: 'none', stroke: cols[i % cols.length], 'stroke-width': 15, 'stroke-dasharray': `${len} ${C - len}`, 'stroke-dashoffset': -off, transform: `rotate(-90 ${cx} ${cy})` }));
+      off += len;
+    });
+    svg.append(anEl('circle', { cx, cy, r: 30, fill: 'var(--bg-2)' }));
+    const t = anEl('text', { x: cx, y: cy - 1, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 700, fill: 'var(--text-1)' }); t.textContent = segs.length;
+    const t2 = anEl('text', { x: cx, y: cy + 13, 'text-anchor': 'middle', 'font-size': 9, fill: 'var(--text-3)' }); t2.textContent = 'agents';
+    svg.append(t, t2);
+    return svg;
+  }
+
+  function anGauge(pct, sub) {
+    const cx = 52, cy = 52, r = 40, C = 2 * Math.PI * r, len = pct / 100 * C;
+    const svg = anEl('svg', { width: 104, height: 104, viewBox: '0 0 104 104' });
+    svg.append(anEl('circle', { cx, cy, r, fill: 'none', stroke: 'var(--bg-3)', 'stroke-width': 10 }));
+    svg.append(anEl('circle', { cx, cy, r, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 10, 'stroke-linecap': 'round', 'stroke-dasharray': `${len} ${C - len}`, transform: `rotate(-90 ${cx} ${cy})` }));
+    const t = anEl('text', { x: cx, y: cy + 1, 'text-anchor': 'middle', 'font-size': 19, 'font-weight': 700, fill: 'var(--text-1)' }); t.textContent = pct + '%';
+    const t2 = anEl('text', { x: cx, y: cy + 16, 'text-anchor': 'middle', 'font-size': 9, fill: 'var(--text-3)' }); t2.textContent = sub;
+    svg.append(t, t2);
+    return svg;
+  }
+
+  function anBars(host, data, { color = 'var(--accent)', max } = {}) {
+    const mx = max || Math.max(1, ...data.map(d => d.v));
+    host.innerHTML = data.map(d => `
+      <div class="an-fbar"><span class="l">${escapeHtml(d.l)}</span>
+        <span class="t"><span style="width:${Math.round(d.v / mx * 100)}%;background:${color}"></span></span>
+        <span class="v">${d.v}${d.suffix || ''}</span></div>`).join('');
+  }
+
+  function anThroughput(host, done) {
+    const w = 260, h = 44, n = Math.max(1, done.length), bw = w / n, mx = Math.max(1, ...done);
+    const svg = anEl('svg', { width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none' });
+    done.forEach((v, i) => { const bh = v / mx * (h - 4); svg.append(anEl('rect', { x: i * bw + 1, y: h - bh, width: Math.max(1, bw - 2), height: bh, rx: 1.5, fill: 'var(--accent)' })); });
+    host.innerHTML = ''; host.append(svg);
+  }
+
+  function renderAnalyticsPage(data) {
+    const k = data.kpis || {};
+    // KPI cards
+    const kp = document.getElementById('anKpis');
+    if (kp) {
+      const cards = [
+        { lab: 'Sessions', big: k.sessions ?? 0, spark: k.sessions_spark, color: 'var(--accent)', foot: `${k.days_active ?? 0} days active` },
+        { lab: 'Top streak', big: (k.top_streak ? k.top_streak.days : 0), unit: 'd', spark: null, color: '#e0a23c', foot: k.top_streak ? `${escapeHtml(k.top_streak.name)} 🔥` : 'no streak yet' },
+        { lab: 'Todos done', big: k.todos_pct ?? 0, unit: '%', spark: null, color: '#57c08a', foot: `${k.todos_done ?? 0}/${k.todos_total ?? 0} · ${k.overdue ?? 0} overdue` },
+        { lab: 'Memory', big: k.facts_total ?? 0, spark: k.facts_spark, color: 'var(--accent)', foot: `${k.facts_personal ?? 0} personal · ${k.facts_work ?? 0} work` },
+      ];
+      kp.innerHTML = cards.map((c, i) => `
+        <div class="an-panel an-kpi">
+          <div class="an-lab">${c.lab}</div>
+          <div class="an-big">${c.big}${c.unit ? `<span class="an-unit">${c.unit}</span>` : ''}</div>
+          <div class="an-spark" id="anSpark${i}"></div>
+          <div class="an-foot">${c.foot}</div>
+        </div>`).join('');
+      cards.forEach((c, i) => { if (c.spark && c.spark.some(v => v)) { const s = anSpark(c.spark, { color: c.color }); if (s) document.getElementById('anSpark' + i).append(s); } });
+    }
+
+    // Habits
+    const hb = document.getElementById('anHabits');
+    if (hb) {
+      const habits = data.habits || [];
+      hb.innerHTML = habits.length ? habits.map(h => `
+        <div class="an-hrow">
+          <span class="an-hname">${escapeHtml(h.name)}</span>
+          <span class="an-track"><span class="an-fill" style="width:${h.pct}%"></span></span>
+          <span class="an-hpct">${h.pct}% · ${h.streak > 0 ? `🔥 ${h.streak}` : 'streak 0'}</span>
+        </div>`).join('') : '<div class="an-empty">No habits tracked yet.</div>';
+    }
+
+    // Todos
+    const td = document.getElementById('anTodos');
+    if (td) {
+      const t = data.todos || {};
+      td.innerHTML = '';
+      if (t.total) {
+        const wrap = document.createElement('div'); wrap.className = 'an-gaugewrap';
+        wrap.append(anGauge(t.pct, `${t.done}/${t.total}`));
+        const stats = document.createElement('div'); stats.className = 'an-tstats';
+        stats.innerHTML = `<div><b class="crit">${t.overdue}</b><span>overdue</span></div>
+          <div><b>${t.avg_days != null ? t.avg_days + 'd' : '—'}</b><span>avg to done</span></div>`;
+        wrap.append(stats); td.append(wrap);
+        const tp = document.createElement('div'); tp.className = 'an-thr'; td.append(tp);
+        anThroughput(tp, t.throughput_completed || []);
+      } else { td.innerHTML = '<div class="an-empty">No todos yet.</div>'; }
+    }
+
+    // Feature usage (donut + bars)
+    const ft = document.getElementById('anFeatures');
+    if (ft) {
+      const agents = (data.agents || []).map(a => ({ l: a.name.replace('_agent', ''), v: a.pct, suffix: '%' }));
+      ft.innerHTML = '';
+      if (agents.length) {
+        ft.append(anDonut(agents.map(a => ({ pct: a.v }))));
+        const bars = document.createElement('div'); bars.className = 'an-flex1'; ft.append(bars);
+        anBars(bars, agents, { color: 'var(--accent)', max: 100 });
+      } else { ft.innerHTML = '<div class="an-empty">No feature usage recorded yet — it fills in as you chat.</div>'; }
+    }
+
+    // Activity heatmap
+    const ac = document.getElementById('anActivity');
+    if (ac) {
+      const u = data.usage || {};
+      ac.innerHTML = '';
+      const meta = document.getElementById('anActivityMeta');
+      if (meta) meta.textContent = `CLI ${u.source?.cli ?? 0} · WhatsApp ${u.source?.whatsapp ?? 0}` + (u.peak_hour != null ? ` · peak ${String(u.peak_hour).padStart(2,'0')}:00 UTC` : '');
+      if (u.heatmap && u.heatmap.flat().some(v => v)) ac.append(anDayHour(u.heatmap));
+      else ac.innerHTML = '<div class="an-empty">No chat activity in this window yet.</div>';
     }
   }
+
+  async function loadAnalytics(win) {
+    const insEl = document.getElementById('anInsight');
+    try {
+      const data = await apiFetch('GET', '/analytics?window=' + win);
+      renderAnalyticsPage(data);
+    } catch (e) { /* leave empty states */ }
+    if (insEl) {
+      insEl.textContent = 'Thinking…';
+      try { const r = await apiFetch('GET', '/analytics/insights?window=' + win); insEl.textContent = r.insights || ''; }
+      catch (e) { insEl.textContent = ''; }
+    }
+  }
+
+  let anWindow = 30;
+  function openAnalytics() {
+    document.getElementById('analytics').hidden = false;
+    document.body.dataset.screen = 'analytics';
+    setTimeout(() => {
+      document.getElementById('chat').hidden = true;
+      document.getElementById('login').hidden = true;
+      document.getElementById('profile').hidden = true;
+      document.getElementById('analytics').scrollTop = 0;
+    }, 520);
+    loadAnalytics(anWindow);
+  }
+  document.getElementById('topAnalytics')?.addEventListener('click', openAnalytics);
+  document.getElementById('anBack')?.addEventListener('click', () => {
+    document.getElementById('chat').hidden = false;
+    document.body.dataset.screen = 'chat';
+    setTimeout(() => { document.getElementById('analytics').hidden = true; }, 520);
+  });
+  document.getElementById('anWindow')?.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-w]'); if (!b) return;
+    anWindow = parseInt(b.dataset.w, 10);
+    [...e.currentTarget.children].forEach(c => c.classList.toggle('on', c === b));
+    loadAnalytics(anWindow);
+  });
 
   // ---- Sources / Knowledge base ----
   function renderSources(sources) {

@@ -240,59 +240,6 @@ def _parse_task_list_and_due_date(input_str: str) -> Tuple[str, Optional[str], O
     return working_str, list_name, due_date
 
 
-def _print_analytics_dashboard(stats) -> None:
-    """Print a formatted analytics dashboard."""
-    console.print()
-    console.print("[bold cyan]╭─ Analytics Dashboard ─╮[/bold cyan]")
-    console.print()
-
-    # Session metrics
-    console.print("[bold yellow]📊 Conversation Overview[/bold yellow]")
-    console.print(f"  Total Sessions:         [bold]{stats.total_sessions}[/bold]")
-    console.print(f"  Total Turns:            [bold]{stats.total_turns}[/bold]")
-    console.print(f"  Avg Turns per Session:  [bold]{stats.average_turns_per_session:.1f}[/bold]")
-    console.print(f"  Longest Session:        [bold]{stats.longest_session_turns} turns[/bold]")
-    console.print()
-
-    # Activity metrics
-    console.print("[bold yellow]📈 Activity Patterns[/bold yellow]")
-    if stats.first_session:
-        console.print(f"  First Session:          [bold]{stats.first_session}[/bold]")
-    if stats.last_session:
-        console.print(f"  Last Session:           [bold]{stats.last_session}[/bold]")
-    console.print(f"  Days Active:            [bold]{stats.days_active}[/bold]")
-    console.print(f"  Sessions per Day:       [bold]{stats.sessions_per_day_avg:.2f}[/bold]")
-    if stats.most_active_day:
-        console.print(f"  Most Active Day:        [bold]{stats.most_active_day}[/bold]")
-    if stats.most_active_hour is not None:
-        console.print(f"  Most Active Hour:       [bold]{stats.most_active_hour:02d}:00[/bold]")
-    console.print()
-
-    # Commands
-    if stats.top_commands:
-        console.print("[bold yellow]⚡ Top Commands[/bold yellow]")
-        for cmd, count in stats.top_commands:
-            console.print(f"  {cmd:<20} [dim]{count} times[/dim]")
-        console.print()
-
-    # Question patterns
-    if stats.top_question_words:
-        console.print("[bold yellow]💬 Top Question Words[/bold yellow]")
-        for word, count in stats.top_question_words:
-            console.print(f"  {word:<20} [dim]{count} times[/dim]")
-        console.print()
-
-    # Facts
-    if stats.fact_categories_count:
-        console.print("[bold yellow]🧠 Learned Facts by Category[/bold yellow]")
-        for category, count in stats.fact_categories_count.items():
-            console.print(f"  {category:<20} [dim]{count} facts[/dim]")
-        console.print()
-
-    console.print("[bold cyan]╰──────────────────────╯[/bold cyan]")
-    console.print()
-
-
 def _parse_habit_reminder_time(args: str) -> tuple[str, str]:
     """Split '/habit add <name> [@<time>]' into (name, reminder_time)."""
     match = re.search(r"@(\S+)", args)
@@ -564,10 +511,15 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             else:
                 console.print("\n[dim]No sessions found.[/dim]\n")
             continue
-        if lowered == "/analytics":
-            analytics_service = create_analytics_service()
-            stats = analytics_service.get_analytics(user_id=user_id)
-            _print_analytics_dashboard(stats)
+        if lowered == "/analytics" or lowered.startswith("/analytics "):
+            from app.cli.commands_stats import render_dashboard
+            parts = lowered.split()
+            win = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+            svc = create_analytics_service()
+            with thinking_spinner("crunching your stats..."):
+                data = svc.get_dashboard(user_id, window_days=win)
+                insight = svc.insights(user_id, window_days=win)
+            render_dashboard(console, data, insight)
             continue
         if lowered.startswith("/topk "):
             maybe_value = question.split(maxsplit=1)[1].strip()

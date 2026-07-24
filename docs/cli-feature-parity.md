@@ -29,7 +29,7 @@ the CLI, and the plan to close the rest.
 | 9 | P3 | **CLI HITL resolver** (approve/deny) | ✅ Done | `sage chat` prompts `[y/n]` on any approval request and runs it via the shared `execute_approved_by_type` dispatch (same as web/WhatsApp). |
 | 6 | P4 | **Session CRUD** (list/rename/delete) | 🔜 Planned | Local DB ops; quality-of-life. Today the CLI only supports `--resume`. |
 | 5 | P5 | **Profile** (get/delete) | 🔜 Planned | Trivial wrap; depends on #1 (done). |
-| 4 | P6 | **Analytics / usage** | 🔜 Planned | Read-only `sage stats`; low urgency. |
+| 4 | P6 | **Analytics / usage** | ✅ Done | Unified windowed metrics engine → dedicated web Analytics page (SVG charts) + `sage stats` (rich terminal charts) + LLM insights digest. Habits, todos, usage, feature/agent usage. |
 | 8 | — | **Web document upload** | ✅ N/A (already covered) | `sage ingest` is the CLI equivalent — no real gap. |
 | 7 | — | **Live trace streaming (SSE)** | ⏸ Not planned | Web-native; CLI chat already prints agent steps inline. |
 | 10 | — | **Todo reminders (push)** | ⏸ Won't do (by design) | Scheduler + WhatsApp; not a CLI action. |

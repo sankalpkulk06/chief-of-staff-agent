@@ -15,6 +15,7 @@ from app.cli.commands_connect import (
     email_status_command,
 )
 from app.cli.commands_email import email_personal_command, email_work_command
+from app.cli.commands_stats import stats_command
 from app.cli.oauth_flow import OAUTH_LOOPBACK_PORT
 from app.config import get_settings
 from app.cli.commands_ask import ask_command
@@ -101,6 +102,14 @@ def ask(
     export: bool = typer.Option(False, "--export", help="Export answer to Markdown file."),
 ) -> None:
     ask_command(question=question, top_k=top_k, export=export)
+
+
+@cli.command("stats")
+def stats(
+    window: int = typer.Option(30, "--window", "-w", help="Rolling window in days (e.g. 7 / 30 / 90)."),
+) -> None:
+    """Show your analytics dashboard (habits, todos, usage, feature usage)."""
+    stats_command(window=window)
 
 
 @cli.command("sources")
