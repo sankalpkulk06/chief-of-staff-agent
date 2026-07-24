@@ -127,6 +127,20 @@ class SQLiteRegistry:
             )
         """)
 
+        # agent_invocations — one row per agent that handled a turn (for feature-usage analytics)
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS agent_invocations (
+                id         TEXT PRIMARY KEY,
+                user_id    TEXT NOT NULL DEFAULT 'default',
+                session_id TEXT,
+                agent      TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_inv_user_time ON agent_invocations (user_id, created_at)"
+        )
+
         # user_email_tokens — per-user Google OAuth tokens (Postgres parity).
         # account_type distinguishes scopes, e.g. 'personal' (Gmail) vs 'google_calendar'.
         self._connection.execute("""
@@ -672,6 +686,63 @@ class SQLiteRegistry:
             counts[row["source"]] = int(row["count"])
         counts["date"] = day
         counts["total"] = counts["cli"] + counts["whatsapp"] + counts["other"]
+        return counts
+
+    # ------------------------------------------------------------------
+    # Analytics
+    # ------------------------------------------------------------------
+
+    def record_agent_invocation(self, user_id: str, session_id: Optional[str], agent: str) -> None:
+        self._connection.execute(
+            "INSERT INTO agent_invocations (id, user_id, session_id, agent) VALUES (?, ?, ?, ?)",
+            (str(uuid.uuid4()), user_id, session_id, agent),
+        )
+        self._connection.commit()
+
+    def get_agent_usage(self, user_id: str = "", since: Optional[str] = None) -> Dict[str, int]:
+        """Return {agent: count} of agent invocations, optionally since an ISO date (inclusive)."""
+        sql = "SELECT agent, COUNT(*) AS n FROM agent_invocations WHERE user_id = ?"
+        params: list = [user_id]
+        if since:
+            sql += " AND DATE(created_at) >= ?"
+            params.append(since)
+        sql += " GROUP BY agent"
+        rows = self._connection.execute(sql, tuple(params)).fetchall()
+        return {row["agent"]: int(row["n"]) for row in rows}
+
+    def list_all_todos(self, user_id: str = "") -> List[Dict[str, object]]:
+        """All todos for the user INCLUDING completed ones (for analytics)."""
+        rows = self._connection.execute(
+            "SELECT id, title, due_at, completed_at, created_at FROM todos WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_chat_source_counts(self, user_id: str = "", since: Optional[str] = None) -> Dict[str, int]:
+        """Return {cli, whatsapp, other} user-turn counts for a user, optionally since an ISO date."""
+        sql = """
+            SELECT
+                CASE
+                    WHEN ws.session_id IS NOT NULL THEN 'whatsapp'
+                    WHEN ns.name LIKE 'cli:%' THEN 'cli'
+                    ELSE 'other'
+                END AS source,
+                COUNT(*) AS count
+            FROM chat_turns ct
+            JOIN chat_sessions cs ON cs.session_id = ct.session_id
+            LEFT JOIN whatsapp_sessions ws ON ws.session_id = ct.session_id
+            LEFT JOIN named_sessions ns ON ns.session_id = ct.session_id
+            WHERE ct.role = 'user' AND cs.user_id = ?
+        """
+        params: list = [user_id]
+        if since:
+            sql += " AND DATE(ct.created_at) >= ?"
+            params.append(since)
+        sql += " GROUP BY source"
+        rows = self._connection.execute(sql, tuple(params)).fetchall()
+        counts = {"cli": 0, "whatsapp": 0, "other": 0}
+        for row in rows:
+            counts[row["source"]] = int(row["count"])
         return counts
 
     def has_whatsapp_usage_alert_sent(self, threshold: int, usage_date: Optional[date] = None) -> bool:

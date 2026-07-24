@@ -577,6 +577,66 @@ class PostgresRegistry:
         counts["total"] = int(counts["cli"]) + int(counts["whatsapp"]) + int(counts["other"])
         return counts
 
+    # ------------------------------------------------------------------
+    # Analytics
+    # ------------------------------------------------------------------
+
+    def record_agent_invocation(self, user_id: str, session_id: Optional[str], agent: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO agent_invocations (id, user_id, session_id, agent) VALUES (%s, %s, %s, %s)",
+                (str(uuid.uuid4()), user_id, session_id, agent),
+            )
+        self._commit()
+
+    def get_agent_usage(self, user_id: str = "", since: Optional[str] = None) -> Dict[str, int]:
+        sql = "SELECT agent, COUNT(*) AS n FROM agent_invocations WHERE user_id = %s"
+        params: list = [user_id]
+        if since:
+            sql += " AND created_at::date >= %s::date"
+            params.append(since)
+        sql += " GROUP BY agent"
+        with self._cursor() as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        return {row["agent"]: int(row["n"]) for row in rows}
+
+    def list_all_todos(self, user_id: str = "") -> List[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT id, title, due_at, completed_at, created_at FROM todos WHERE user_id = %s",
+                (user_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_chat_source_counts(self, user_id: str = "", since: Optional[str] = None) -> Dict[str, int]:
+        sql = """
+            SELECT
+                CASE
+                    WHEN ws.session_id IS NOT NULL THEN 'whatsapp'
+                    WHEN ns.name LIKE 'cli:%%' THEN 'cli'
+                    ELSE 'other'
+                END AS source,
+                COUNT(*) AS count
+            FROM chat_turns ct
+            JOIN chat_sessions cs ON cs.session_id = ct.session_id
+            LEFT JOIN whatsapp_sessions ws ON ws.session_id = ct.session_id
+            LEFT JOIN named_sessions ns ON ns.session_id = ct.session_id
+            WHERE ct.role = 'user' AND cs.user_id = %s
+        """
+        params: list = [user_id]
+        if since:
+            sql += " AND ct.created_at::date >= %s::date"
+            params.append(since)
+        sql += " GROUP BY source"
+        with self._cursor() as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        counts = {"cli": 0, "whatsapp": 0, "other": 0}
+        for row in rows:
+            counts[row["source"]] = int(row["count"])
+        return counts
+
     def has_whatsapp_usage_alert_sent(self, threshold: int, usage_date: Optional[date] = None) -> bool:
         day = (usage_date or date.today()).isoformat()
         with self._cursor() as cur:

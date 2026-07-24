@@ -251,6 +251,14 @@ class ChatService:
                 hitl_id = r.metadata.get("hitl_id")
                 break
 
+        # Record which agents handled this turn (feature-usage analytics; best-effort).
+        try:
+            for name in {getattr(r, "agent", None) for r in run.agent_results}:
+                if name:
+                    self._registry.record_agent_invocation(effective_uid, session_id, name)
+        except Exception:
+            pass
+
         # Inline RAGAS eval — runs only for successful RAG turns with retrieved contexts.
         # Never blocks or raises: on any failure returns evaluated=False silently.
         ragas_result = None
