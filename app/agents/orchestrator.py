@@ -10,6 +10,10 @@ from app.providers.factory import ChatProvider
 # Valid agent names — used to filter/validate the parsed plan.
 VALID_AGENTS = frozenset({"action_agent", "rag_agent", "research_agent", "conversational", "email_agent", "planner_agent"})
 
+# Clear email nouns → a deterministic guard forces email_agent even if the LLM planner
+# dropped it (routing is otherwise non-deterministic). Tight on purpose: no bare "mail".
+_EMAIL_RE = re.compile(r"\b(e-?mails?|inbox|gmail)\b", re.IGNORECASE)
+
 _PLAN_SYSTEM = load("orchestrator_plan")
 _SYNTHESIS_SYSTEM = load("orchestrator_synthesis")
 
@@ -39,12 +43,15 @@ class OrchestratorAgent:
 
         try:
             response = self._provider.chat(messages=messages)
-            return self._parse_plan(response, question)
+            result = self._parse_plan(response, question)
         except Exception:
-            return OrchestratorPlan(
+            result = OrchestratorPlan(
                 steps=[AgentStep(agent="conversational", task=question)],
                 reasoning="planning failed — falling back to conversational",
             )
+        # Deterministic safety net: a clear email request must reach email_agent.
+        result.steps = self._ensure_email_agent(question, result.steps)
+        return result
 
     def synthesize(
         self,
@@ -176,3 +183,26 @@ class OrchestratorAgent:
                     if prior.mode != "synthesize"
                 ]
         return steps
+
+    @staticmethod
+    def _ensure_email_agent(question: str, steps: list[AgentStep]) -> list[AgentStep]:
+        """If the message is clearly about email but the plan omitted email_agent, inject it.
+
+        Guards against LLM routing non-determinism (e.g. an email request answered by
+        conversational). Only fires for explicit email nouns, so unrelated messages are
+        untouched. email_agent still does its own instruction-aware summary of the request.
+        """
+        if not _EMAIL_RE.search(question or ""):
+            return steps
+        if any(step.agent == "email_agent" for step in steps):
+            return steps
+
+        kept = [step for step in steps if step.agent != "conversational"]
+        kept.append(AgentStep(id="email_forced", agent="email_agent", task=question, mode="read"))
+        kept.append(AgentStep(
+            id="synth_forced",
+            agent="conversational",
+            task="Present the email results warmly and directly answer the user's request.",
+            mode="synthesize",
+        ))
+        return OrchestratorAgent._normalize_step_dependencies(kept)
