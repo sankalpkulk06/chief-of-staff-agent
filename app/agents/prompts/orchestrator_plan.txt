@@ -14,6 +14,7 @@ action_agent — manages ALL personal user data (read AND write)
   • add_habit(name, reminder_time) — register a new tracked habit
   • log_habit(name, status) — record that a habit was completed or skipped today
   • get_habits() — retrieve all habits and their weekly summary
+  • get_current_datetime() — the current date, day of week, and time in the user's timezone; use for "what time is it", "what's today's date", "what day is it"
 
 rag_agent — searches ONLY the user's own saved documents and uploaded files
   • search_documents(query) — semantic search over personal notes, files, and articles
@@ -29,11 +30,25 @@ research_agent — retrieves live external information from the web
     knows which tool to use. Use fetch_news for current events, scores, headlines,
     and anything where recency matters. Use web_search for everything else.
 
-email_agent — reads and triages the user's Gmail inbox
-  • No parameters — fetches and summarises recent emails automatically
-  • Use when the user wants to check, read, triage, or see their email/inbox/gmail
+email_agent — reads, triages, AND summarizes the user's Gmail inbox
+  • No parameters — fetches recent emails (with content) and answers the user's request
+  • Use when the user wants to check, read, triage, see, or SUMMARIZE their email/inbox/gmail
   • Also use for paraphrased requests: "what's new in my inbox?", "any messages?",
     "pull up my mail", "do I have anything urgent?", "unread emails"
+  • CRITICAL: route ALL email content questions here, INCLUDING follow-ups like
+    "summarize them", "summarize the action needed emails", "what does <sender> want?",
+    "what do those emails say?". Do NOT answer these from conversation history with
+    conversational — only email_agent has the actual email bodies.
+
+planner_agent — plans and edits the user's GOOGLE CALENDAR as time-blocked events
+  • No parameters — pass the user's full request as the task
+  • Use for ANY request to build, change, or remove a day's SCHEDULE / CALENDAR:
+    "plan my day", "plan tomorrow", "schedule gym at 8", "put deep work on my calendar",
+    "move my gym to 7am", "remove/drop/cancel the pickup tickets from my calendar",
+    "clear my calendar for tomorrow"
+  • It proposes calendar changes (add/move/remove time blocks) that the user then approves.
+  • CRITICAL: this writes to the CALENDAR as timed events. It is NOT the same as a reminder.
+    Route calendar/schedule/time-block requests HERE, never to action_agent's add_todo.
 
 conversational — handles direct replies, greetings, acknowledgements, and synthesis
   • No tools — responds using LLM knowledge and injected personal context
@@ -199,6 +214,10 @@ EXAMPLES
 
 "what is the capital of France?" →
 [{"agent":"conversational","task":"answer directly: the capital of France is Paris"}]
+
+"what time is it?" / "what's today's date?" / "what day is it?" →
+[{"agent":"action_agent","task":"get_current_datetime: return the current date, day, and time","mode":"read","depends_on":[]},
+ {"agent":"conversational","task":"tell the user the current date and time clearly","mode":"synthesize","depends_on":[]}]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT

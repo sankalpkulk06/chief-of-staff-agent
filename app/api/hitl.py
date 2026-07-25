@@ -5,7 +5,6 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
-from app.agents.action_agent import ActionAgent
 from app.api.deps import get_current_user, get_registry
 
 router = APIRouter(prefix="/hitl", tags=["hitl"])
@@ -38,20 +37,15 @@ def resolve_hitl(
         raise HTTPException(status_code=410, detail="HITL request expired — action was not taken")
 
     if body.approved:
-        from app.config import get_settings
-        from app.providers.factory import create_chat_provider, agent_model_specs
+        from app.agents.hitl_dispatch import execute_approved_by_type
 
         context = (row.get("action_payload") or {}).get("__hitl_context") or {}
-        settings = get_settings()
-        specs = agent_model_specs(settings)
-        chat_provider = create_chat_provider(settings, specs["action_agent"])
-
-        agent = ActionAgent(
-            chat_provider=chat_provider,
+        result = execute_approved_by_type(
+            row,
+            current_user["user_id"],
             registry=registry,
             schedule_todo_callback=getattr(request.app.state, "schedule_todo_callback", None),
         )
-        result = agent.execute_approved(hitl_id, current_user["user_id"])
         registry.resolve_hitl_request(hitl_id, "approved")
         final_reply = result.output
         continuation = context.get("continuation_output")

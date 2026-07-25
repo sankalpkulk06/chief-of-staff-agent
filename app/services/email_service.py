@@ -1,4 +1,5 @@
 """Gmail email fetching and AI triage service."""
+import base64
 import json
 import re
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
@@ -12,6 +13,9 @@ AccountType = Literal["personal", "work"]
 
 GMAIL_READONLY_SCOPE = ["https://www.googleapis.com/auth/gmail.readonly"]
 
+# Max characters of email body kept per message (enough to summarize, bounds token cost).
+BODY_MAX_CHARS = 1200
+
 
 class EmailMessage(BaseModel):
     message_id: str
@@ -19,6 +23,7 @@ class EmailMessage(BaseModel):
     subject: str
     date: str
     snippet: str
+    body: str = ""
 
 
 class TriagedEmail(BaseModel):
@@ -145,15 +150,16 @@ class EmailService:
 
         for msg_ref in raw_messages:
             msg = service.users().messages().get(
-                userId="me", id=msg_ref["id"], format="metadata",
-                metadataHeaders=["From", "Subject", "Date"]
+                userId="me", id=msg_ref["id"], format="full",
             ).execute()
 
-            headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+            payload = msg.get("payload", {})
+            headers = {h["name"]: h["value"] for h in payload.get("headers", [])}
             sender = _clean_sender(headers.get("From", ""))
             subject = headers.get("Subject", "(no subject)")
             date = headers.get("Date", "")
             snippet = msg.get("snippet", "")
+            body = _extract_body(payload) or snippet
 
             emails.append(EmailMessage(
                 message_id=msg_ref["id"],
@@ -161,6 +167,7 @@ class EmailService:
                 subject=subject,
                 date=date,
                 snippet=snippet,
+                body=body[:BODY_MAX_CHARS],
             ))
 
         return emails, refreshed
@@ -193,6 +200,40 @@ Classifications:"""
             return [TriagedEmail(email=em, category="fyi", reason=f"Triage unavailable: {e}") for em in emails]
 
         return _parse_triage_response(raw, emails)
+
+
+def _b64(data: str) -> str:
+    try:
+        return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _collect_parts(part: Dict, mime_target: str) -> List[str]:
+    """Depth-first collect decoded bodies of all parts matching mime_target."""
+    out: List[str] = []
+    if part.get("mimeType") == mime_target:
+        data = part.get("body", {}).get("data")
+        if data:
+            out.append(_b64(data))
+    for sub in part.get("parts") or []:
+        out.extend(_collect_parts(sub, mime_target))
+    return out
+
+
+def _strip_html(html: str) -> str:
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;", " ", text)
+    return text
+
+
+def _extract_body(payload: Dict) -> str:
+    """Return a cleaned plain-text body from a Gmail 'full' payload (plain preferred)."""
+    plain = _collect_parts(payload, "text/plain")
+    raw = "\n".join(plain) if plain else _strip_html("\n".join(_collect_parts(payload, "text/html")))
+    # Collapse excess whitespace so the preview is compact.
+    return re.sub(r"[ \t]*\n[ \t]*", "\n", re.sub(r"[ \t]{2,}", " ", raw)).strip()
 
 
 def _clean_sender(raw: str) -> str:

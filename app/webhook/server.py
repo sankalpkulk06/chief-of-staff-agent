@@ -281,7 +281,6 @@ async def health():
 
 def _resolve_hitl_whatsapp(hitl_id: str, approved: bool) -> str:
     from datetime import datetime, timezone
-    from app.providers.factory import create_chat_provider, agent_model_specs
 
     row = _registry.get_hitl_request(hitl_id)
     if not row:
@@ -299,17 +298,14 @@ def _resolve_hitl_whatsapp(hitl_id: str, approved: bool) -> str:
         continuation = context.get("continuation_output", "")
         return f"Rejected — action was not taken.{chr(10) + chr(10) + continuation if continuation else ''}"
 
-    settings = get_settings()
-    specs = agent_model_specs(settings)
-    chat_provider = create_chat_provider(settings, specs["action_agent"])
-    from app.agents.action_agent import ActionAgent
-    agent = ActionAgent(
-        chat_provider=chat_provider,
+    from app.agents.hitl_dispatch import execute_approved_by_type
+    context = (row.get("action_payload") or {}).get("__hitl_context") or {}
+    result = execute_approved_by_type(
+        row,
+        row["user_id"],
         registry=_registry,
         schedule_todo_callback=None,
     )
-    context = (row.get("action_payload") or {}).get("__hitl_context") or {}
-    result = agent.execute_approved(hitl_id, row["user_id"])
     _registry.resolve_hitl_request(hitl_id, "approved")
     continuation = context.get("continuation_output", "")
     reply = result.output or "Done."

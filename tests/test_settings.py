@@ -18,25 +18,12 @@ def test_settings_load_from_dotenv_and_env_override(tmp_path, monkeypatch):
     assert settings.ollama_base_url == "http://127.0.0.1:11434"
     assert settings.chunk_size == 1024
     assert settings.chunk_overlap == 100
-    assert settings.reminders_default_list == "Reminders"
     assert settings.scheduler_enabled is True
     assert settings.morning_briefing_time == "08:00"
     assert settings.habit_nudge_time == "21:00"
     assert settings.twilio_daily_message_limit == 50
     assert settings.groq_api_key == ""
     assert settings.groq_chat_model == "llama-3.3-70b-versatile"
-
-
-def test_settings_loads_reminders_list_override(tmp_path):
-    dotenv_path = tmp_path / ".env"
-    dotenv_path.write_text(
-        "REMINDERS_DEFAULT_LIST=Errands\n",
-        encoding="utf-8",
-    )
-
-    settings = Settings.from_env(project_root=tmp_path)
-
-    assert settings.reminders_default_list == "Errands"
 
 
 def test_settings_loads_scheduler_overrides(tmp_path):

@@ -8,7 +8,7 @@ from app.agents.prompts import load
 from app.providers.factory import ChatProvider
 
 # Valid agent names — used to filter/validate the parsed plan.
-VALID_AGENTS = frozenset({"action_agent", "rag_agent", "research_agent", "conversational", "email_agent"})
+VALID_AGENTS = frozenset({"action_agent", "rag_agent", "research_agent", "conversational", "email_agent", "planner_agent"})
 
 _PLAN_SYSTEM = load("orchestrator_plan")
 _SYNTHESIS_SYSTEM = load("orchestrator_synthesis")

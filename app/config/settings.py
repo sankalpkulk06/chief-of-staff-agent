@@ -13,6 +13,8 @@ class Settings(BaseModel):
     app_name: str = "Sage — Personal RAG Agent"
     app_env: str = "development"
     assistant_name: str = "Sage"
+    # IANA timezone used when a user has not set their own (via user_settings "timezone").
+    default_timezone: str = "UTC"
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_chat_model: str = "llama3.2:3b"
@@ -43,8 +45,6 @@ class Settings(BaseModel):
     rag_fallback_distance_threshold: float = 0.5
     news_max_results: int = Field(default=5, gt=0)
     email_max_results: int = Field(default=20, gt=0)
-    reminders_default_list: str = "Reminders"
-    habit_default_reminder_time: str = "21:00"
 
     tavily_api_key: str = ""
     web_search_max_results: int = Field(default=5, gt=0)
@@ -54,7 +54,6 @@ class Settings(BaseModel):
     twilio_auth_token: str = ""
     twilio_whatsapp_number: str = ""  # e.g. "whatsapp:+14155238886"
     twilio_daily_message_limit: int = Field(default=50, gt=0)
-    webhook_port: int = 8000
     whatsapp_enabled: bool = True
     scheduler_enabled: bool = True
     morning_briefing_time: str = "08:00"
@@ -66,7 +65,6 @@ class Settings(BaseModel):
     url_min_content_words: int = 100
     url_max_content_words: int = 50000
 
-    supabase_url: str = ""
     database_url: str = ""  # PostgreSQL DSN — set to use Supabase/Postgres instead of SQLite+ChromaDB
 
     # Gmail OAuth — base64-encoded contents of Google OAuth credentials.json (Web app type)

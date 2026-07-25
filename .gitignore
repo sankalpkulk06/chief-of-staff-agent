@@ -20,6 +20,7 @@ data/sqlite/
 data/chroma/
 data/cache/
 data/reports/
+data/session.json
 
 # Docs binaries
 docs/*.docx
@@ -46,3 +47,6 @@ htmlcov/
 
 # commands - not to be pushed to the repo
 commands/
+# Playwright MCP session artifacts (snapshots, console logs, screenshots)
+.playwright-mcp/
+[0-9][0-9]-*.png

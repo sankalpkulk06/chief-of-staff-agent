@@ -123,19 +123,6 @@ class _StubNewsService:
         return []
 
 
-class _StubRemindersService:
-    def __init__(self, list_name="Reminders", error=None):
-        self.default_list_name = list_name
-        self.error = error
-        self.calls = []
-
-    def add_reminder(self, task, list_name=None, due_date=None):
-        self.calls.append((task, list_name, due_date))
-        if self.error:
-            raise self.error
-        return self.default_list_name
-
-
 @contextmanager
 def _noop_spinner(message="thinking..."):
     yield
@@ -153,7 +140,11 @@ def _qa_result(answer: str, sources=None) -> QAResult:
     )
 
 
-def _patch_chat_dependencies(monkeypatch, responses, chat_service, reminders_service=None):
+def _patch_chat_dependencies(monkeypatch, responses, chat_service):
+    monkeypatch.setattr(
+        "app.cli.commands_chat.resolve_cli_user",
+        lambda *args, **kwargs: {"user_id": "default", "username": "tester"},
+    )
     monkeypatch.setattr(
         "app.cli.commands_chat.PromptSession",
         lambda *args, **kwargs: _StubPromptSession(responses),

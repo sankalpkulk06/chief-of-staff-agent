@@ -4,18 +4,15 @@ import typer
 from rich.console import Console
 from rich.rule import Rule
 
+from app.cli.session import resolve_cli_user
 from app.config import get_settings
+from app.config.settings import get_google_client_secrets
 from app.services.email_service import AccountType, EmailService
 from app.providers.factory import create_default_chat_provider
+from app.storage.factory import create_registry
 from app.ui.spinner import thinking_spinner
 
 console = Console()
-
-
-def _create_email_service(account_type: AccountType) -> EmailService:
-    settings = get_settings()
-    paths = settings.resolve_paths()
-    return EmailService(credentials_dir=paths.credentials_dir, account_type=account_type)
 
 
 def _create_chat_provider():
@@ -29,17 +26,39 @@ def _run_email_command(
     max_results: int,
     no_triage: bool,
 ) -> None:
-    service = _create_email_service(account_type)
+    settings = get_settings()
+    paths = settings.resolve_paths()
+    registry = create_registry(settings.database_url, paths.sqlite_db_path)
+
+    user = resolve_cli_user(settings, registry, console)
+    user_id = user["user_id"]
+
+    token_json = registry.get_email_token(user_id, account_type)
+    if not token_json:
+        connect_cmd = "sage email connect --work" if account_type == "work" else "sage email connect"
+        typer.echo(f"Gmail ({account_type}) isn't connected. Run `{connect_cmd}`.")
+        raise typer.Exit(code=1)
+
+    client_secrets = get_google_client_secrets(settings)
+    if not client_secrets:
+        typer.echo("Gmail OAuth is not configured (set GOOGLE_CLIENT_SECRETS_JSON).")
+        raise typer.Exit(code=1)
+
+    service = EmailService(client_secrets=client_secrets, account_type=account_type)
 
     try:
         with thinking_spinner(f"fetching {label.lower()} emails..."):
-            emails = service.fetch_recent(max_results=max_results)
-    except FileNotFoundError as exc:
-        typer.echo(f"Setup required: {exc}")
-        raise typer.Exit(code=1)
+            emails, refreshed_token = service.fetch_recent(token_json, max_results=max_results)
     except Exception as exc:
         typer.echo(f"Error fetching emails: {exc}")
         raise typer.Exit(code=1)
+
+    # Persist a refreshed token if Google rotated it.
+    if refreshed_token:
+        try:
+            registry.upsert_email_token(user_id, refreshed_token, account_type)
+        except Exception:
+            pass
 
     console.print()
     console.print(Rule(f"[bold]{label}[/bold]"))

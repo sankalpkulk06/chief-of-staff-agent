@@ -1,7 +1,6 @@
-import getpass
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -12,6 +11,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 from app.cli.commands_ask import (
@@ -21,7 +21,9 @@ from app.cli.commands_ask import (
     create_web_search_service,
 )
 from app.cli.commands_ingest import create_ingest_coordinator
+from app.cli.session import resolve_cli_user
 from app.config import get_settings
+from app.config.settings import get_google_client_secrets
 from app.config.validation import CloudConfigurationError, validate_runtime_configuration
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
@@ -29,41 +31,99 @@ from app.services.email_service import EmailService
 from app.providers.ollama_embeddings import OllamaProviderError
 from app.providers.factory import create_chat_provider, create_default_chat_provider, ModelSpec
 from app.storage.factory import create_registry
-from app.storage.sqlite_registry import SQLiteRegistry
 from app.ui.spinner import thinking_spinner
 
-_EMAIL_TRIGGERS = {
-    "check my email", "check email", "any emails", "any email",
-    "show my email", "show email", "read my email", "read email",
-    "email inbox", "check inbox", "what emails", "do i have email",
-    "email triage", "triage email", "triage my email",
-}
-_EMAIL_ACTION_WORDS = {"check", "any", "show", "read", "triage", "fetch", "get", "what", "action"}
+def _print_response(console: Console, text: str) -> None:
+    """Render the assistant reply as Markdown (bold, bullets, headers); plain-text fallback."""
+    try:
+        console.print(Markdown(text or ""))
+    except Exception:
+        console.print(text or "", markup=False)
 
 
-def _is_email_request(text: str) -> bool:
-    t = text.lower()
-    if t in _EMAIL_TRIGGERS:
-        return True
-    if ("email" in t or "inbox" in t) and any(w in t for w in _EMAIL_ACTION_WORDS):
-        return True
-    return False
+def _prompt_yes_no(console: Console, question: str = "Approve?") -> bool:
+    """Modal [y/n] prompt. EOF/Ctrl-C is treated as 'no' (safe default)."""
+    while True:
+        try:
+            ans = input(f"{question} [y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("[yellow]Treating as no.[/yellow]")
+            return False
+        if ans in ("y", "yes"):
+            return True
+        if ans in ("n", "no"):
+            return False
+        console.print("[yellow]Please answer y or n.[/yellow]")
 
 
-def _handle_email_personal(console: Console, settings) -> None:
-    paths = settings.resolve_paths()
-    service = EmailService(credentials_dir=paths.credentials_dir, account_type="personal")
+def _resolve_hitl(registry, hitl_id: str, user_id: str, approved: bool) -> str:
+    """Approve/reject a pending HITL request from the CLI, mirroring app/api/hitl.py.
+
+    Reuses the shared executor (execute_approved_by_type) so the CLI, web, and
+    WhatsApp resolve paths run identical action logic.
+    """
+    from app.agents.hitl_dispatch import execute_approved_by_type
+
+    row = registry.get_hitl_request(hitl_id)
+    if not row or row.get("user_id") != user_id:
+        return "That approval request is no longer available."
+    if row.get("status") != "pending":
+        return "That request was already resolved."
+
+    expires_at = row.get("expires_at")
+    if expires_at and datetime.now(timezone.utc) > expires_at:
+        registry.resolve_hitl_request(hitl_id, "expired")
+        return "That request expired — no action was taken."
+
+    context = (row.get("action_payload") or {}).get("__hitl_context") or {}
+    continuation = context.get("continuation_output")
+
+    if not approved:
+        registry.resolve_hitl_request(hitl_id, "rejected")
+        return (
+            f"Okay, cancelled — no action taken.\n\n{continuation}"
+            if continuation else "Okay, cancelled — no action taken."
+        )
+
+    try:
+        result = execute_approved_by_type(
+            row, user_id, registry=registry, schedule_todo_callback=None
+        )
+    except Exception as exc:
+        return f"Failed to run the action: {exc}"
+    registry.resolve_hitl_request(hitl_id, "approved")
+
+    reply = result.output or ""
+    if continuation:
+        reply = f"{reply}\n\n{continuation}" if reply else continuation
+    return reply or "Done."
+
+
+def _handle_email_personal(console: Console, settings, registry, user_id: str) -> None:
+    token_json = registry.get_email_token(user_id, "personal")
+    if not token_json:
+        console.print("\n[yellow]Gmail (personal) isn't connected.[/yellow] Run `sage email connect`.\n")
+        return
+    client_secrets = get_google_client_secrets(settings)
+    if not client_secrets:
+        console.print("\n[red]Gmail OAuth is not configured[/red] (set GOOGLE_CLIENT_SECRETS_JSON).\n")
+        return
+
+    service = EmailService(client_secrets=client_secrets, account_type="personal")
     chat_provider = create_default_chat_provider(settings)
 
     try:
         with thinking_spinner("fetching personal emails..."):
-            emails = service.fetch_recent(max_results=settings.email_max_results)
-    except FileNotFoundError as exc:
-        console.print(f"\n[red]Setup required:[/red] {exc}\n")
-        return
+            emails, refreshed_token = service.fetch_recent(token_json, max_results=settings.email_max_results)
     except Exception as exc:
         console.print(f"\n[red]Error fetching emails:[/red] {exc}\n")
         return
+
+    if refreshed_token:
+        try:
+            registry.upsert_email_token(user_id, refreshed_token, "personal")
+        except Exception:
+            pass
 
     console.print()
     console.print("[bold cyan]╭─ Personal Email ─╮[/bold cyan]")
@@ -180,59 +240,6 @@ def _parse_task_list_and_due_date(input_str: str) -> Tuple[str, Optional[str], O
     return working_str, list_name, due_date
 
 
-def _print_analytics_dashboard(stats) -> None:
-    """Print a formatted analytics dashboard."""
-    console.print()
-    console.print("[bold cyan]╭─ Analytics Dashboard ─╮[/bold cyan]")
-    console.print()
-
-    # Session metrics
-    console.print("[bold yellow]📊 Conversation Overview[/bold yellow]")
-    console.print(f"  Total Sessions:         [bold]{stats.total_sessions}[/bold]")
-    console.print(f"  Total Turns:            [bold]{stats.total_turns}[/bold]")
-    console.print(f"  Avg Turns per Session:  [bold]{stats.average_turns_per_session:.1f}[/bold]")
-    console.print(f"  Longest Session:        [bold]{stats.longest_session_turns} turns[/bold]")
-    console.print()
-
-    # Activity metrics
-    console.print("[bold yellow]📈 Activity Patterns[/bold yellow]")
-    if stats.first_session:
-        console.print(f"  First Session:          [bold]{stats.first_session}[/bold]")
-    if stats.last_session:
-        console.print(f"  Last Session:           [bold]{stats.last_session}[/bold]")
-    console.print(f"  Days Active:            [bold]{stats.days_active}[/bold]")
-    console.print(f"  Sessions per Day:       [bold]{stats.sessions_per_day_avg:.2f}[/bold]")
-    if stats.most_active_day:
-        console.print(f"  Most Active Day:        [bold]{stats.most_active_day}[/bold]")
-    if stats.most_active_hour is not None:
-        console.print(f"  Most Active Hour:       [bold]{stats.most_active_hour:02d}:00[/bold]")
-    console.print()
-
-    # Commands
-    if stats.top_commands:
-        console.print("[bold yellow]⚡ Top Commands[/bold yellow]")
-        for cmd, count in stats.top_commands:
-            console.print(f"  {cmd:<20} [dim]{count} times[/dim]")
-        console.print()
-
-    # Question patterns
-    if stats.top_question_words:
-        console.print("[bold yellow]💬 Top Question Words[/bold yellow]")
-        for word, count in stats.top_question_words:
-            console.print(f"  {word:<20} [dim]{count} times[/dim]")
-        console.print()
-
-    # Facts
-    if stats.fact_categories_count:
-        console.print("[bold yellow]🧠 Learned Facts by Category[/bold yellow]")
-        for category, count in stats.fact_categories_count.items():
-            console.print(f"  {category:<20} [dim]{count} facts[/dim]")
-        console.print()
-
-    console.print("[bold cyan]╰──────────────────────╯[/bold cyan]")
-    console.print()
-
-
 def _parse_habit_reminder_time(args: str) -> tuple[str, str]:
     """Split '/habit add <name> [@<time>]' into (name, reminder_time)."""
     match = re.search(r"@(\S+)", args)
@@ -283,41 +290,37 @@ def _handle_configure(args: str, user_id: str, registry, settings, paths) -> str
     if not parts:
         return (
             "Usage:\n"
-            "  /configure email   — connect your Gmail account\n"
-            "  /configure status  — show what's configured for your account"
+            "  /configure email     — how to connect your Gmail account\n"
+            "  /configure calendar  — how to connect your Google Calendar\n"
+            "  /configure status    — show what's connected for your account"
         )
 
     sub = parts[0].lower()
 
     if sub == "status":
-        gmail_configured = (paths.user_credentials_dir(user_id) / "personal_token.json").exists()
+        gmail = registry.has_email_token(user_id, "personal")
+        calendar = registry.has_email_token(user_id, "google_calendar")
         lines = ["Your configuration:"]
-        lines.append(f"  Gmail: {'✓ connected' if gmail_configured else '✗ not connected  →  run /configure email'}")
+        lines.append(f"  Gmail:    {'✓ connected' if gmail else '✗ not connected  →  run `sage email connect`'}")
+        lines.append(f"  Calendar: {'✓ connected' if calendar else '✗ not connected  →  run `sage calendar connect`'}")
         return "\n".join(lines)
 
     if sub == "email":
-        from app.services.email_service import EmailService
-        user_creds_dir = paths.user_credentials_dir(user_id)
-        client_secrets = paths.credentials_dir / "credentials.json"
-        if not client_secrets.exists():
-            return (
-                "Gmail client secret not found.\n"
-                "Download OAuth 2.0 credentials (Desktop app) from Google Cloud Console\n"
-                "and save as data/credentials/credentials.json, then try again."
-            )
-        console.print("\n[yellow]Opening browser for Gmail authorization...[/yellow]")
-        try:
-            svc = EmailService(
-                credentials_dir=paths.credentials_dir,
-                account_type="personal",
-                token_dir=user_creds_dir,
-            )
-            svc._authenticate()
-            return "Gmail connected. Your token is stored privately for your account only."
-        except Exception as exc:
-            return f"Gmail setup failed: {exc}"
+        return (
+            "Connecting Gmail opens a browser, so run it from your terminal (not inside chat):\n"
+            "  sage email connect            # personal Gmail\n"
+            "  sage email connect --work     # work Gmail\n"
+            "Then come back here and ask me to check your email."
+        )
 
-    return f"Unknown configure option '{sub}'. Use: email, status."
+    if sub == "calendar":
+        return (
+            "Connecting Google Calendar opens a browser, so run it from your terminal:\n"
+            "  sage calendar connect\n"
+            "Then ask me to plan your day."
+        )
+
+    return f"Unknown configure option '{sub}'. Use: email, calendar, status."
 
 
 _AGENT_LABELS = {
@@ -404,63 +407,6 @@ def _print_help() -> None:
     console.print()
 
 
-def _prompt_auth(registry: SQLiteRegistry, console: Console) -> dict:
-    """Show login/signup menu and return the authenticated user dict."""
-    import sys
-    if not sys.stdin.isatty():
-        # Non-interactive mode requires authentication — cannot proceed without a real user
-        raise typer.Exit(code=1)
-
-    console.print()
-    console.print("[bold cyan]Welcome to Sage[/bold cyan]")
-    console.print("[dim]━━━━━━━━━━━━━━━━━━━━━━[/dim]")
-
-    while True:
-        console.print("\n[bold]\[1][/bold] Login  [bold]\[2][/bold] Sign up  [bold]\[3][/bold] Exit\n")
-        try:
-            choice = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            raise typer.Exit()
-
-        if choice == "3":
-            raise typer.Exit()
-
-        elif choice == "1":
-            # --- Login ---
-            while True:
-                username = input("Username: ").strip()
-                password = getpass.getpass("Password: ")
-                user = registry.verify_password(username, password)
-                if user:
-                    console.print(f"\n[green]Logged in as {username}.[/green]")
-                    return user
-                console.print("[red]Incorrect username or password. Try again.[/red]")
-
-        elif choice == "2":
-            # --- Sign up ---
-            while True:
-                username = input("Username: ").strip()
-                if len(username) < 3:
-                    console.print("[red]Username must be at least 3 characters.[/red]")
-                    continue
-                if registry.get_user_by_username(username):
-                    console.print("[red]Username already taken. Choose another.[/red]")
-                    continue
-                password = getpass.getpass("Password: ")
-                if len(password) < 6:
-                    console.print("[red]Password must be at least 6 characters.[/red]")
-                    continue
-                confirm = getpass.getpass("Confirm password: ")
-                if password != confirm:
-                    console.print("[red]Passwords do not match.[/red]")
-                    continue
-                user = registry.create_user(username, password)
-                console.print(f"\n[green]Account created. Welcome, {username}![/green]")
-                return user
-        else:
-            console.print("[yellow]Please enter 1, 2, or 3.[/yellow]")
-
-
 def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) -> None:
     """Run an interactive chat session with conversation history."""
     settings = get_settings()
@@ -473,7 +419,7 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
 
     # Bootstrap registry just for auth (before full service creation)
     bootstrap_registry = create_registry(settings.database_url, paths.sqlite_db_path)
-    user = _prompt_auth(bootstrap_registry, console)
+    user = resolve_cli_user(settings, bootstrap_registry, console)
     user_id: str = user["user_id"]
     username: str = user["username"]
     bootstrap_registry.close()
@@ -565,10 +511,15 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             else:
                 console.print("\n[dim]No sessions found.[/dim]\n")
             continue
-        if lowered == "/analytics":
-            analytics_service = create_analytics_service()
-            stats = analytics_service.get_analytics(user_id=user_id)
-            _print_analytics_dashboard(stats)
+        if lowered == "/analytics" or lowered.startswith("/analytics "):
+            from app.cli.commands_stats import render_dashboard
+            parts = lowered.split()
+            win = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+            svc = create_analytics_service()
+            with thinking_spinner("crunching your stats..."):
+                data = svc.get_dashboard(user_id, window_days=win)
+                insight = svc.insights(user_id, window_days=win)
+            render_dashboard(console, data, insight)
             continue
         if lowered.startswith("/topk "):
             maybe_value = question.split(maxsplit=1)[1].strip()
@@ -623,8 +574,11 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             except Exception as e:
                 console.print(f"\n[red]✗[/red] Error: {e}\n")
             continue
-        if lowered in ("/email", "/email-personal") or _is_email_request(lowered):
-            _handle_email_personal(console, settings)
+        # Explicit command → quick canned triage view. Natural-language email
+        # requests ("summarize my inbox", "anything urgent?") fall through to the
+        # agent, which is instruction-aware and answers the actual question.
+        if lowered in ("/email", "/email-personal"):
+            _handle_email_personal(console, settings, registry, user_id)
             continue
         if lowered.startswith("/news"):
             query = question[len("/news"):].strip()
@@ -819,8 +773,19 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
         console.print()
         console.print("[bold cyan]╭─ Sage ─╮[/bold cyan]")
         console.print()
-        console.print(result.answer)
+        _print_response(console, result.answer)
         console.print()
+
+        # Human-in-the-loop: the agent is asking for approval before a write action.
+        if result.hitl_pending and result.hitl_id:
+            approved = _prompt_yes_no(console)
+            reply = _resolve_hitl(registry, result.hitl_id, user_id, approved)
+            console.print()
+            console.print("[bold cyan]╭─ Sage ─╮[/bold cyan]")
+            console.print()
+            _print_response(console, reply)
+            console.print()
+            continue
 
         if result.web_sources or result.news_sources or (result.sources_used and result.sources):
             console.print("[bold cyan]─ Sources ─[/bold cyan]")

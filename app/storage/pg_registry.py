@@ -97,6 +97,16 @@ class PostgresRegistry:
             row = cur.fetchone()
         return dict(row) if row else None
 
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, object]]:
+        """Return {user_id, username} for an existing user, or None."""
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT user_id, username FROM users WHERE user_id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+        return {"user_id": row["user_id"], "username": row["username"]} if row else None
+
     def verify_password(self, username: str, password: str) -> Optional[Dict[str, object]]:
         user = self.get_user_by_username(username)
         if user and _verify_password(password, user["password_hash"]):
@@ -320,6 +330,8 @@ class PostgresRegistry:
         with self._cursor() as cur:
             cur.execute("DELETE FROM chat_turns WHERE session_id = %s", (session_id,))
             cur.execute("DELETE FROM chat_sessions WHERE session_id = %s", (session_id,))
+            # Clear any named alias (e.g. cli:<user>:default) so it isn't left dangling.
+            cur.execute("DELETE FROM named_sessions WHERE session_id = %s", (session_id,))
         self._commit()
 
     def get_or_create_named_session(self, name: str, user_id: str = "") -> str:
@@ -567,6 +579,66 @@ class PostgresRegistry:
         counts["total"] = int(counts["cli"]) + int(counts["whatsapp"]) + int(counts["other"])
         return counts
 
+    # ------------------------------------------------------------------
+    # Analytics
+    # ------------------------------------------------------------------
+
+    def record_agent_invocation(self, user_id: str, session_id: Optional[str], agent: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO agent_invocations (id, user_id, session_id, agent) VALUES (%s, %s, %s, %s)",
+                (str(uuid.uuid4()), user_id, session_id, agent),
+            )
+        self._commit()
+
+    def get_agent_usage(self, user_id: str = "", since: Optional[str] = None) -> Dict[str, int]:
+        sql = "SELECT agent, COUNT(*) AS n FROM agent_invocations WHERE user_id = %s"
+        params: list = [user_id]
+        if since:
+            sql += " AND created_at::date >= %s::date"
+            params.append(since)
+        sql += " GROUP BY agent"
+        with self._cursor() as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        return {row["agent"]: int(row["n"]) for row in rows}
+
+    def list_all_todos(self, user_id: str = "") -> List[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT id, title, due_at, completed_at, created_at FROM todos WHERE user_id = %s",
+                (user_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_chat_source_counts(self, user_id: str = "", since: Optional[str] = None) -> Dict[str, int]:
+        sql = """
+            SELECT
+                CASE
+                    WHEN ws.session_id IS NOT NULL THEN 'whatsapp'
+                    WHEN ns.name LIKE 'cli:%%' THEN 'cli'
+                    ELSE 'other'
+                END AS source,
+                COUNT(*) AS count
+            FROM chat_turns ct
+            JOIN chat_sessions cs ON cs.session_id = ct.session_id
+            LEFT JOIN whatsapp_sessions ws ON ws.session_id = ct.session_id
+            LEFT JOIN named_sessions ns ON ns.session_id = ct.session_id
+            WHERE ct.role = 'user' AND cs.user_id = %s
+        """
+        params: list = [user_id]
+        if since:
+            sql += " AND ct.created_at::date >= %s::date"
+            params.append(since)
+        sql += " GROUP BY source"
+        with self._cursor() as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        counts = {"cli": 0, "whatsapp": 0, "other": 0}
+        for row in rows:
+            counts[row["source"]] = int(row["count"])
+        return counts
+
     def has_whatsapp_usage_alert_sent(self, threshold: int, usage_date: Optional[date] = None) -> bool:
         day = (usage_date or date.today()).isoformat()
         with self._cursor() as cur:
@@ -581,6 +653,18 @@ class PostgresRegistry:
             cur.execute(
                 "INSERT INTO whatsapp_usage_alerts (usage_date, threshold) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (day, threshold),
+            )
+        self._commit()
+
+    def has_briefing_been_sent(self, day: str) -> bool:
+        with self._cursor() as cur:
+            cur.execute("SELECT 1 FROM briefing_log WHERE briefing_date = %s", (day,))
+            return cur.fetchone() is not None
+
+    def mark_briefing_sent(self, day: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO briefing_log (briefing_date) VALUES (%s) ON CONFLICT DO NOTHING", (day,)
             )
         self._commit()
 
@@ -833,6 +917,135 @@ class PostgresRegistry:
             row = cur.fetchone()
         self._commit()
         return row["user_id"] if row else None
+
+    # ------------------------------------------------------------------
+    # Sage calendar events (provenance mirror for the daily planner)
+    # ------------------------------------------------------------------
+
+    def insert_calendar_event(self, row: Dict[str, object]) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sage_calendar_events
+                    (id, user_id, google_event_id, calendar_id, plan_date, title,
+                     start_local, end_local, source_kind, source_ref, etag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    row["id"], row["user_id"], row.get("google_event_id"),
+                    row.get("calendar_id", "primary"), row["plan_date"], row["title"],
+                    row.get("start_local"), row.get("end_local"), row.get("source_kind"),
+                    row.get("source_ref"), row.get("etag"), row.get("status", "active"),
+                ),
+            )
+        self._commit()
+
+    def set_calendar_event_google_id(self, event_id: str, google_event_id: str, etag: Optional[str]) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE sage_calendar_events SET google_event_id = %s, etag = %s, updated_at = NOW() WHERE id = %s",
+                (google_event_id, etag, event_id),
+            )
+        self._commit()
+
+    def update_calendar_event(
+        self, event_id: str, *, title: Optional[str] = None,
+        start_local: Optional[str] = None, end_local: Optional[str] = None, etag: Optional[str] = None,
+    ) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                UPDATE sage_calendar_events
+                SET title = COALESCE(%s, title),
+                    start_local = COALESCE(%s, start_local),
+                    end_local = COALESCE(%s, end_local),
+                    etag = COALESCE(%s, etag),
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (title, start_local, end_local, etag, event_id),
+            )
+        self._commit()
+
+    def soft_cancel_calendar_event(self, event_id: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE sage_calendar_events SET status = 'cancelled', cancelled_at = NOW(), "
+                "updated_at = NOW() WHERE id = %s",
+                (event_id,),
+            )
+        self._commit()
+
+    def list_managed_calendar_events(
+        self, user_id: str, plan_date: str, status: str = "active"
+    ) -> List[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sage_calendar_events WHERE user_id = %s AND plan_date = %s AND status = %s "
+                "ORDER BY start_local ASC",
+                (user_id, plan_date, status),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_calendar_event(self, event_id: str) -> Optional[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM sage_calendar_events WHERE id = %s", (event_id,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Pending prompts (session-keyed multi-turn state)
+    # ------------------------------------------------------------------
+
+    def set_pending_prompt(
+        self, session_id: str, user_id: str, prompt_type: str,
+        state: Dict[str, object], ttl_minutes: int = 30,
+    ) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO pending_prompts (session_id, user_id, prompt_type, state_json, created_at, expires_at)
+                VALUES (%s, %s, %s, %s::jsonb, NOW(), NOW() + make_interval(mins => %s))
+                ON CONFLICT (session_id) DO UPDATE SET
+                    user_id = EXCLUDED.user_id,
+                    prompt_type = EXCLUDED.prompt_type,
+                    state_json = EXCLUDED.state_json,
+                    created_at = NOW(),
+                    expires_at = EXCLUDED.expires_at
+                """,
+                (session_id, user_id, prompt_type, json.dumps(state), ttl_minutes),
+            )
+        self._commit()
+
+    def get_pending_prompt(self, session_id: str) -> Optional[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT * FROM pending_prompts WHERE session_id = %s AND (expires_at IS NULL OR expires_at > NOW())",
+                (session_id,),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        if row is None:
+            return None
+        data = dict(row)
+        raw = data.get("state_json")
+        data["state"] = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+        return data
+
+    def clear_pending_prompt(self, session_id: str) -> None:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM pending_prompts WHERE session_id = %s", (session_id,))
+        self._commit()
+
+    def append_pending_prompt_note(self, session_id: str, note: str) -> None:
+        current = self.get_pending_prompt(session_id)
+        if current is None:
+            return
+        state = current["state"]
+        notes = state.get("gathered_notes") or []
+        notes.append(note)
+        state["gathered_notes"] = notes
+        self.set_pending_prompt(session_id, current["user_id"], current["prompt_type"], state)
 
     # ------------------------------------------------------------------
     # Helpers

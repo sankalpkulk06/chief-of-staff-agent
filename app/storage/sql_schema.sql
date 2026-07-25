@@ -171,3 +171,32 @@ CREATE TABLE IF NOT EXISTS security_events (
 
 CREATE INDEX IF NOT EXISTS idx_security_events_user_id ON security_events (user_id);
 CREATE INDEX IF NOT EXISTS idx_security_events_event_type ON security_events (event_type);
+
+CREATE TABLE IF NOT EXISTS sage_calendar_events (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    google_event_id TEXT,
+    calendar_id     TEXT NOT NULL DEFAULT 'primary',
+    plan_date       TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    start_local     TEXT,
+    end_local       TEXT,
+    source_kind     TEXT,
+    source_ref      TEXT,
+    etag            TEXT,
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    cancelled_at    DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_sage_calendar_events_lookup
+    ON sage_calendar_events (user_id, plan_date, status);
+
+CREATE TABLE IF NOT EXISTS pending_prompts (
+    session_id  TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    prompt_type TEXT NOT NULL,
+    state_json  TEXT NOT NULL DEFAULT '{}',
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at  DATETIME
+);

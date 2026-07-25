@@ -93,10 +93,61 @@ class EmailAgent:
                 success=False, error=str(exc),
             )
 
+        request = (original_question or task or "").strip()
+        answer = self._answer_from_emails(request, triaged)
+        if answer is None:
+            answer = self._canned_triage(triaged)
+
+        return AgentResult(
+            agent="email_agent",
+            task=task,
+            output=answer,
+            success=True,
+        )
+
+    # ------------------------------------------------------------------
+    # Response synthesis
+    # ------------------------------------------------------------------
+
+    def _answer_from_emails(self, request: str, triaged: list) -> Optional[str]:
+        """Answer the user's actual request using the triaged emails. None on failure."""
+        if not request:
+            return None
+
+        context = "\n\n".join(
+            f"{i}. [{t.category.upper()}] From: {t.email.sender} | Subject: {t.email.subject}\n"
+            f"   Content: {(t.email.body or t.email.snippet)[:600]}"
+            for i, t in enumerate(triaged, 1)
+        )
+        prompt = (
+            f"You are {self._assistant_name}, the user's email assistant. "
+            f"The user asked:\n\"{request}\"\n\n"
+            f"Their most recent emails (already triaged as ACTION / FYI / IGNORE), with content:\n"
+            f"{context}\n\n"
+            "Write a clear, well-formatted Markdown reply that DIRECTLY answers the request. Rules:\n"
+            "- When summarizing, summarize what each email actually SAYS or WANTS (from its content) "
+            "— never just restate the subject, and never say 'this email likely contains'.\n"
+            "- Group with short emoji headers when it helps (🔴 Action needed, 📄 FYI). For each email, "
+            "one tight line: **Sender** — the gist / what to do.\n"
+            "- If the user named specific emails or senders, focus only on those.\n"
+            "- Be specific and concise. No filler preamble like 'Here's a look at your inbox'. "
+            "Don't invent details that aren't in the content."
+        )
+        try:
+            out = self._provider.generate(prompt)
+        except Exception as exc:
+            log.warning("EmailAgent: synthesis failed, falling back to triage list: %s", exc)
+            return None
+        out = (out or "").strip()
+        return out or None
+
+    @staticmethod
+    def _canned_triage(triaged: list) -> str:
+        """Deterministic ACTION/FYI list — fallback when LLM synthesis is unavailable."""
         action_items = [t for t in triaged if t.category == "action"]
         fyi_items    = [t for t in triaged if t.category == "fyi"]
 
-        lines = [f"Checked {len(emails)} emails. Here's what needs your attention:\n"]
+        lines = [f"Checked {len(triaged)} emails. Here's what needs your attention:\n"]
         if action_items:
             lines.append(f"**ACTION NEEDED ({len(action_items)})**")
             for i, item in enumerate(action_items, 1):
@@ -110,9 +161,4 @@ class EmailAgent:
             for i, item in enumerate(fyi_items, 1):
                 lines.append(f"{i}. **{item.email.sender}** — {item.email.subject}\n   → {item.reason}")
 
-        return AgentResult(
-            agent="email_agent",
-            task=task,
-            output="\n".join(lines),
-            success=True,
-        )
+        return "\n".join(lines)
