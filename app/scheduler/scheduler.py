@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -60,8 +60,37 @@ def build_scheduler(
         replace_existing=True,
     )
 
+    # Missed-briefing catch-up: shortly after startup, if today's briefing time has
+    # already passed and it wasn't sent (e.g. the box was off at briefing time),
+    # send it now. send_morning_briefing self-guards, so this never double-sends.
+    scheduler.add_job(
+        briefing_catchup,
+        "date",
+        run_date=datetime.now() + timedelta(seconds=15),
+        args=[habit_service, whatsapp_service, news_service, registry, your_number,
+              briefing_hour, briefing_minute],
+        id="briefing_catchup",
+        replace_existing=True,
+    )
+
     rehydrate_todo_jobs(scheduler, whatsapp_service, registry, your_number)
     return scheduler
+
+
+def briefing_catchup(
+    habit_service: HabitService,
+    whatsapp_service: WhatsAppService,
+    news_service: NewsService,
+    registry: SQLiteRegistry,
+    your_number: str,
+    briefing_hour: int,
+    briefing_minute: int,
+) -> None:
+    now = datetime.now()
+    briefing_today = now.replace(hour=briefing_hour, minute=briefing_minute, second=0, microsecond=0)
+    if now >= briefing_today:
+        # send_morning_briefing skips if it already went out today.
+        send_morning_briefing(habit_service, whatsapp_service, news_service, registry, your_number)
 
 
 def schedule_todo_reminder(
@@ -154,6 +183,10 @@ def send_morning_briefing(
     registry: SQLiteRegistry,
     your_number: str,
 ) -> None:
+    day = datetime.now().date().isoformat()
+    if registry.has_briefing_been_sent(day):
+        return
+
     lines = ["Good morning!", "", "Today's Habits"]
     summaries = habit_service.get_weekly_summary()
     if summaries:
@@ -182,7 +215,8 @@ def send_morning_briefing(
         lines.append("- Nothing due")
 
     lines.extend(["", "Have a great day!"])
-    _safe_send(whatsapp_service, your_number, "\n".join(lines))
+    if _safe_send(whatsapp_service, your_number, "\n".join(lines)):
+        registry.mark_briefing_sent(day)
 
 
 def _parse_hhmm(raw: str) -> tuple[int, int]:

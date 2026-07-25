@@ -656,6 +656,18 @@ class PostgresRegistry:
             )
         self._commit()
 
+    def has_briefing_been_sent(self, day: str) -> bool:
+        with self._cursor() as cur:
+            cur.execute("SELECT 1 FROM briefing_log WHERE briefing_date = %s", (day,))
+            return cur.fetchone() is not None
+
+    def mark_briefing_sent(self, day: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO briefing_log (briefing_date) VALUES (%s) ON CONFLICT DO NOTHING", (day,)
+            )
+        self._commit()
+
     # ------------------------------------------------------------------
     # Nudge context
     # ------------------------------------------------------------------

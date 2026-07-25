@@ -141,6 +141,14 @@ class SQLiteRegistry:
             "CREATE INDEX IF NOT EXISTS idx_agent_inv_user_time ON agent_invocations (user_id, created_at)"
         )
 
+        # briefing_log — one row per day the morning briefing was sent (missed-briefing catch-up)
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS briefing_log (
+                briefing_date TEXT PRIMARY KEY,
+                sent_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # user_email_tokens — per-user Google OAuth tokens (Postgres parity).
         # account_type distinguishes scopes, e.g. 'personal' (Gmail) vs 'google_calendar'.
         self._connection.execute("""
@@ -758,6 +766,18 @@ class SQLiteRegistry:
         day = (usage_date or date.today()).isoformat()
         self._connection.execute(
             "INSERT OR IGNORE INTO whatsapp_usage_alerts (usage_date, threshold) VALUES (?, ?)", (day, threshold)
+        )
+        self._connection.commit()
+
+    def has_briefing_been_sent(self, day: str) -> bool:
+        row = self._connection.execute(
+            "SELECT 1 FROM briefing_log WHERE briefing_date = ?", (day,)
+        ).fetchone()
+        return row is not None
+
+    def mark_briefing_sent(self, day: str) -> None:
+        self._connection.execute(
+            "INSERT OR IGNORE INTO briefing_log (briefing_date) VALUES (?)", (day,)
         )
         self._connection.commit()
 
