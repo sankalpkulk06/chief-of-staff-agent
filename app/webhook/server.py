@@ -36,6 +36,10 @@ REPLY_MAP = {
     "no": "skipped",
 }
 
+# Explicit approve/reject words for resolving a pending HITL approval.
+_YES_WORDS = {"yes", "y", "approve", "confirm"}
+_NO_WORDS = {"no", "n", "reject", "cancel"}
+
 
 async def _validate_twilio_signature(
     request: Request,
@@ -218,22 +222,31 @@ async def webhook(
     phone = From
     body_lower = Body.strip().lower()
 
-    # HITL approval — check before habit nudge so yes/no isn't swallowed by habit logic
+    # HITL approval — check before habit nudge so yes/no isn't swallowed by habit logic.
+    is_confirm = body_lower in _YES_WORDS
+    is_reject = body_lower in _NO_WORDS
     pending_hitl_id = _registry.get_whatsapp_hitl_context(phone)
-    if pending_hitl_id:
-        if body_lower in ("yes", "y", "approve", "confirm"):
-            reply = _resolve_hitl_whatsapp(pending_hitl_id, approved=True)
-        elif body_lower in ("no", "n", "reject", "cancel"):
-            reply = _resolve_hitl_whatsapp(pending_hitl_id, approved=False)
-        else:
-            reply = None  # not a yes/no — fall through to normal chat
+    logger.info("WhatsApp HITL pointer for %s: %s", phone, pending_hitl_id)
 
-        if reply is not None:
-            _registry.clear_whatsapp_hitl_context(phone)
-            if _whatsapp_service:
-                _safe_send(phone, reply)
-            _registry.update_whatsapp_last_active(phone)
-            return Response(content="", media_type="application/xml")
+    # Fallback: pointer missing but the user clearly answered yes/no and there's no pending
+    # habit nudge → resolve the user's most recent pending approval, so a single reply is
+    # enough even if the per-phone pointer was lost (prevents the "say yes twice" bug).
+    if (not pending_hitl_id and (is_confirm or is_reject) and _whatsapp_user_id
+            and not _registry.get_nudge_context(phone)):
+        row = _registry.get_latest_pending_hitl(_whatsapp_user_id)
+        if row:
+            pending_hitl_id = row["id"]
+            logger.info("WhatsApp HITL: no pointer for %s; resolving latest pending %s via fallback",
+                        phone, pending_hitl_id)
+
+    if pending_hitl_id and (is_confirm or is_reject):
+        reply = _resolve_hitl_whatsapp(pending_hitl_id, approved=is_confirm)
+        _registry.clear_whatsapp_hitl_context(phone)
+        if _whatsapp_service:
+            _safe_send(phone, reply)
+        _registry.update_whatsapp_last_active(phone)
+        logger.info("WhatsApp HITL resolved id=%s approved=%s", pending_hitl_id, is_confirm)
+        return Response(content="", media_type="application/xml")
 
     # Habit nudge fast-reply
     pending_habit_id = _registry.get_nudge_context(phone)
@@ -262,6 +275,7 @@ async def webhook(
     # If the agent raised a HITL request, store it so the next yes/no resolves it
     if result.hitl_pending and result.hitl_id:
         _registry.set_whatsapp_hitl_context(phone, result.hitl_id)
+        logger.info("WhatsApp HITL: stored pointer %s -> %s", phone, result.hitl_id)
         reply = f"{reply}\n\nReply *yes* to confirm or *no* to cancel."
 
     if _whatsapp_service:

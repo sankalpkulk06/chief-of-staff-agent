@@ -1112,6 +1112,18 @@ class SQLiteRegistry:
                 data["expires_at"] = None
         return data
 
+    def get_latest_pending_hitl(self, user_id: str) -> Optional[Dict[str, object]]:
+        """Most recent unexpired pending HITL for the user (parsed), or None."""
+        row = self._connection.execute(
+            """
+            SELECT id FROM hitl_requests
+            WHERE user_id = ? AND status = 'pending' AND expires_at > CURRENT_TIMESTAMP
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+        return self.get_hitl_request(row["id"]) if row else None
+
     def attach_hitl_context(self, id: str, context: Dict[str, object]) -> None:
         row = self.get_hitl_request(id)
         if not row:

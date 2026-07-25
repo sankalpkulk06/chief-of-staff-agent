@@ -819,6 +819,20 @@ class PostgresRegistry:
             data["action_payload"] = json.loads(payload)
         return data
 
+    def get_latest_pending_hitl(self, user_id: str) -> Optional[Dict[str, object]]:
+        """Most recent unexpired pending HITL for the user (parsed), or None."""
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT id FROM hitl_requests
+                WHERE user_id = %s AND status = 'pending' AND expires_at > NOW()
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+        return self.get_hitl_request(row["id"]) if row else None
+
     def attach_hitl_context(self, id: str, context: Dict[str, object]) -> None:
         import json as _json
         row = self.get_hitl_request(id)
