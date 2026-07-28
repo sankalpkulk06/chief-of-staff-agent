@@ -134,24 +134,26 @@ class HabitService:
         self._commit()
         return Habit(id=habit_id, name=name, reminder_time=rt, active=True)
 
-    def log_habit(self, name: str, status: str = "done", note: str = "") -> HabitLog:
+    def log_habit(self, name: str, status: str = "done", note: str = "",
+                  logged_at: Optional[datetime] = None) -> HabitLog:
         habit = self._get_habit_by_name(name)
         if habit is None:
             raise ValueError(f"Habit '{name}' not found. Add it first with /habit add {name}")
-        return self.log_habit_by_id(habit.id, status=status, note=note)
+        return self.log_habit_by_id(habit.id, status=status, note=note, logged_at=logged_at)
 
-    def log_habit_by_id(self, habit_id: str, status: str = "done", note: str = "") -> HabitLog:
+    def log_habit_by_id(self, habit_id: str, status: str = "done", note: str = "",
+                        logged_at: Optional[datetime] = None) -> HabitLog:
         habit = self.get_habit_by_id(habit_id)
         if habit is None:
             raise ValueError(f"Habit '{habit_id}' not found.")
         log_id = str(uuid.uuid4())
-        now = datetime.now()
+        when = logged_at or datetime.now()
         self._execute(
             "INSERT INTO habit_logs (id, habit_id, logged_at, status, note) VALUES (?, ?, ?, ?, ?)",
-            (log_id, habit_id, now.isoformat(), status, note),
+            (log_id, habit_id, when.isoformat(), status, note),
         )
         self._commit()
-        return HabitLog(id=log_id, habit_id=habit_id, logged_at=now, status=status, note=note)
+        return HabitLog(id=log_id, habit_id=habit_id, logged_at=when, status=status, note=note)
 
     def unlog_habit(self, name: str) -> int:
         """Delete all log entries for today for the given habit. Returns rows deleted."""

@@ -1,6 +1,7 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from app.agents.action_agent import ActionAgent
+from app.core.habit_service import HabitService
 from app.storage.sqlite_registry import SQLiteRegistry
 
 
@@ -10,6 +11,35 @@ class _Provider:
 
     def chat(self, messages):
         return self.response
+
+
+def test_log_habit_backdates_to_named_day(tmp_path):
+    registry = SQLiteRegistry(tmp_path / "registry.db")
+    try:
+        hs = HabitService(registry, user_id="u1")
+        hs.add_habit("going to the gym")
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        agent = ActionAgent(
+            chat_provider=_Provider(
+                f'{{"action":"log_habit","params":{{"name":"going to the gym",'
+                f'"status":"done","logged_on":"{yesterday}"}}}}'
+            ),
+            registry=registry,
+        )
+        res = agent.execute(task="log habit", original_question="i went to the gym yesterday",
+                            history=[], user_id="u1")
+        # Write is HITL-gated; the confirmation must say "yesterday", not "today".
+        assert res.metadata.get("hitl_pending") is True
+        assert "yesterday" in res.output and "today" not in res.output
+
+        approved = agent.execute_approved(res.metadata["hitl_id"], user_id="u1")
+        assert approved.success is True
+
+        rows = registry._connection.execute("SELECT DATE(logged_at) AS d FROM habit_logs").fetchall()
+        assert rows[0]["d"] == yesterday          # logged to yesterday, not today
+        assert hs.get_unlogged_today()            # today is still NOT logged
+    finally:
+        registry.close()
 
 
 def test_action_agent_lists_todays_todos(tmp_path):

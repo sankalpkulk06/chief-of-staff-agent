@@ -1,8 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from app.agents.action_agent import ActionAgent
 from app.core import calorie_util
-from app.core.calorie_service import CalorieService, advance_calorie_flow
+from app.core.calorie_service import CalorieService, advance_calorie_flow, _resolve_eaten_on
 from app.storage.sqlite_registry import SQLiteRegistry
 
 
@@ -140,6 +140,40 @@ def test_flow_forces_estimate_after_max_clarify_rounds(tmp_path):
         state = {"stage": "clarifying", "description": "soup", "clarify_rounds": 2}
         result = advance_calorie_flow(provider, svc, 2000, state, "some soup")
         assert result["pending"]["stage"] == "confirming"  # forced past clarifying
+    finally:
+        registry.close()
+
+
+# ----------------------------------------------------------------------
+# Backdating
+# ----------------------------------------------------------------------
+
+def test_resolve_eaten_on_validation():
+    today = date.today()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    assert _resolve_eaten_on(yesterday) == yesterday
+    assert _resolve_eaten_on(today.isoformat()) is None          # today -> default (None)
+    assert _resolve_eaten_on((today + timedelta(days=1)).isoformat()) is None   # future rejected
+    assert _resolve_eaten_on((today - timedelta(days=90)).isoformat()) is None  # too far back
+    assert _resolve_eaten_on("not-a-date") is None
+    assert _resolve_eaten_on(None) is None
+
+
+def test_flow_backdates_to_named_day(tmp_path):
+    registry = SQLiteRegistry(tmp_path / "r.db")
+    try:
+        svc = CalorieService(registry, user_id="u1")
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        provider = _Provider(f'{{"status":"ready","dish":"rice and dal","calories":700,"eaten_on":"{yesterday}"}}')
+        step1 = advance_calorie_flow(provider, svc, 2000, None, "yesterday for dinner I had rice and dal")
+        assert step1["pending"]["eaten_on"] == yesterday
+        assert "yesterday" in step1["reply"]
+        step2 = advance_calorie_flow(provider, svc, 2000, step1["pending"], "yes")
+        assert step2["logged"] is True
+        # Logged to yesterday, NOT today.
+        assert svc.today_total() == 0
+        assert svc.total_for(date.today() - timedelta(days=1)) == 700
+        assert "yesterday" in step2["reply"]
     finally:
         registry.close()
 

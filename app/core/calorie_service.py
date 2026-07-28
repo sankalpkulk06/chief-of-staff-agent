@@ -25,6 +25,7 @@ _ESTIMATE_SYSTEM = load("calorie_estimate")
 
 MAX_CLARIFY_ROUNDS = 2   # follow-up questions before we force a best-effort estimate
 MAX_CONFIRM_ROUNDS = 2   # ambiguous yes/no replies before we give up on confirming
+MAX_BACKDATE_DAYS = 31   # how far back a meal may be logged
 _FALLBACK_CALORIES = 400  # last resort when the model returns no usable number
 
 # Affirmative / negative detection for the confirm step. Kept deliberately tight so a
@@ -120,14 +121,16 @@ class CalorieService:
     # Reads
     # ------------------------------------------------------------------
 
-    def today_total(self) -> int:
-        today = date.today().isoformat()
+    def total_for(self, day: date) -> int:
         row = self._execute(
             "SELECT COALESCE(SUM(calories), 0) AS total FROM calorie_entries "
             "WHERE user_id = ? AND DATE(eaten_at) = ?",
-            (self._user_id, today),
+            (self._user_id, day.isoformat()),
         ).fetchone()
         return int(row["total"]) if row and row["total"] is not None else 0
+
+    def today_total(self) -> int:
+        return self.total_for(date.today())
 
     def remaining(self, budget: int) -> int:
         return int(budget) - self.today_total()
@@ -179,7 +182,11 @@ def estimate_calories(provider: Any, description: str, force: bool = False) -> d
         '"status": "ready" with your best-effort estimate now — do NOT ask another question.'
         if force else ""
     )
-    system = _ESTIMATE_SYSTEM.replace("{force_clause}", force_clause)
+    system = (
+        _ESTIMATE_SYSTEM
+        .replace("{force_clause}", force_clause)
+        .replace("{today}", date.today().isoformat())
+    )
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": f"Meal: {description}"},
@@ -193,7 +200,7 @@ def estimate_calories(provider: Any, description: str, force: bool = False) -> d
         data = json.loads(match.group())
     except Exception:
         return {"status": "ready", "dish": description, "calories": _FALLBACK_CALORIES,
-                "items": None, "confidence": "low"}
+                "items": None, "eaten_on": None, "confidence": "low"}
 
     status = data.get("status")
     if status == "need_info" and not force and data.get("question"):
@@ -205,8 +212,26 @@ def estimate_calories(provider: Any, description: str, force: bool = False) -> d
         "dish": (data.get("dish") or description).strip(),
         "calories": calories,
         "items": data.get("items") if isinstance(data.get("items"), list) else None,
+        "eaten_on": _resolve_eaten_on(data.get("eaten_on")),
         "confidence": data.get("confidence", "medium"),
     }
+
+
+def _resolve_eaten_on(raw) -> Optional[str]:
+    """Validate a model-supplied 'YYYY-MM-DD'. Accept only dates within the allowed
+    backdating window (not in the future, at most MAX_BACKDATE_DAYS ago); else None (today)."""
+    if not raw:
+        return None
+    try:
+        parsed = date.fromisoformat(str(raw).strip()[:10])
+    except (TypeError, ValueError):
+        return None
+    today = date.today()
+    if parsed > today or parsed < today - timedelta(days=MAX_BACKDATE_DAYS):
+        return None
+    if parsed == today:
+        return None
+    return parsed.isoformat()
 
 
 def _coerce_calories(data: dict) -> int:
@@ -274,10 +299,12 @@ def advance_calorie_flow(
     calories = est.get("calories") or _FALLBACK_CALORIES
     dish = est.get("dish") or description
     items_json = json.dumps(est["items"]) if est.get("items") else None
+    eaten_on = est.get("eaten_on")
     return {
-        "reply": _confirm_reply(dish, calories),
+        "reply": _confirm_reply(dish, calories, eaten_on),
         "pending": {"stage": "confirming", "description": description, "dish": dish,
-                    "calories": int(calories), "items_json": items_json, "confirm_attempts": 0},
+                    "calories": int(calories), "items_json": items_json,
+                    "eaten_on": eaten_on, "confirm_attempts": 0},
         "logged": False,
         "entry": None,
     }
@@ -297,12 +324,16 @@ def _handle_confirm(
         if calorie_service is None:
             return {"reply": "I couldn't log that right now — the calorie store isn't available.",
                     "pending": None, "logged": False, "entry": None}
+        eaten_on = state.get("eaten_on")
+        eaten_at = _eaten_at_from(eaten_on)
         entry = calorie_service.add_entry(
-            state.get("description", dish), calories, items_json=state.get("items_json")
+            state.get("description", dish), calories,
+            items_json=state.get("items_json"), eaten_at=eaten_at,
         )
-        total = calorie_service.today_total()
+        day = eaten_at.date() if eaten_at else date.today()
+        total = calorie_service.total_for(day)
         remaining = int(budget) - total
-        return {"reply": _logged_reply(dish, calories, total, budget, remaining),
+        return {"reply": _logged_reply(dish, calories, total, budget, remaining, eaten_on),
                 "pending": None, "logged": True, "entry": entry}
 
     # Ambiguous reply — re-ask once, then give up so we never trap the conversation.
@@ -318,12 +349,45 @@ def _handle_confirm(
     }
 
 
-def _confirm_reply(dish: str, calories: int) -> str:
-    return (f"🍽️ *{dish}* is about *{calories} cal*.\n"
+def _eaten_at_from(eaten_on: Optional[str]) -> Optional[datetime]:
+    """Build the eaten_at timestamp for a backdated entry (date + current wall-clock
+    time so it sorts naturally), or None to let add_entry stamp 'now'."""
+    if not eaten_on:
+        return None
+    try:
+        return datetime.combine(date.fromisoformat(eaten_on), datetime.now().time())
+    except (TypeError, ValueError):
+        return None
+
+
+def _friendly_day(eaten_on: Optional[str]) -> str:
+    """'Jul 27' / 'yesterday' style label for a backdated day, or '' for today."""
+    if not eaten_on:
+        return ""
+    try:
+        d = date.fromisoformat(eaten_on)
+    except (TypeError, ValueError):
+        return ""
+    if d == date.today() - timedelta(days=1):
+        return "yesterday"
+    return d.strftime("%b %-d")
+
+
+def _confirm_reply(dish: str, calories: int, eaten_on: Optional[str] = None) -> str:
+    when = _friendly_day(eaten_on)
+    for_when = f" for *{when}*" if when else ""
+    return (f"🍽️ *{dish}* is about *{calories} cal*{for_when}.\n"
             "Reply *yes* to log it, or tell me what to adjust.")
 
 
-def _logged_reply(dish: str, calories: int, total: int, budget: int, remaining: int) -> str:
+def _logged_reply(
+    dish: str, calories: int, total: int, budget: int, remaining: int,
+    eaten_on: Optional[str] = None,
+) -> str:
+    when = _friendly_day(eaten_on)
+    if when:
+        # Backdated: report that day's total, not "today", and skip the today-centric "left".
+        return f"✅ Logged *{dish}* ({calories} cal) for *{when}*. That day: *{total}/{budget} cal*. 📅"
     head = f"✅ Logged *{dish}* ({calories} cal). Today: *{total}/{budget} cal*"
     if remaining >= 0:
         return f"{head} — *{remaining} left*. 🎯"

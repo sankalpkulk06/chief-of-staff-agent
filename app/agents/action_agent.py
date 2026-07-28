@@ -11,6 +11,7 @@ from app.config.settings import get_settings
 from app.core import calorie_util
 from app.core import timezone_util as tzu
 from app.core.calorie_service import CalorieService, advance_calorie_flow
+from app.core.date_util import friendly_day, resolve_backdate_iso
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
@@ -108,7 +109,11 @@ class ActionAgent:
             habits_context = "Existing habits (use exact name when logging): " + ", ".join(f'"{n}"' for n in habit_names)
         else:
             habits_context = ""
-        system = _EXTRACT_SYSTEM.replace("{habits_context}", habits_context)
+        system = (
+            _EXTRACT_SYSTEM
+            .replace("{habits_context}", habits_context)
+            .replace("{today}", date.today().isoformat())
+        )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": f"Task: {task}"},
@@ -200,7 +205,8 @@ class ActionAgent:
             name = params.get("name", "unknown habit")
             status = params.get("status", "done")
             verb = "mark" if status == "done" else "skip"
-            return f"{verb} '{name}' as {status} for today"
+            when = friendly_day(resolve_backdate_iso(params.get("logged_on"))) or "today"
+            return f"{verb} '{name}' as {status} for {when}"
         if action == "remember_fact":
             fact = params.get("fact", "unknown fact")
             category = params.get("category", "personal")
@@ -304,13 +310,19 @@ class ActionAgent:
         status = params.get("status", "done")
         if not name:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="missing habit name")
+        logged_on = resolve_backdate_iso(params.get("logged_on"))
+        logged_at = (
+            datetime.combine(date.fromisoformat(logged_on), datetime.now().time())
+            if logged_on else None
+        )
         try:
-            log = svc.log_habit(name=name, status=status)
+            log = svc.log_habit(name=name, status=status, logged_at=logged_at)
             verb = "skipped" if log.status == "skipped" else "logged as done"
+            when = friendly_day(logged_on) or "today"
             return AgentResult(
                 agent="action_agent",
                 task=task,
-                output=f"Habit '{name}' {verb} for today.",
+                output=f"Habit '{name}' {verb} for {when}.",
                 success=True,
             )
         except ValueError as exc:
