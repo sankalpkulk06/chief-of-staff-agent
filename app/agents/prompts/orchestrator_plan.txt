@@ -133,6 +133,9 @@ EXAMPLES
 [{"agent":"action_agent","task":"get_habits: retrieve all tracked habits and streaks"},
  {"agent":"conversational","task":"present the user's habits in a clear readable format"}]
 
+"log that I went to the gym yesterday" / "I hit the gym" / "mark my gym habit done" / "went the gym" →
+[{"agent":"action_agent","task":"log_habit: mark the matching tracked habit as done; resolve the day if the user named one","mode":"write","depends_on":[]}]
+
 "when is my birthday and when is my hotel booking in New Jersey?" →
 [{"id":"facts","agent":"action_agent","task":"list_facts: retrieve stored personal facts including birthday","mode":"read","depends_on":[],"parallel_group":"personal"},
  {"id":"docs","agent":"rag_agent","task":"search_documents: hotel booking in New Jersey — date, hotel name, reservation details","mode":"read","depends_on":[],"parallel_group":"personal"},

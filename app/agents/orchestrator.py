@@ -19,6 +19,7 @@ _EMAIL_RE = re.compile(r"\b(e-?mails?|inbox|gmail)\b", re.IGNORECASE)
 # and budget-setting, but NOT general trivia like "how many calories in a banana".
 _CALORIE_RE = re.compile(
     r"\bi (just )?ate\b"
+    r"|\bfor (breakfast|lunch|dinner|brunch|supper|a snack)\b"
     r"|\bcalorie budget\b"
     r"|\bcalories? (left|remaining|today|so far)\b"
     r"|\bhow many calories (do|have|are|left)\b"
