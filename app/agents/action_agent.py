@@ -8,7 +8,9 @@ from typing import Any, Callable, Dict, List, Optional
 from app.agents.base import AgentResult
 from app.agents.prompts import load
 from app.config.settings import get_settings
+from app.core import calorie_util
 from app.core import timezone_util as tzu
+from app.core.calorie_service import CalorieService, advance_calorie_flow
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
 from app.core.todo_parser import parse_due_date
@@ -55,12 +57,17 @@ class ActionAgent:
             if user_id and self._registry
             else self._habit_service
         )
+        calorie_svc = (
+            CalorieService(self._registry, user_id=user_id)
+            if user_id and self._registry
+            else None
+        )
         try:
             habit_names = [h.name for h in habit_svc._get_all_active()] if habit_svc else []
             action, params = self._extract_action(task, habit_names=habit_names)
             return self._dispatch(
                 action, params, task,
-                fact_svc=fact_svc, habit_svc=habit_svc,
+                fact_svc=fact_svc, habit_svc=habit_svc, calorie_svc=calorie_svc,
                 user_id=user_id,
             )
         except Exception as exc:
@@ -127,6 +134,7 @@ class ActionAgent:
         task: str,
         fact_svc: Optional[FactService] = None,
         habit_svc: Optional[HabitService] = None,
+        calorie_svc: Optional[CalorieService] = None,
         user_id: Optional[str] = None,
         hitl_bypass: bool = False,
     ) -> AgentResult:
@@ -160,6 +168,10 @@ class ActionAgent:
             "remember_fact": lambda p, t: self._remember_fact(p, t, fact_svc),
             "list_facts": lambda p, t: self._list_facts(p, t, fact_svc),
             "get_current_datetime": lambda p, t: self._get_current_datetime(p, t, user_id=user_id),
+            "log_meal": lambda p, t: self._log_meal(p, t, calorie_svc, user_id),
+            "calories_remaining": lambda p, t: self._calories_remaining(p, t, calorie_svc, user_id),
+            "set_calorie_budget": lambda p, t: self._set_calorie_budget(p, t, user_id),
+            "undo_meal": lambda p, t: self._undo_meal(p, t, calorie_svc, user_id),
         }
         handler = handlers.get(action)
         if not handler:
@@ -364,4 +376,93 @@ class ActionAgent:
             task=task,
             output=f"The current date and time is {stamp}.",
             success=True,
+        )
+
+    # ------------------------------------------------------------------
+    # Calorie counter
+    # ------------------------------------------------------------------
+
+    def _log_meal(
+        self, params: dict, task: str,
+        calorie_svc: Optional[CalorieService], user_id: Optional[str],
+    ) -> AgentResult:
+        """Start the log-a-meal flow: estimate, then return a clarify or confirm question.
+
+        This is the FIRST turn only. The returned ``calorie_pending`` metadata is picked up
+        by ChatService and persisted to ``pending_prompts``; follow-up turns (the user's
+        answer / confirmation) are handled in ``ChatService._maybe_continue_calorie``.
+        """
+        if not calorie_svc:
+            return AgentResult(agent="action_agent", task=task, output="",
+                               success=False, error="no_calorie_service")
+        description = (params.get("description") or params.get("meal") or task or "").strip()
+        if not description:
+            return AgentResult(
+                agent="action_agent", task=task, success=True,
+                output="What did you eat? Tell me the dish and roughly how much.",
+            )
+        budget = calorie_util.get_calorie_budget(self._registry, user_id or "")
+        result = advance_calorie_flow(self._provider, calorie_svc, budget, None, description)
+        metadata = {}
+        if result.get("pending"):
+            metadata["calorie_pending"] = result["pending"]
+        return AgentResult(
+            agent="action_agent", task=task, output=result["reply"],
+            success=True, metadata=metadata,
+        )
+
+    def _calories_remaining(
+        self, params: dict, task: str,
+        calorie_svc: Optional[CalorieService], user_id: Optional[str],
+    ) -> AgentResult:
+        if not calorie_svc:
+            return AgentResult(agent="action_agent", task=task, output="",
+                               success=False, error="no_calorie_service")
+        budget = calorie_util.get_calorie_budget(self._registry, user_id or "")
+        total = calorie_svc.today_total()
+        remaining = budget - total
+        if remaining >= 0:
+            out = f"Today: {total}/{budget} cal — {remaining} left."
+        else:
+            out = f"Today: {total}/{budget} cal — {abs(remaining)} over budget."
+        if not calorie_util.has_calorie_budget(self._registry, user_id or ""):
+            out += (f" (Using the default {budget} cal budget — say "
+                    "'set my calorie budget to 1800' to change it.)")
+        return AgentResult(agent="action_agent", task=task, output=out, success=True)
+
+    def _set_calorie_budget(
+        self, params: dict, task: str, user_id: Optional[str],
+    ) -> AgentResult:
+        amount = params.get("amount", params.get("budget"))
+        if amount is None:
+            return AgentResult(
+                agent="action_agent", task=task, success=True,
+                output="How many calories per day? e.g. 'set my calorie budget to 2000'.",
+            )
+        try:
+            value = calorie_util.set_calorie_budget(self._registry, user_id or "", amount)
+        except (TypeError, ValueError) as exc:
+            return AgentResult(agent="action_agent", task=task, success=True,
+                               output=str(exc) or "That doesn't look like a valid number.")
+        return AgentResult(agent="action_agent", task=task, success=True,
+                           output=f"Daily calorie budget set to {value} cal. 🎯")
+
+    def _undo_meal(
+        self, params: dict, task: str,
+        calorie_svc: Optional[CalorieService], user_id: Optional[str],
+    ) -> AgentResult:
+        if not calorie_svc:
+            return AgentResult(agent="action_agent", task=task, output="",
+                               success=False, error="no_calorie_service")
+        removed = calorie_svc.delete_latest_today()
+        if not removed:
+            return AgentResult(agent="action_agent", task=task, success=True,
+                               output="There's nothing logged today to undo.")
+        budget = calorie_util.get_calorie_budget(self._registry, user_id or "")
+        total = calorie_svc.today_total()
+        remaining = budget - total
+        return AgentResult(
+            agent="action_agent", task=task, success=True,
+            output=(f"Removed {removed['description']} ({removed['calories']} cal). "
+                    f"Today: {total}/{budget} cal — {remaining} left."),
         )

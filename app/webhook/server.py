@@ -159,6 +159,7 @@ async def lifespan(app: FastAPI):
             your_number=settings.your_whatsapp_number,
             morning_briefing_time=settings.morning_briefing_time,
             habit_nudge_time=settings.habit_nudge_time,
+            user_id=_whatsapp_user_id or "",
         )
         scheduler.start()
         app.state.scheduler = scheduler

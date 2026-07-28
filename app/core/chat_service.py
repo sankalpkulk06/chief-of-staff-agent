@@ -213,6 +213,18 @@ class ChatService:
                 history=history, hitl_pending=hitl_pending, hitl_id=hitl_id,
             )
 
+        # Captured answer/confirmation to a pending calorie log (clarify → confirm loop).
+        # Runs before orchestration so a follow-up ("300g chicken breast" / "yes") is fed
+        # back into the estimator instead of being re-routed as a fresh message.
+        calorie_followup = self._maybe_continue_calorie(
+            question, session_id=session_id, user_id=effective_uid
+        )
+        if calorie_followup is not None:
+            return self._record_answer(
+                session_id=session_id, question=question,
+                answer=calorie_followup, history=history,
+            )
+
         # All other natural language → multi-agent orchestration: plan → dispatch → synthesize
         run = self._agent_runner.run(
             question=question,
@@ -249,6 +261,18 @@ class ChatService:
             if r.metadata.get("hitl_pending"):
                 hitl_pending = True
                 hitl_id = r.metadata.get("hitl_id")
+                break
+
+        # A calorie log-a-meal turn returns a pending clarify/confirm state in metadata.
+        # ChatService owns the session, so it persists it; the next turn is picked up by
+        # _maybe_continue_calorie above.
+        for r in run.agent_results:
+            calorie_state = r.metadata.get("calorie_pending")
+            if calorie_state:
+                self._registry.set_pending_prompt(
+                    session_id, effective_uid or "", "calorie_log",
+                    calorie_state, ttl_minutes=15,
+                )
                 break
 
         # Record which agents handled this turn (feature-usage analytics; best-effort).
@@ -487,6 +511,41 @@ class ChatService:
         )
         return (result.message, result.hitl_pending, result.hitl_id)
 
+    def _maybe_continue_calorie(
+        self, question: str, session_id: str, user_id: str
+    ) -> Optional[str]:
+        """If a calorie log is mid-flow for this session, advance it with this message.
+
+        Returns the reply string, or None to fall through to the orchestrator. The flow
+        state machine lives in ``calorie_service.advance_calorie_flow``; here we only load
+        the persisted state, run one step, and persist or clear the result.
+        """
+        pending = self._registry.get_pending_prompt(session_id)
+        if not pending or pending.get("prompt_type") != "calorie_log":
+            return None
+
+        from app.core import calorie_util
+        from app.core.calorie_service import CalorieService, advance_calorie_flow
+
+        state = pending.get("state") or {}
+        calorie_svc = CalorieService(self._registry, user_id=user_id)
+        budget = calorie_util.get_calorie_budget(self._registry, user_id or "")
+        try:
+            result = advance_calorie_flow(
+                self._chat_provider, calorie_svc, budget, state, question
+            )
+        except Exception:
+            self._registry.clear_pending_prompt(session_id)
+            return None
+
+        if result.get("pending"):
+            self._registry.set_pending_prompt(
+                session_id, user_id or "", "calorie_log", result["pending"], ttl_minutes=15
+            )
+        else:
+            self._registry.clear_pending_prompt(session_id)
+        return result["reply"]
+
     def _answer_direct_command(
         self, question: str, response_style: Optional[str] = None, user_id: Optional[str] = None
     ) -> Optional[str]:
@@ -599,6 +658,38 @@ class ChatService:
                 "/habits"
             )
             return f"🌱 *Habit commands*\n{help_text}" if self._is_whatsapp_style(response_style) else help_text
+
+        if lowered in ("/calories", "/calorie"):
+            return self._format_calorie_summary(response_style=response_style, user_id=effective_uid)
+
+        if lowered.startswith("/calorie budget "):
+            from app.core import calorie_util
+            arg = command[len("/calorie budget "):].strip()
+            try:
+                value = calorie_util.set_calorie_budget(self._registry, effective_uid or "", arg)
+            except (TypeError, ValueError) as exc:
+                return self._style_status(str(exc) or "Usage: /calorie budget <number>", "📝", response_style)
+            return self._style_status(f"Daily calorie budget set to {value} cal.", "🎯", response_style)
+
+        if lowered.startswith("/calorie undo"):
+            from app.core.calorie_service import CalorieService
+            svc = CalorieService(self._registry, user_id=effective_uid)
+            removed = svc.delete_latest_today()
+            if not removed:
+                return self._style_status("Nothing logged today to undo.", "ℹ️", response_style)
+            return self._style_status(
+                f"Removed {removed['description']} ({removed['calories']} cal).", "↩️", response_style
+            )
+
+        if lowered.startswith("/calorie"):
+            help_text = (
+                "Calorie commands:\n"
+                "/calories — today's total and what's left\n"
+                "/calorie budget <number> — set your daily target\n"
+                "/calorie undo — remove today's last entry\n"
+                "Or just tell me: \"I ate a chicken biryani\""
+            )
+            return f"🍽️ *Calorie commands*\n{help_text}" if self._is_whatsapp_style(response_style) else help_text
 
         return None
 
@@ -777,6 +868,35 @@ class ChatService:
         lines.append("")
         total_prefix = "✅ " if self._is_whatsapp_style(response_style) else ""
         lines.append(f"{total_prefix}Total logged this week: {total_done}/{total_possible}")
+        return "\n".join(lines)
+
+    def _format_calorie_summary(self, response_style: Optional[str] = None, user_id: Optional[str] = None) -> str:
+        from app.core import calorie_util
+        from app.core.calorie_service import CalorieService
+
+        uid = user_id or self._user_id
+        svc = CalorieService(self._registry, user_id=uid)
+        budget = calorie_util.get_calorie_budget(self._registry, uid or "")
+        total = svc.today_total()
+        remaining = budget - total
+        entries = svc.list_today()
+        wa = self._is_whatsapp_style(response_style)
+
+        header = f"🍽️ *Calories today* — {total}/{budget} cal" if wa else f"Calories today — {total}/{budget} cal"
+        lines = [header, ""]
+        if entries:
+            for e in entries:
+                lines.append(f"• {e['description']} — {e['calories']} cal")
+        else:
+            lines.append("Nothing logged yet today.")
+        lines.append("")
+        if remaining >= 0:
+            lines.append((f"✅ {remaining} cal left." if wa else f"{remaining} cal left."))
+        else:
+            lines.append((f"⚠️ {abs(remaining)} cal over budget." if wa else f"{abs(remaining)} cal over budget."))
+        if not calorie_util.has_calorie_budget(self._registry, uid or ""):
+            lines.append("")
+            lines.append(f"(Default {budget} cal budget — set yours with /calorie budget <number>.)")
         return "\n".join(lines)
 
     def create_session(self, session_id: str, title: str = "") -> None:

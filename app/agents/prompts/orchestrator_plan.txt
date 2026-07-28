@@ -14,6 +14,10 @@ action_agent — manages ALL personal user data (read AND write)
   • add_habit(name, reminder_time) — register a new tracked habit
   • log_habit(name, status) — record that a habit was completed or skipped today
   • get_habits() — retrieve all habits and their weekly summary
+  • log_meal(description) — the user ate/drank something and wants it counted toward today's calories; the agent estimates the calories and confirms before logging
+  • calories_remaining() — report today's calorie total and how many are left against the daily budget
+  • set_calorie_budget(amount) — set the user's daily calorie target
+  • undo_meal() — remove the most recently logged meal from today's calories
   • get_current_datetime() — the current date, day of week, and time in the user's timezone; use for "what time is it", "what's today's date", "what day is it"
 
 rag_agent — searches ONLY the user's own saved documents and uploaded files
@@ -218,6 +222,15 @@ EXAMPLES
 "what time is it?" / "what's today's date?" / "what day is it?" →
 [{"agent":"action_agent","task":"get_current_datetime: return the current date, day, and time","mode":"read","depends_on":[]},
  {"agent":"conversational","task":"tell the user the current date and time clearly","mode":"synthesize","depends_on":[]}]
+
+"I ate a chicken biryani" / "I just had two eggs and toast" / "log a coffee" →
+[{"agent":"action_agent","task":"log_meal: the food the user said they ate, verbatim with any quantities","mode":"write","depends_on":[]}]
+
+"how many calories do I have left today?" / "what's my calorie count?" →
+[{"agent":"action_agent","task":"calories_remaining: report today's total and remaining calories","mode":"read","depends_on":[]}]
+
+"set my calorie budget to 2000" / "my daily calorie goal is 1800" →
+[{"agent":"action_agent","task":"set_calorie_budget: set the daily calorie target to the number the user gave","mode":"write","depends_on":[]}]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT

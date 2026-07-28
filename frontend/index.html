@@ -2656,6 +2656,10 @@
           <div class="an-ptitle"><h2>Activity</h2><span class="an-meta" id="anActivityMeta"></span></div>
           <div class="an-hmwrap" id="anActivity"></div>
         </div>
+        <div class="an-panel an-col12">
+          <div class="an-ptitle"><h2>Calories</h2><span class="an-meta" id="anCalMeta">today vs budget</span></div>
+          <div id="anCalories"></div>
+        </div>
         <div class="an-panel an-col12 an-insights">
           <div class="an-ptitle"><h2>💡 Insights</h2><span class="an-meta">generated from your stats</span></div>
           <p id="anInsight" class="an-insight"></p>
@@ -4233,12 +4237,68 @@
     }
   }
 
+  function renderCalTrend(host, days, budget) {
+    if (!host) return;
+    const max = Math.max(budget || 0, ...days.map(d => d.total), 1);
+    const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const todayKey = days.length ? days[days.length - 1].day : null;
+    host.style.cssText = 'display:flex;align-items:flex-end;gap:8px;height:104px;margin-top:.35rem';
+    host.innerHTML = days.map(d => {
+      const dt = new Date(d.day + 'T00:00:00');
+      const h = Math.round((d.total / max) * 72);
+      const isToday = d.day === todayKey;
+      const over = budget && d.total > budget;
+      const col = over ? '#e0603c' : (isToday ? 'var(--accent)' : 'var(--fg, #8a9098)');
+      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">
+        <span style="font-size:.68em;opacity:.6;margin-bottom:3px;min-height:1em">${d.total || ''}</span>
+        <div title="${d.day}: ${d.total} cal" style="width:60%;max-width:26px;height:${Math.max(h, 2)}px;background:${col};border-radius:3px 3px 0 0;opacity:${d.total ? 1 : .28}"></div>
+        <span style="font-size:.7em;opacity:${isToday ? 1 : .5};margin-top:5px;font-weight:${isToday ? 700 : 400}">${dow[dt.getDay()]}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function renderCalories(today, history) {
+    const host = document.getElementById('anCalories');
+    if (!host) return;
+    const t = today || {}, days = (history && history.days) || [];
+    const total = t.total || 0, budget = t.budget || 0;
+    const remaining = (t.remaining != null) ? t.remaining : (budget - total);
+    const meta = document.getElementById('anCalMeta');
+    if (meta) meta.textContent = `${total}/${budget} cal today · ${remaining >= 0 ? remaining + ' left' : Math.abs(remaining) + ' over'}`;
+    const pct = budget > 0 ? Math.min(100, Math.round(total / budget * 100)) : 0;
+    const entries = t.entries || [];
+    let html = `
+      <div class="an-hrow">
+        <span class="an-hname">Today</span>
+        <span class="an-track"><span class="an-fill" style="width:${pct}%"></span></span>
+        <span class="an-hpct">${total}/${budget}${remaining < 0 ? ' ⚠️' : ''}</span>
+      </div>`;
+    if (entries.length) {
+      html += '<div style="margin:.5rem 0;display:flex;flex-direction:column;gap:.25rem">' +
+        entries.map(e => `<div style="display:flex;justify-content:space-between;font-size:.85em;opacity:.85"><span>${escapeHtml(e.description)}</span><span>${e.calories} cal</span></div>`).join('') +
+        '</div>';
+    } else {
+      html += '<div class="an-empty">Nothing logged yet today. Tell Sage "I ate…" to start.</div>';
+    }
+    html += '<div class="an-meta" style="margin-top:.9rem;display:block">Last 7 days</div>';
+    html += '<div id="anCalTrend"></div>';
+    host.innerHTML = html;
+    renderCalTrend(document.getElementById('anCalTrend'), days, budget);
+  }
+
   async function loadAnalytics(win) {
     const insEl = document.getElementById('anInsight');
     try {
       const data = await apiFetch('GET', '/analytics?window=' + win);
       renderAnalyticsPage(data);
     } catch (e) { /* leave empty states */ }
+    try {
+      const [today, history] = await Promise.all([
+        apiFetch('GET', '/calories/today'),
+        apiFetch('GET', '/calories/history?days=7'),
+      ]);
+      renderCalories(today, history);
+    } catch (e) { /* leave empty state */ }
     if (insEl) {
       insEl.textContent = 'Thinking…';
       try { const r = await apiFetch('GET', '/analytics/insights?window=' + win); insEl.textContent = r.insights || ''; }

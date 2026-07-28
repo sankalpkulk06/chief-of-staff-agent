@@ -92,6 +92,25 @@ class SQLiteRegistry:
             "UPDATE chat_turns SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
         )
 
+        # calorie_entries (new table — create if missing on existing local DBs)
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS calorie_entries (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL DEFAULT 'default',
+                description TEXT NOT NULL,
+                calories    INTEGER NOT NULL,
+                items_json  TEXT,
+                eaten_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_calorie_entries_user_id ON calorie_entries(user_id)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_calorie_entries_eaten_at ON calorie_entries(eaten_at)"
+        )
+
         # user_settings (new table — create if missing)
         self._connection.execute("""
             CREATE TABLE IF NOT EXISTS user_settings (

@@ -14,6 +14,19 @@ VALID_AGENTS = frozenset({"action_agent", "rag_agent", "research_agent", "conver
 # dropped it (routing is otherwise non-deterministic). Tight on purpose: no bare "mail".
 _EMAIL_RE = re.compile(r"\b(e-?mails?|inbox|gmail)\b", re.IGNORECASE)
 
+# Clear calorie-logging / calorie-query intent → route straight to action_agent as a
+# single verbatim step. Tight on purpose: matches "I ate X", personal calorie questions,
+# and budget-setting, but NOT general trivia like "how many calories in a banana".
+_CALORIE_RE = re.compile(
+    r"\bi (just )?ate\b"
+    r"|\bcalorie budget\b"
+    r"|\bcalories? (left|remaining|today|so far)\b"
+    r"|\bhow many calories (do|have|are|left)\b"
+    r"|\bmy calorie(s)?\b"
+    r"|\bset\b[^.?!]*\bcalorie",
+    re.IGNORECASE,
+)
+
 _PLAN_SYSTEM = load("orchestrator_plan")
 _SYNTHESIS_SYSTEM = load("orchestrator_synthesis")
 
@@ -51,6 +64,9 @@ class OrchestratorAgent:
             )
         # Deterministic safety net: a clear email request must reach email_agent.
         result.steps = self._ensure_email_agent(question, result.steps)
+        # Deterministic safety net: a clear calorie request goes straight to action_agent
+        # as a single verbatim step (no synthesis rewording of the estimate/confirm text).
+        result.steps = self._ensure_calorie_action(question, result.steps)
         return result
 
     def synthesize(
@@ -206,3 +222,16 @@ class OrchestratorAgent:
             mode="synthesize",
         ))
         return OrchestratorAgent._normalize_step_dependencies(kept)
+
+    @staticmethod
+    def _ensure_calorie_action(question: str, steps: list[AgentStep]) -> list[AgentStep]:
+        """Force a clear calorie request to action_agent as a single verbatim step.
+
+        The calorie flow returns crisp, already-formatted clarify/confirm text plus a
+        ``calorie_pending`` metadata payload that ChatService persists. Routing it as a
+        lone action_agent step (no conversational synthesis) keeps that text intact and
+        avoids an extra LLM call. Tight regex, so it never hijacks general trivia.
+        """
+        if not _CALORIE_RE.search(question or ""):
+            return steps
+        return [AgentStep(id="calorie", agent="action_agent", task=question, mode="write")]

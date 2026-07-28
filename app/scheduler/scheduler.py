@@ -20,6 +20,7 @@ def build_scheduler(
     your_number: str,
     morning_briefing_time: str = "08:00",
     habit_nudge_time: str = "21:00",
+    user_id: str = "",
 ) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(
         job_defaults={
@@ -46,7 +47,7 @@ def build_scheduler(
         "cron",
         hour=briefing_hour,
         minute=briefing_minute,
-        args=[habit_service, whatsapp_service, news_service, registry, your_number],
+        args=[habit_service, whatsapp_service, news_service, registry, your_number, user_id],
         id="morning_briefing",
         replace_existing=True,
     )
@@ -68,7 +69,7 @@ def build_scheduler(
         "date",
         run_date=datetime.now() + timedelta(seconds=15),
         args=[habit_service, whatsapp_service, news_service, registry, your_number,
-              briefing_hour, briefing_minute],
+              briefing_hour, briefing_minute, user_id],
         id="briefing_catchup",
         replace_existing=True,
     )
@@ -85,12 +86,13 @@ def briefing_catchup(
     your_number: str,
     briefing_hour: int,
     briefing_minute: int,
+    user_id: str = "",
 ) -> None:
     now = datetime.now()
     briefing_today = now.replace(hour=briefing_hour, minute=briefing_minute, second=0, microsecond=0)
     if now >= briefing_today:
         # send_morning_briefing skips if it already went out today.
-        send_morning_briefing(habit_service, whatsapp_service, news_service, registry, your_number)
+        send_morning_briefing(habit_service, whatsapp_service, news_service, registry, your_number, user_id)
 
 
 def schedule_todo_reminder(
@@ -182,6 +184,7 @@ def send_morning_briefing(
     news_service: NewsService,
     registry: SQLiteRegistry,
     your_number: str,
+    user_id: str = "",
 ) -> None:
     day = datetime.now().date().isoformat()
     if registry.has_briefing_been_sent(day):
@@ -214,9 +217,32 @@ def send_morning_briefing(
     else:
         lines.append("- Nothing due")
 
+    _append_calorie_recap(lines, registry, habit_service, user_id)
+
     lines.extend(["", "Have a great day!"])
     if _safe_send(whatsapp_service, your_number, "\n".join(lines)):
         registry.mark_briefing_sent(day)
+
+
+def _append_calorie_recap(
+    lines: list, registry: SQLiteRegistry, habit_service: HabitService, user_id: str,
+) -> None:
+    """Add a 'Calories (yesterday)' recap line, but only if there's something to show."""
+    try:
+        from app.core import calorie_util
+        from app.core.calorie_service import CalorieService
+
+        uid = user_id or getattr(habit_service, "_user_id", "") or ""
+        svc = CalorieService(registry, user_id=uid)
+        totals = svc.daily_totals(days=2)  # [yesterday, today]
+        yesterday = totals[0]["total"] if totals else 0
+        has_budget = calorie_util.has_calorie_budget(registry, uid)
+        if yesterday <= 0 and not has_budget:
+            return
+        budget = calorie_util.get_calorie_budget(registry, uid)
+        lines.extend(["", "Calories (yesterday)", f"- {yesterday}/{budget} cal"])
+    except Exception:
+        logger.exception("Failed to build calorie recap for briefing")
 
 
 def _parse_hhmm(raw: str) -> tuple[int, int]:

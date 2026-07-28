@@ -124,6 +124,21 @@ CREATE INDEX IF NOT EXISTS idx_habit_logs_habit_id ON habit_logs(habit_id);
 CREATE INDEX IF NOT EXISTS idx_habit_logs_logged_at ON habit_logs(logged_at);
 CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_id);
 
+-- Calorie counter — one append-only row per logged meal. "Today's total" is derived
+-- at read time via DATE(eaten_at) = today; the daily budget lives in user_settings.
+CREATE TABLE IF NOT EXISTS calorie_entries (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT 'default',
+    description TEXT NOT NULL,
+    calories    INTEGER NOT NULL,
+    items_json  TEXT,
+    eaten_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_calorie_entries_user_id ON calorie_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_calorie_entries_eaten_at ON calorie_entries(eaten_at);
+
 CREATE TABLE IF NOT EXISTS todos (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL DEFAULT 'default',
