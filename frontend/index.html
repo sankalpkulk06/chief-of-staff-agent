@@ -2475,6 +2475,7 @@
         </div>
       </div>
       <div class="right">
+        <button class="btn-sm" id="profAnalytics" title="Analytics">Analytics</button>
         <button class="btn-sm danger" id="profDelete" title="Delete profile">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M6 4V2.5h4V4M5 6v7M8 6v7M11 6v7M4 4l.5 10h7L12 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Delete
@@ -2630,6 +2631,7 @@
         <span class="crumb"><span class="glyph">~</span><span>sage</span><span class="sep">/</span><span class="here">analytics</span></span>
       </div>
       <div class="right">
+        <button class="btn-sm" id="anProfile" title="Profile">Profile</button>
         <div class="an-seg" id="anWindow" role="group" aria-label="Time window">
           <button type="button" data-w="7">7d</button>
           <button type="button" data-w="30" class="on">30d</button>
@@ -3591,6 +3593,7 @@
     setTimeout(() => {
       document.getElementById('chat').hidden = true;
       document.getElementById('login').hidden = true;
+      document.getElementById('analytics').hidden = true;
       document.getElementById('profile').scrollTop = 0;
     }, 520);
     loadProfile();
@@ -3606,6 +3609,7 @@
     openProfile();
   });
   document.getElementById('profBack')?.addEventListener('click', backToChat);
+  document.getElementById('profAnalytics')?.addEventListener('click', openAnalytics);
   document.getElementById('profExport')?.addEventListener('click', (e) => {
     const btn = e.currentTarget;
     const orig = btn.innerHTML;
@@ -4352,6 +4356,7 @@
     loadAnalytics(anWindow);
   }
   document.getElementById('topAnalytics')?.addEventListener('click', openAnalytics);
+  document.getElementById('anProfile')?.addEventListener('click', openProfile);
   document.getElementById('anBack')?.addEventListener('click', () => {
     document.getElementById('chat').hidden = false;
     document.body.dataset.screen = 'chat';
