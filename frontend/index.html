@@ -4167,12 +4167,22 @@
     const k = data.kpis || {};
     // KPI cards
     const kp = document.getElementById('anKpis');
+    const dl = data.deltas || {};
+    const period = (data.window_days <= 7) ? 'week' : (data.window_days <= 30 ? 'month' : 'quarter');
+    const deltaLine = (n) => {
+      if (n > 0) return `<span style="color:#57c08a">↑ +${n}</span> <span style="opacity:.55">vs last ${period}</span>`;
+      if (n < 0) return `<span style="color:#e0603c">↓ ${Math.abs(n)}</span> <span style="opacity:.55">vs last ${period}</span>`;
+      return `<span style="opacity:.45">level vs last ${period}</span>`;
+    };
+    const bestStreak = k.best_streak;
+    const streakDelta = (bestStreak && (!k.top_streak || bestStreak.days > (k.top_streak.days || 0)))
+      ? `<span style="opacity:.55">best ever: ${bestStreak.days}d</span>` : '';
     if (kp) {
       const cards = [
-        { lab: 'Sessions', big: k.sessions ?? 0, spark: k.sessions_spark, color: 'var(--accent)', foot: `${k.days_active ?? 0} days active` },
-        { lab: 'Top streak', big: (k.top_streak ? k.top_streak.days : 0), unit: 'd', spark: null, color: '#e0a23c', foot: k.top_streak ? `${escapeHtml(k.top_streak.name)} 🔥` : 'no streak yet' },
-        { lab: 'Todos done', big: k.todos_pct ?? 0, unit: '%', spark: null, color: '#57c08a', foot: `${k.todos_done ?? 0}/${k.todos_total ?? 0} · ${k.overdue ?? 0} overdue` },
-        { lab: 'Memory', big: k.facts_total ?? 0, spark: k.facts_spark, color: 'var(--accent)', foot: `${k.facts_personal ?? 0} personal · ${k.facts_work ?? 0} work` },
+        { lab: 'Sessions', big: k.sessions ?? 0, spark: k.sessions_spark, color: 'var(--accent)', foot: `${k.days_active ?? 0} days active`, delta: deltaLine(dl.sessions ?? 0) },
+        { lab: 'Top streak', big: (k.top_streak ? k.top_streak.days : 0), unit: 'd', spark: null, color: '#e0a23c', foot: k.top_streak ? `${escapeHtml(k.top_streak.name)} 🔥` : 'no active streak', delta: streakDelta },
+        { lab: 'Todos done', big: k.todos_pct ?? 0, unit: '%', spark: null, color: '#57c08a', foot: `${k.todos_done ?? 0}/${k.todos_total ?? 0} · ${k.overdue ?? 0} overdue`, delta: deltaLine(dl.todos_done ?? 0) },
+        { lab: 'Memory', big: k.facts_total ?? 0, spark: k.facts_spark, color: 'var(--accent)', foot: `${k.facts_personal ?? 0} personal · ${k.facts_work ?? 0} work`, delta: (dl.facts_added > 0) ? `<span style="color:#57c08a">+${dl.facts_added}</span> <span style="opacity:.55">this ${period}</span>` : '' },
       ];
       kp.innerHTML = cards.map((c, i) => `
         <div class="an-panel an-kpi">
@@ -4180,6 +4190,7 @@
           <div class="an-big">${c.big}${c.unit ? `<span class="an-unit">${c.unit}</span>` : ''}</div>
           <div class="an-spark" id="anSpark${i}"></div>
           <div class="an-foot">${c.foot}</div>
+          ${c.delta ? `<div class="an-foot" style="margin-top:3px">${c.delta}</div>` : ''}
         </div>`).join('');
       cards.forEach((c, i) => { if (c.spark && c.spark.some(v => v)) { const s = anSpark(c.spark, { color: c.color }); if (s) document.getElementById('anSpark' + i).append(s); } });
     }
@@ -4235,6 +4246,22 @@
       if (u.heatmap && u.heatmap.flat().some(v => v)) ac.append(anDayHour(u.heatmap));
       else ac.innerHTML = '<div class="an-empty">No chat activity in this window yet.</div>';
     }
+
+    // Panel takeaways — one data-driven line per panel.
+    const tk = data.takeaways || {};
+    const addTake = (hostId, text) => {
+      if (!text) return;
+      const h = document.getElementById(hostId);
+      if (!h) return;
+      const el = document.createElement('div');
+      el.style.cssText = 'margin-top:.7rem;padding-top:.55rem;border-top:1px solid rgba(255,255,255,.06);font-size:.85em;opacity:.8';
+      el.textContent = '💡 ' + text;
+      h.append(el);
+    };
+    addTake('anHabits', tk.habits);
+    addTake('anFeatures', tk.features);
+    addTake('anActivity', tk.activity);
+    if (data.todos && data.todos.total) addTake('anTodos', tk.todos);  // skip when empty (dup of empty state)
   }
 
   function renderCalTrend(host, days, budget) {
@@ -4282,6 +4309,12 @@
     }
     html += '<div class="an-meta" style="margin-top:.9rem;display:block">Last 7 days</div>';
     html += '<div id="anCalTrend"></div>';
+    const logged = days.filter(d => d.total > 0);
+    if (logged.length) {
+      const avg = Math.round(logged.reduce((a, d) => a + d.total, 0) / logged.length);
+      const onTarget = logged.filter(d => budget && d.total <= budget).length;
+      html += `<div style="margin-top:.7rem;padding-top:.55rem;border-top:1px solid rgba(255,255,255,.06);font-size:.85em;opacity:.8">💡 Avg ${avg} cal/day${budget ? ` · ${onTarget}/${logged.length} days on target` : ''}</div>`;
+    }
     host.innerHTML = html;
     renderCalTrend(document.getElementById('anCalTrend'), days, budget);
   }

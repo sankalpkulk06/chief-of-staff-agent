@@ -146,6 +146,32 @@ class AnalyticsService:
                 facts_daily[idx[dt.date()]] += 1
 
         top_streak = max(habits, key=lambda h: h["streak"], default=None)
+        best_streak = self._best_ever_streak(user_id)
+
+        # Period-over-period deltas: compare this window to the one immediately before it.
+        prev_since = since - timedelta(days=win)
+        prev_end = since - timedelta(days=1)
+
+        def _count_in_prev(items: List[Dict], key: str) -> int:
+            n = 0
+            for it in items:
+                dt = self._parse_datetime(it.get(key))
+                if dt and prev_since <= dt.date() <= prev_end:
+                    n += 1
+            return n
+
+        prev_sessions = _count_in_prev(sessions, "created_at")
+        facts_added = sum(facts_daily)
+        prev_todos_done = sum(
+            1 for r in self._registry.list_all_todos(user_id)
+            if (c := self._parse_datetime(r.get("completed_at"))) and prev_since <= c.date() <= prev_end
+        )
+        deltas = {
+            "sessions": sess_count - prev_sessions,
+            "todos_done": todos["done"] - prev_todos_done,
+            "facts_added": facts_added,
+        }
+
         kpis = {
             "sessions": sess_count,
             "sessions_spark": sess_daily,
@@ -153,6 +179,7 @@ class AnalyticsService:
             "peak_hour": peak_hour,
             "top_streak": ({"name": top_streak["name"], "days": top_streak["streak"]}
                            if top_streak and top_streak["streak"] > 0 else None),
+            "best_streak": best_streak,
             "todos_pct": todos["pct"],
             "todos_done": todos["done"],
             "todos_total": todos["total"],
@@ -165,12 +192,53 @@ class AnalyticsService:
         return {
             "window_days": win,
             "kpis": kpis,
+            "deltas": deltas,
             "habits": habits,
             "todos": todos,
             "usage": {"heatmap": heatmap, "peak_hour": peak_hour, "source": source, "daily": daily_vol},
             "agents": agents,
             "topics": self._top_topics(user_turns),
+            "takeaways": self._takeaways(habits, agents, todos, peak_hour, best_streak),
         }
+
+    @staticmethod
+    def _takeaways(habits, agents, todos, peak_hour, best_streak) -> Dict[str, str]:
+        """One-line, data-driven read for each panel. Deterministic (no LLM)."""
+        out: Dict[str, str] = {}
+
+        if habits:
+            top = max(habits, key=lambda h: (h["streak"], h["pct"]))
+            line = f"{top['name']} at {top['pct']}% consistency"
+            prev = top.get("prev_pct")
+            if prev is not None and top["pct"] >= prev + 3:
+                line += f" — up from {prev}%"
+            elif prev is not None and top["pct"] <= prev - 3:
+                line += f" — slipped from {prev}%"
+            if best_streak and best_streak["days"] > max((h["streak"] for h in habits), default=0):
+                line += f". Best ever: {best_streak['days']}d"
+            out["habits"] = line
+
+        if agents:
+            top = agents[0]
+            out["features"] = f"You lean most on {top['name'].replace('_agent', '')} ({top['pct']}%)"
+
+        if todos.get("total"):
+            line = f"{todos['done']}/{todos['total']} done ({todos['pct']}%)"
+            if todos.get("overdue"):
+                line += f" · {todos['overdue']} overdue"
+            out["todos"] = line
+        else:
+            out["todos"] = "No todos yet — an easy place to build momentum."
+
+        if peak_hour is not None:
+            if peak_hour <= 4 or peak_hour >= 22:
+                out["activity"] = f"You're a night owl — peak {peak_hour:02d}:00 UTC"
+            elif peak_hour <= 8:
+                out["activity"] = f"You're an early bird — peak {peak_hour:02d}:00 UTC"
+            else:
+                out["activity"] = f"Peak activity around {peak_hour:02d}:00 UTC"
+
+        return out
 
     # ------------------------------------------------------------------
     # Insights digest (LLM narrative over the computed stats; cached)
@@ -228,6 +296,12 @@ class AnalyticsService:
                          f"{k.get('sessions', 0)} sessions")
         if k.get("facts_total"):
             lines.append(f"Memory: {k['facts_total']} facts")
+        if k.get("best_streak"):
+            lines.append(f"Best-ever habit streak: {k['best_streak']['name']} {k['best_streak']['days']} days")
+        d = data.get("deltas", {})
+        if d:
+            lines.append(f"Vs previous period: sessions {d.get('sessions', 0):+d}, "
+                         f"todos completed {d.get('todos_done', 0):+d}")
         return "\n".join(lines)
 
     @staticmethod
@@ -253,25 +327,56 @@ class AnalyticsService:
         # + date.today()), so anchor the habit window locally so "logged today" lines up.
         today = date.today()
         since = today - timedelta(days=win - 1)
+        prev_since = since - timedelta(days=win)   # the window immediately before this one
         days = [since + timedelta(days=i) for i in range(win)]
+        prev_days = [prev_since + timedelta(days=i) for i in range(win)]
         hs = HabitService(self._registry, user_id)
         try:
             habits = hs._get_all_active()
         except Exception:
             return []
         day_set = set(days)
+        prev_set = set(prev_days)
         out = []
         for h in habits:
             try:
-                logs = hs.get_logs_since(h.id, since)
+                logs = hs.get_logs_since(h.id, prev_since)  # covers this window + the prior one
                 done = {self._parse_date(l["day"]) for l in logs if l.get("status") == "done"}
                 streak = hs.get_streak(h.id)
             except Exception:
                 done, streak = set(), 0
             series = [1 if d in done else 0 for d in days]
             pct = round(len(done & day_set) / win * 100) if win else 0
-            out.append({"name": h.name, "pct": pct, "streak": streak, "series": series})
+            prev_pct = round(len(done & prev_set) / win * 100) if win else 0
+            out.append({"name": h.name, "pct": pct, "prev_pct": prev_pct,
+                        "streak": streak, "series": series})
         return out
+
+    def _best_ever_streak(self, user_id: str) -> Optional[Dict]:
+        """Longest consecutive 'done' run any habit has ever achieved (last 365 days)."""
+        from app.core.habit_service import HabitService
+        hs = HabitService(self._registry, user_id)
+        try:
+            habits = hs._get_all_active()
+        except Exception:
+            return None
+        best, best_name = 0, None
+        for h in habits:
+            try:
+                logs = hs.get_logs_since(h.id, date.today() - timedelta(days=365))
+            except Exception:
+                continue
+            done = sorted({d for l in logs if l.get("status") == "done"
+                           and (d := self._parse_date(l.get("day")))})
+            run = longest = 0
+            prev = None
+            for d in done:
+                run = run + 1 if (prev and (d - prev).days == 1) else 1
+                longest = max(longest, run)
+                prev = d
+            if longest > best:
+                best, best_name = longest, h.name
+        return {"name": best_name, "days": best} if best > 0 else None
 
     def _todos_section(self, user_id: str, idx: Dict[date, int]) -> Dict[str, Any]:
         rows = self._registry.list_all_todos(user_id)
