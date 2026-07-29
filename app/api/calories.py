@@ -20,19 +20,23 @@ class EntryOut(BaseModel):
     id: str
     description: str
     calories: int
+    kind: str = "intake"
     eaten_at: Optional[str] = None
 
 
 class TodayOut(BaseModel):
-    total: int
+    total: int            # calories eaten (intake)
+    burned: int           # calories burned in workouts
+    net: int              # intake - burned
     budget: int
-    remaining: int
+    remaining: int        # budget - net (burning gives you more room)
     entries: List[EntryOut]
 
 
 class EntryIn(BaseModel):
     description: str = Field(..., min_length=1)
     calories: int = Field(..., ge=0)
+    kind: str = "intake"
 
 
 class BudgetIn(BaseModel):
@@ -48,10 +52,14 @@ async def get_today(
     svc = CalorieService(registry, user_id=uid)
     budget = calorie_util.get_calorie_budget(registry, uid)
     total = svc.today_total()
+    burned = svc.today_burned()
+    net = total - burned
     return TodayOut(
         total=total,
+        burned=burned,
+        net=net,
         budget=budget,
-        remaining=budget - total,
+        remaining=budget - net,
         entries=[EntryOut(**e) for e in svc.list_today()],
     )
 
@@ -79,11 +87,12 @@ async def add_entry(
 ) -> TodayOut:
     uid = current_user["user_id"]
     svc = CalorieService(registry, user_id=uid)
-    svc.add_entry(payload.description.strip(), payload.calories)
+    svc.add_entry(payload.description.strip(), payload.calories, kind=payload.kind)
     budget = calorie_util.get_calorie_budget(registry, uid)
-    total = svc.today_total()
+    total, burned = svc.today_total(), svc.today_burned()
+    net = total - burned
     return TodayOut(
-        total=total, budget=budget, remaining=budget - total,
+        total=total, burned=burned, net=net, budget=budget, remaining=budget - net,
         entries=[EntryOut(**e) for e in svc.list_today()],
     )
 

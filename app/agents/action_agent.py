@@ -10,7 +10,7 @@ from app.agents.prompts import load
 from app.config.settings import get_settings
 from app.core import calorie_util
 from app.core import timezone_util as tzu
-from app.core.calorie_service import CalorieService, advance_calorie_flow, estimate_calories
+from app.core.calorie_service import CalorieService, advance_calorie_flow, estimate_burn, estimate_calories
 from app.core.date_util import friendly_day, resolve_backdate_iso
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
@@ -18,7 +18,7 @@ from app.core.todo_parser import parse_due_date
 from app.providers.factory import ChatProvider
 from app.storage.sqlite_registry import SQLiteRegistry
 
-_WRITE_ACTIONS = {"add_todo", "add_habit", "log_habit", "remember_fact"}
+_WRITE_ACTIONS = {"add_todo", "add_habit", "log_habit", "remember_fact", "log_burn"}
 
 _EXTRACT_SYSTEM = load("action_extract")
 
@@ -110,6 +110,10 @@ class ActionAgent:
                 # In a compound request a meal is estimated best-effort (no clarify loop) and
                 # confirmed like any other write, via a log_calorie HITL item.
                 item = self._make_calorie_hitl_item(params, user_id)
+                if item:
+                    hitl_items.append(item)
+            elif action == "log_burn":
+                item = self._make_hitl_item("log_burn", self._ensure_burn_calories(params), user_id)
                 if item:
                     hitl_items.append(item)
             elif action in _WRITE_ACTIONS:
@@ -269,6 +273,11 @@ class ActionAgent:
         fact_svc = fact_svc or self._fact_service
         habit_svc = habit_svc or self._habit_service
 
+        # Resolve the burned-calorie estimate before staging the confirmation, so the
+        # summary shows the number.
+        if action == "log_burn" and not hitl_bypass:
+            params = self._ensure_burn_calories(params)
+
         # Gate all write actions behind HITL approval
         if action in _WRITE_ACTIONS and not hitl_bypass and self._registry:
             item = self._make_hitl_item(action, params, user_id)
@@ -291,6 +300,7 @@ class ActionAgent:
             "get_current_datetime": lambda p, t: self._get_current_datetime(p, t, user_id=user_id),
             "log_meal": lambda p, t: self._log_meal(p, t, calorie_svc, user_id),
             "log_calorie": lambda p, t: self._log_calorie(p, t, calorie_svc),
+            "log_burn": lambda p, t: self._log_burn(p, t, calorie_svc),
             "calories_remaining": lambda p, t: self._calories_remaining(p, t, calorie_svc, user_id),
             "set_calorie_budget": lambda p, t: self._set_calorie_budget(p, t, user_id),
             "undo_meal": lambda p, t: self._undo_meal(p, t, calorie_svc, user_id),
@@ -332,6 +342,10 @@ class ActionAgent:
             desc = params.get("description", "a meal")
             cals = params.get("calories", 0)
             return f"log {desc} (~{cals} cal)"
+        if action == "log_burn":
+            desc = params.get("description", "a workout")
+            cals = params.get("calories", 0)
+            return f"log {cals} cal burned ({desc})"
         return f"perform action: {action}"
 
     def _add_todo(self, params: dict, task: str, user_id: Optional[str] = None) -> AgentResult:
@@ -544,6 +558,36 @@ class ActionAgent:
         return AgentResult(
             agent="action_agent", task=task, output=result["reply"],
             success=True, metadata=metadata,
+        )
+
+    def _ensure_burn_calories(self, params: dict) -> dict:
+        """Fill in an estimated calories-burned value when the user didn't give a number."""
+        try:
+            cals = int(float(params.get("calories")))
+        except (TypeError, ValueError):
+            cals = 0
+        if cals > 0:
+            return {**params, "calories": cals}
+        desc = params.get("description") or params.get("activity") or "workout"
+        est = estimate_burn(self._provider, desc)
+        return {**params, "calories": est["calories"],
+                "description": params.get("description") or est["activity"]}
+
+    def _log_burn(
+        self, params: dict, task: str, calorie_svc: Optional[CalorieService],
+    ) -> AgentResult:
+        """Write a workout's burned calories (kind='burned') after approval."""
+        if not calorie_svc:
+            return AgentResult(agent="action_agent", task=task, output="",
+                               success=False, error="no_calorie_service")
+        description = params.get("description") or "workout"
+        calories = int(params.get("calories", 0) or 0)
+        calorie_svc.add_entry(description, calories, kind="burned")
+        intake, burned = calorie_svc.today_total(), calorie_svc.today_burned()
+        return AgentResult(
+            agent="action_agent", task=task, success=True,
+            output=(f"🔥 Logged {calories} cal burned ({description}). "
+                    f"Today: {intake} in · {burned} burned · net {intake - burned}."),
         )
 
     def _log_calorie(

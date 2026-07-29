@@ -96,17 +96,19 @@ class CalorieService:
 
     def add_entry(
         self, description: str, calories: int, items_json: Optional[str] = None,
-        eaten_at: Optional[datetime] = None,
+        eaten_at: Optional[datetime] = None, kind: str = "intake",
     ) -> dict:
         entry_id = str(uuid.uuid4())
         ts = (eaten_at or self._now()).isoformat()
+        kind = "burned" if kind == "burned" else "intake"
         self._execute(
-            "INSERT INTO calorie_entries (id, user_id, description, calories, items_json, eaten_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (entry_id, self._user_id, description, int(calories), items_json, ts),
+            "INSERT INTO calorie_entries (id, user_id, description, calories, kind, items_json, eaten_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (entry_id, self._user_id, description, int(calories), kind, items_json, ts),
         )
         self._commit()
-        return {"id": entry_id, "description": description, "calories": int(calories), "eaten_at": ts}
+        return {"id": entry_id, "description": description, "calories": int(calories),
+                "kind": kind, "eaten_at": ts}
 
     def delete_entry(self, entry_id: str) -> bool:
         cur = self._execute(
@@ -134,49 +136,68 @@ class CalorieService:
     # Reads
     # ------------------------------------------------------------------
 
-    def total_for(self, day: date) -> int:
+    def total_for(self, day: date, kind: str = "intake") -> int:
         row = self._execute(
             "SELECT COALESCE(SUM(calories), 0) AS total FROM calorie_entries "
-            "WHERE user_id = ? AND DATE(eaten_at) = ?",
-            (self._user_id, day.isoformat()),
+            "WHERE user_id = ? AND DATE(eaten_at) = ? AND kind = ?",
+            (self._user_id, day.isoformat(), kind),
         ).fetchone()
         return int(row["total"]) if row and row["total"] is not None else 0
 
     def today_total(self) -> int:
-        return self.total_for(self._today())
+        """Calories eaten today (intake)."""
+        return self.total_for(self._today(), "intake")
+
+    def today_burned(self) -> int:
+        """Calories burned in workouts today."""
+        return self.total_for(self._today(), "burned")
 
     def remaining(self, budget: int) -> int:
         return int(budget) - self.today_total()
 
-    def list_today(self) -> list[dict]:
+    def list_today(self, kind: Optional[str] = None) -> list[dict]:
+        """Today's entries. ``kind`` filters to 'intake' or 'burned'; None returns both."""
         today = self._today().isoformat()
-        rows = self._execute(
-            "SELECT id, description, calories, eaten_at FROM calorie_entries "
-            "WHERE user_id = ? AND DATE(eaten_at) = ? ORDER BY eaten_at ASC",
-            (self._user_id, today),
-        ).fetchall()
+        sql = ("SELECT id, description, calories, kind, eaten_at FROM calorie_entries "
+               "WHERE user_id = ? AND DATE(eaten_at) = ?")
+        params: tuple = (self._user_id, today)
+        if kind in ("intake", "burned"):
+            sql += " AND kind = ?"
+            params = (self._user_id, today, kind)
+        sql += " ORDER BY eaten_at ASC"
+        rows = self._execute(sql, params).fetchall()
         return [
-            {"id": r["id"], "description": r["description"],
-             "calories": int(r["calories"]), "eaten_at": r["eaten_at"]}
+            {"id": r["id"], "description": r["description"], "calories": int(r["calories"]),
+             "kind": (r["kind"] if "kind" in r.keys() else "intake"), "eaten_at": r["eaten_at"]}
             for r in rows
         ]
 
     def daily_totals(self, days: int = 7) -> list[dict]:
-        """Per-day totals for the last ``days`` days, oldest first, zero-filled."""
+        """Per-day intake + burned for the last ``days`` days, oldest first, zero-filled.
+
+        Each item is ``{day, intake, burned, net, total}`` where ``total`` == ``intake``
+        (kept for back-compat) and ``net`` == intake - burned.
+        """
         today = self._today()
         start = today - timedelta(days=days - 1)
         rows = self._execute(
-            "SELECT DATE(eaten_at) AS day, COALESCE(SUM(calories), 0) AS total "
+            "SELECT DATE(eaten_at) AS day, kind, COALESCE(SUM(calories), 0) AS total "
             "FROM calorie_entries WHERE user_id = ? AND DATE(eaten_at) >= ? "
-            "GROUP BY DATE(eaten_at)",
+            "GROUP BY DATE(eaten_at), kind",
             (self._user_id, start.isoformat()),
         ).fetchall()
-        totals = {self._date_from_db(r["day"]).isoformat(): int(r["total"]) for r in rows}
-        return [
-            {"day": (start + timedelta(days=i)).isoformat(),
-             "total": totals.get((start + timedelta(days=i)).isoformat(), 0)}
-            for i in range(days)
-        ]
+        intake: dict = {}
+        burned: dict = {}
+        for r in rows:
+            day = self._date_from_db(r["day"]).isoformat()
+            k = r["kind"] if "kind" in r.keys() else "intake"
+            (burned if k == "burned" else intake)[day] = int(r["total"])
+        out = []
+        for i in range(days):
+            d = (start + timedelta(days=i)).isoformat()
+            ins, brn = intake.get(d, 0), burned.get(d, 0)
+            out.append({"day": d, "intake": ins, "burned": brn, "net": ins - brn, "total": ins})
+        return out
 
 
 # ----------------------------------------------------------------------
@@ -246,6 +267,32 @@ def _resolve_eaten_on(raw, today: Optional[date] = None) -> Optional[str]:
     if parsed == today:
         return None
     return parsed.isoformat()
+
+
+_BURN_ESTIMATE_SYSTEM = (
+    "You estimate how many calories a person burned in a workout or activity.\n"
+    "Return ONLY JSON: {\"calories\": <integer kcal burned>, \"activity\": \"<short name>\"}.\n"
+    "Base it on typical values for the described activity, duration, and intensity. "
+    "If unsure, give a reasonable middle estimate. Never return 0."
+)
+
+
+def estimate_burn(provider: Any, description: str) -> dict:
+    """Estimate calories burned from a workout description. Returns {calories, activity}."""
+    messages = [
+        {"role": "system", "content": _BURN_ESTIMATE_SYSTEM},
+        {"role": "user", "content": f"Activity: {description}"},
+    ]
+    try:
+        response = provider.chat(messages=messages)
+        cleaned = re.sub(r"```(?:json)?", "", response).strip().rstrip("`").strip()
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        data = json.loads(match.group())
+        cals = int(float(data.get("calories") or 0))
+        return {"calories": cals if cals > 0 else 200,
+                "activity": (data.get("activity") or description).strip()}
+    except Exception:
+        return {"calories": 200, "activity": description}
 
 
 def _coerce_calories(data: dict) -> int:

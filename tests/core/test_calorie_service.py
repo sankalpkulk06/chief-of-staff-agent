@@ -145,6 +145,45 @@ def test_flow_forces_estimate_after_max_clarify_rounds(tmp_path):
 
 
 # ----------------------------------------------------------------------
+# Burned calories (workouts)
+# ----------------------------------------------------------------------
+
+def test_burned_totals_and_daily_split(tmp_path):
+    registry = SQLiteRegistry(tmp_path / "r.db")
+    try:
+        svc = CalorieService(registry, user_id="u1")
+        svc.add_entry("lunch", 600, kind="intake")
+        svc.add_entry("5k run", 400, kind="burned")
+        assert svc.today_total() == 600      # intake only
+        assert svc.today_burned() == 400     # burned only
+        today = svc.daily_totals(7)[-1]
+        assert today["intake"] == 600 and today["burned"] == 400 and today["net"] == 200
+        assert {e["kind"] for e in svc.list_today()} == {"intake", "burned"}
+        assert [e["kind"] for e in svc.list_today(kind="burned")] == ["burned"]
+    finally:
+        registry.close()
+
+
+def test_action_agent_log_burn_writes_burned(tmp_path):
+    registry = SQLiteRegistry(tmp_path / "r.db")
+    try:
+        agent = ActionAgent(
+            chat_provider=_Provider('{"action":"log_burn","params":{"calories":400,"description":"gym workout"}}'),
+            registry=registry,
+        )
+        res = agent.execute(task="log burn", original_question="I burned 400 cal at the gym",
+                            history=[], user_id="u1")
+        assert res.metadata.get("hitl_pending") is True
+        assert "400 cal burned" in res.output
+        approved = agent.execute_approved(res.metadata["hitl_id"], user_id="u1")
+        assert approved.success is True
+        assert CalorieService(registry, user_id="u1").today_burned() == 400
+        assert CalorieService(registry, user_id="u1").today_total() == 0   # not counted as intake
+    finally:
+        registry.close()
+
+
+# ----------------------------------------------------------------------
 # Backdating
 # ----------------------------------------------------------------------
 

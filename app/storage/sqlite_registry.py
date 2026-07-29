@@ -110,6 +110,10 @@ class SQLiteRegistry:
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_calorie_entries_eaten_at ON calorie_entries(eaten_at)"
         )
+        if "kind" not in _cols("calorie_entries"):
+            self._connection.execute(
+                "ALTER TABLE calorie_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'intake'"
+            )
 
         # user_settings (new table — create if missing)
         self._connection.execute("""

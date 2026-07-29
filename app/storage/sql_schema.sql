@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS calorie_entries (
     user_id     TEXT NOT NULL DEFAULT 'default',
     description TEXT NOT NULL,
     calories    INTEGER NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'intake',   -- 'intake' (eaten) | 'burned' (workout)
     items_json  TEXT,
     eaten_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP

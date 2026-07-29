@@ -12,6 +12,7 @@ Possible actions:
 - list_facts: list stored facts. Params: category ("personal"|"work"|"all")
 - get_current_datetime: return the current date, day of week, and time. Params: none. Use for "what time is it", "what's today's date", "what day is it".
 - log_meal: the user says they ate/drank something and wants it counted. Params: description (str — the food exactly as they described it, INCLUDING any quantities AND any timing like "yesterday" or "for dinner on Jul 27"). Use for "I ate a chicken biryani", "I just had two eggs and toast", "yesterday for dinner I had rice and dal", "log a coffee".
+- log_burn: the user burned calories in a workout/exercise. Params: calories (int — ONLY if they gave a number), description (str — the workout/activity). Use for "I burned 400 cal at the gym", "log 300 calories burned", "I did a 5k run", "burnt 250 in my workout today".
 - calories_remaining: report today's calorie total and how many are left. Params: none. Use for "how many calories do I have left?", "what's my calorie count today?", "calories left".
 - set_calorie_budget: set the user's daily calorie target. Params: amount (int). Use for "set my calorie budget to 2000", "my daily calorie goal is 1800".
 - undo_meal: remove the most recently logged meal from today's calories. Params: none. Use for "undo that", "remove the last meal", "delete that calorie entry".

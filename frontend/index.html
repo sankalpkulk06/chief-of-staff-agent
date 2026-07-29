@@ -759,7 +759,7 @@
   .an-fbar .v { font-family: var(--mono); font-size: 12px; color: var(--text-3); text-align: right; }
   .an-tstats { display: flex; flex-direction: column; gap: 10px; }
   .an-tstats > div { display: flex; flex-direction: column; }
-  .an-tstats b { font-size: 20px; color: var(--text-1); } .an-tstats b.crit { color: #e0645a; }
+  .an-tstats b { font-size: 20px; color: var(--text-1); } .an-tstats b.crit { color: #e0645a; } .an-tstats b.ok { color: #57c08a; }
   .an-tstats span { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
   .an-thr { margin-top: 14px; }
   .an-hmwrap { overflow-x: auto; }
@@ -4249,7 +4249,7 @@
         const wrap = document.createElement('div'); wrap.className = 'an-gaugewrap';
         wrap.append(anGauge(t.pct, `${t.done}/${t.total}`));
         const stats = document.createElement('div'); stats.className = 'an-tstats';
-        stats.innerHTML = `<div><b class="crit">${t.overdue}</b><span>overdue</span></div>
+        stats.innerHTML = `<div><b class="${t.overdue > 0 ? 'crit' : 'ok'}">${t.overdue}</b><span>overdue</span></div>
           <div><b>${t.avg_days != null ? t.avg_days + 'd' : '—'}</b><span>avg to done</span></div>`;
         wrap.append(stats); td.append(wrap);
         const tp = document.createElement('div'); tp.className = 'an-thr'; td.append(tp);
@@ -4299,19 +4299,22 @@
 
   function renderCalTrend(host, days, budget) {
     if (!host) return;
-    const max = Math.max(budget || 0, ...days.map(d => d.total), 1);
+    const inOf = d => (d.intake != null ? d.intake : (d.total || 0));
+    const max = Math.max(budget || 0, ...days.flatMap(d => [inOf(d), d.burned || 0]), 1);
     const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
     const todayKey = days.length ? days[days.length - 1].day : null;
-    host.style.cssText = 'display:flex;align-items:flex-end;gap:8px;height:104px;margin-top:.35rem';
+    host.style.cssText = 'display:flex;align-items:flex-end;gap:8px;height:118px;margin-top:.35rem';
     host.innerHTML = days.map(d => {
       const dt = new Date(d.day + 'T00:00:00');
-      const h = Math.round((d.total / max) * 72);
+      const intake = inOf(d), burned = d.burned || 0;
+      const hi = Math.round((intake / max) * 82), hb = Math.round((burned / max) * 82);
       const isToday = d.day === todayKey;
-      const over = budget && d.total > budget;
-      const col = over ? '#e0603c' : (isToday ? 'var(--accent)' : 'var(--fg, #8a9098)');
+      const inCol = isToday ? 'var(--accent)' : 'var(--fg, #8a9098)';
       return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">
-        <span style="font-size:.68em;opacity:.6;margin-bottom:3px;min-height:1em">${d.total || ''}</span>
-        <div title="${d.day}: ${d.total} cal" style="width:60%;max-width:26px;height:${Math.max(h, 2)}px;background:${col};border-radius:3px 3px 0 0;opacity:${d.total ? 1 : .28}"></div>
+        <div style="display:flex;align-items:flex-end;gap:2px;height:90px">
+          <div title="${d.day} — eaten ${intake}" style="width:9px;height:${Math.max(hi, intake ? 2 : 0)}px;background:${inCol};border-radius:2px 2px 0 0;opacity:${intake ? 1 : .25}"></div>
+          <div title="${d.day} — burned ${burned}" style="width:9px;height:${Math.max(hb, burned ? 2 : 0)}px;background:#57c08a;border-radius:2px 2px 0 0;opacity:${burned ? 1 : .25}"></div>
+        </div>
         <span style="font-size:.7em;opacity:${isToday ? 1 : .5};margin-top:5px;font-weight:${isToday ? 700 : 400}">${dow[dt.getDay()]}</span>
       </div>`;
     }).join('');
@@ -4321,32 +4324,39 @@
     const host = document.getElementById('anCalories');
     if (!host) return;
     const t = today || {}, days = (history && history.days) || [];
-    const total = t.total || 0, budget = t.budget || 0;
-    const remaining = (t.remaining != null) ? t.remaining : (budget - total);
+    const total = t.total || 0, burned = t.burned || 0, budget = t.budget || 0;
+    const net = (t.net != null) ? t.net : (total - burned);
+    const remaining = (t.remaining != null) ? t.remaining : (budget - net);
     const meta = document.getElementById('anCalMeta');
-    if (meta) meta.textContent = `${total}/${budget} cal today · ${remaining >= 0 ? remaining + ' left' : Math.abs(remaining) + ' over'}`;
-    const pct = budget > 0 ? Math.min(100, Math.round(total / budget * 100)) : 0;
+    if (meta) meta.textContent = `${total} in · ${burned} burned · net ${net} · ${remaining >= 0 ? remaining + ' left' : Math.abs(remaining) + ' over'}`;
+    const pct = budget > 0 ? Math.min(100, Math.max(0, Math.round(net / budget * 100))) : 0;
     const entries = t.entries || [];
     let html = `
       <div class="an-hrow">
         <span class="an-hname">Today</span>
         <span class="an-track"><span class="an-fill" style="width:${pct}%"></span></span>
-        <span class="an-hpct">${total}/${budget}${remaining < 0 ? ' ⚠️' : ''}</span>
-      </div>`;
+        <span class="an-hpct">net ${net}/${budget}${remaining < 0 ? ' ⚠️' : ''}</span>
+      </div>
+      <div style="font-size:.8em;opacity:.75;margin-top:2px">${total} eaten · <span style="color:#57c08a">${burned} burned</span></div>`;
     if (entries.length) {
       html += '<div style="margin:.5rem 0;display:flex;flex-direction:column;gap:.25rem">' +
-        entries.map(e => `<div style="display:flex;justify-content:space-between;font-size:.85em;opacity:.85"><span>${escapeHtml(e.description)}</span><span>${e.calories} cal</span></div>`).join('') +
-        '</div>';
+        entries.map(e => {
+          const isBurn = e.kind === 'burned';
+          const label = isBurn ? `🔥 ${escapeHtml(e.description)}` : escapeHtml(e.description);
+          const val = isBurn ? `<span style="color:#57c08a">−${e.calories} cal</span>` : `${e.calories} cal`;
+          return `<div style="display:flex;justify-content:space-between;font-size:.85em;opacity:.85"><span>${label}</span><span>${val}</span></div>`;
+        }).join('') + '</div>';
     } else {
-      html += '<div class="an-empty">Nothing logged yet today. Tell Sage "I ate…" to start.</div>';
+      html += '<div class="an-empty">Nothing logged yet today. Tell Sage "I ate…" or "I burned…" to start.</div>';
     }
-    html += '<div class="an-meta" style="margin-top:.9rem;display:block">Last 7 days</div>';
+    html += '<div class="an-meta" style="margin-top:.9rem;display:block">Last 7 days · <span style="color:var(--accent)">■</span> eaten · <span style="color:#57c08a">■</span> burned</div>';
     html += '<div id="anCalTrend"></div>';
-    const logged = days.filter(d => d.total > 0);
-    if (logged.length) {
-      const avg = Math.round(logged.reduce((a, d) => a + d.total, 0) / logged.length);
-      const onTarget = logged.filter(d => budget && d.total <= budget).length;
-      html += `<div style="margin-top:.7rem;padding-top:.55rem;border-top:1px solid rgba(255,255,255,.06);font-size:.85em;opacity:.8">💡 Avg ${avg} cal/day${budget ? ` · ${onTarget}/${logged.length} days on target` : ''}</div>`;
+    const loggedIn = days.filter(d => (d.intake != null ? d.intake : (d.total || 0)) > 0);
+    const loggedBurn = days.filter(d => (d.burned || 0) > 0);
+    if (loggedIn.length || loggedBurn.length) {
+      const avgIn = loggedIn.length ? Math.round(loggedIn.reduce((a, d) => a + (d.intake != null ? d.intake : (d.total || 0)), 0) / loggedIn.length) : 0;
+      const avgBurn = loggedBurn.length ? Math.round(loggedBurn.reduce((a, d) => a + (d.burned || 0), 0) / loggedBurn.length) : 0;
+      html += `<div style="margin-top:.7rem;padding-top:.55rem;border-top:1px solid rgba(255,255,255,.06);font-size:.85em;opacity:.8">💡 Avg ${avgIn} eaten/day${avgBurn ? ` · ${avgBurn} burned/day` : ''}</div>`;
     }
     host.innerHTML = html;
     renderCalTrend(document.getElementById('anCalTrend'), days, budget);

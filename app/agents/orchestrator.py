@@ -24,7 +24,10 @@ _CALORIE_RE = re.compile(
     r"|\bcalories? (left|remaining|today|so far)\b"
     r"|\bhow many calories (do|have|are|left)\b"
     r"|\bmy calorie(s)?\b"
-    r"|\bset\b[^.?!]*\bcalorie",
+    r"|\bset\b[^.?!]*\bcalorie"
+    r"|\bburn(ed|t)\b[^.?!]{0,25}cal"          # "burned 400 cal", "burnt ... calories"
+    r"|\bcal(orie)?s?\b[^.?!]{0,15}\bburn(ed|t)\b"   # "300 calories burned"
+    r"|\bburn(ed|t)\b[^.?!]{0,20}\b(workout|gym|run|cardio|exercise)\b",
     re.IGNORECASE,
 )
 
