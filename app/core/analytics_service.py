@@ -244,6 +244,63 @@ class AnalyticsService:
     # Insights digest (LLM narrative over the computed stats; cached)
     # ------------------------------------------------------------------
 
+    def text_digest(self, user_id: str, window_days: int = 30, whatsapp: bool = False) -> str:
+        """Plain-text analytics summary for conversational surfaces (WhatsApp / chat / CLI).
+
+        Reuses the same computed dashboard (deltas, takeaways) as the visual pages, plus a
+        calorie line and the LLM insight — formatted as scannable bullets, not charts.
+        """
+        data = self.get_dashboard(user_id, window_days)
+        k = data.get("kpis", {})
+        tk = data.get("takeaways", {})
+        d = data.get("deltas", {})
+        win = data.get("window_days", window_days)
+        period = "week" if win <= 7 else ("month" if win <= 30 else "quarter")
+
+        title = f"📊 *Your last {win} days*" if whatsapp else f"📊 Your last {win} days"
+        lines = [title, ""]
+
+        sd = d.get("sessions", 0)
+        trend = f" ({'↑ +' if sd > 0 else '↓ '}{abs(sd)} vs last {period})" if sd else ""
+        lines.append(f"• Sessions: {k.get('sessions', 0)}{trend} · {k.get('days_active', 0)} active days")
+
+        if tk.get("habits"):
+            lines.append(f"• Habits: {tk['habits']}")
+        cal = self._calorie_line(user_id)
+        if cal:
+            lines.append(f"• Calories: {cal}")
+        if tk.get("todos"):
+            lines.append(f"• Todos: {tk['todos']}")
+        if tk.get("features"):
+            lines.append(f"• {tk['features']}")
+        if tk.get("activity"):
+            lines.append(f"• {tk['activity']}")
+
+        insight = self.insights(user_id, window_days=win)
+        if insight and "not enough activity" not in insight.lower():
+            lines.extend(["", f"💡 {insight}"])
+        return "\n".join(lines)
+
+    def _calorie_line(self, user_id: str) -> Optional[str]:
+        """One-line calorie summary over the last 7 days, or None if there's nothing to show."""
+        try:
+            from app.core import calorie_util
+            from app.core.calorie_service import CalorieService
+            svc = CalorieService(self._registry, user_id)
+            rows = svc.daily_totals(days=7)
+        except Exception:
+            return None
+        logged = [r["total"] for r in rows if r["total"] > 0]
+        has_budget = calorie_util.has_calorie_budget(self._registry, user_id)
+        if not logged and not has_budget:
+            return None
+        budget = calorie_util.get_calorie_budget(self._registry, user_id)
+        if not logged:
+            return f"budget {budget}/day · nothing logged yet"
+        avg = round(sum(logged) / len(logged))
+        on_target = sum(1 for v in logged if v <= budget)
+        return f"avg {avg}/day · {on_target}/{len(logged)} days on target (budget {budget})"
+
     def insights(self, user_id: str, window_days: int = 30) -> str:
         key = (user_id, int(window_days or 30))
         hit = _INSIGHTS_CACHE.get(key)

@@ -385,7 +385,7 @@ def _print_help() -> None:
         ("/topk <n>", "Set retrieval depth (default: 5)"),
         ("/session", "Show current session ID"),
         ("/sessions", "List recent chat sessions"),
-        ("/analytics", "View usage statistics and patterns"),
+        ("/analytics, /stats", "View usage statistics and patterns"),
         ("/remember-personal <fact>", "Remember a personal fact"),
         ("/remember-work <fact>", "Remember a work fact"),
         ("/facts [category]", "List facts (personal|work)"),
@@ -511,7 +511,7 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             else:
                 console.print("\n[dim]No sessions found.[/dim]\n")
             continue
-        if lowered == "/analytics" or lowered.startswith("/analytics "):
+        if lowered in ("/analytics", "/stats") or lowered.startswith("/analytics ") or lowered.startswith("/stats "):
             from app.cli.commands_stats import render_dashboard
             parts = lowered.split()
             win = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30

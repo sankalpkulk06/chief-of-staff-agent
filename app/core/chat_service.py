@@ -31,6 +31,17 @@ def _looks_like_history_injection(text: str) -> bool:
     return any(pattern.search(text) for pattern in _HISTORY_INJECTION_PATTERNS)
 
 
+# Natural-language "show my stats" intent → a deterministic route to the analytics digest,
+# so it works identically on WhatsApp, web, and the CLI. Tight enough to avoid false hits.
+_STATS_RE = re.compile(
+    r"\b(show|see|view|check|pull up|give me)\b[^?]{0,20}\b(stats|analytics|dashboard)\b"
+    r"|\bmy (stats|analytics|dashboard)\b"
+    r"|\bhow am i doing\b"
+    r"|\bhow are my (habits|stats|numbers)\b",
+    re.IGNORECASE,
+)
+
+
 class ChatService:
     """Session-aware chat service with conversation history and persistence."""
 
@@ -562,6 +573,10 @@ class ChatService:
         if lowered in ("/sources",) or "what have you saved" in lowered or "what did you save" in lowered:
             return self._sources_command(response_style=response_style)
 
+        # Natural-language stats request (no slash) → analytics digest.
+        if _STATS_RE.search(lowered):
+            return self._stats_command(lowered, response_style=response_style, user_id=effective_uid)
+
         if not lowered.startswith("/"):
             return None
 
@@ -658,6 +673,10 @@ class ChatService:
                 "/habits"
             )
             return f"🌱 *Habit commands*\n{help_text}" if self._is_whatsapp_style(response_style) else help_text
+
+        if (lowered == "/stats" or lowered.startswith("/stats ")
+                or lowered == "/analytics" or lowered.startswith("/analytics ")):
+            return self._stats_command(lowered, response_style=response_style, user_id=effective_uid)
 
         if lowered in ("/calories", "/calorie"):
             return self._format_calorie_summary(response_style=response_style, user_id=effective_uid)
@@ -869,6 +888,25 @@ class ChatService:
         total_prefix = "✅ " if self._is_whatsapp_style(response_style) else ""
         lines.append(f"{total_prefix}Total logged this week: {total_done}/{total_possible}")
         return "\n".join(lines)
+
+    def _stats_command(self, text: str, response_style: Optional[str] = None, user_id: Optional[str] = None) -> str:
+        from app.core.analytics_service import AnalyticsService
+        win = self._parse_stats_window(text)
+        return AnalyticsService(self._registry).text_digest(
+            (user_id or self._user_id) or "", window_days=win,
+            whatsapp=self._is_whatsapp_style(response_style),
+        )
+
+    @staticmethod
+    def _parse_stats_window(text: str) -> int:
+        m = re.search(r"\blast\s+(\d{1,3})\s+days?\b|\b(\d{1,3})\s*d\b", text)
+        if m:
+            return max(1, min(int(m.group(1) or m.group(2)), 365))
+        if "quarter" in text or "90" in text:
+            return 90
+        if "week" in text or " 7" in text:
+            return 7
+        return 30
 
     def _format_calorie_summary(self, response_style: Optional[str] = None, user_id: Optional[str] = None) -> str:
         from app.core import calorie_util
