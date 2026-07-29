@@ -67,6 +67,12 @@ class RagasOut(BaseModel):
     error: Optional[str] = None
 
 
+class HitlItemOut(BaseModel):
+    id: str
+    summary: str
+    action_type: str = ""
+
+
 class ChatResponse(BaseModel):
     reply: str
     sources: List[SourceOut] = []
@@ -74,6 +80,7 @@ class ChatResponse(BaseModel):
     latency_ms: int
     hitl_pending: bool = False
     hitl_id: Optional[str] = None
+    hitl_items: List[HitlItemOut] = []
     ragas: Optional[RagasOut] = None
 
 
@@ -393,6 +400,11 @@ async def chat(
         latency_ms=latency_ms,
         hitl_pending=result.hitl_pending,
         hitl_id=result.hitl_id,
+        hitl_items=[
+            HitlItemOut(id=it["id"], summary=it.get("summary", ""),
+                        action_type=it.get("action_type", ""))
+            for it in (getattr(result, "hitl_items", None) or [])
+        ],
         ragas=ragas_out,
     )
 

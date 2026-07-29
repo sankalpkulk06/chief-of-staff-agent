@@ -31,5 +31,16 @@ Examples (assume "going to the gym" is a tracked habit):
   "went the gym"                           → log_habit, name "going to the gym"
   "i love the gym"  (a preference, no action) → remember_fact
 
-Output ONLY valid JSON:
-{"action": "action_name", "params": {...}}
+Output ONLY valid JSON — a LIST of actions, one per DISTINCT thing the user asked for:
+{"actions": [{"action": "action_name", "params": {...}}]}
+
+Most messages contain exactly ONE action. Only split into multiple when the user clearly
+asked for several distinct things in one message. Examples:
+  "I went to the gym and had 1 scoop of whey protein"
+    → [{"action":"log_habit","params":{"name":"going to the gym","status":"done"}},
+       {"action":"log_meal","params":{"description":"1 scoop of whey protein"}}]
+  "remind me to call mom at 5pm and log that I read 10 pages"
+    → [{"action":"add_todo","params":{"task":"call mom","due_date":"today at 5pm"}},
+       {"action":"log_habit","params":{"name":"read 10 pages","status":"done"}}]
+  "how many calories do I have left?"
+    → [{"action":"calories_remaining","params":{}}]

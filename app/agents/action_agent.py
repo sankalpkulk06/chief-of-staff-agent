@@ -10,7 +10,7 @@ from app.agents.prompts import load
 from app.config.settings import get_settings
 from app.core import calorie_util
 from app.core import timezone_util as tzu
-from app.core.calorie_service import CalorieService, advance_calorie_flow
+from app.core.calorie_service import CalorieService, advance_calorie_flow, estimate_calories
 from app.core.date_util import friendly_day, resolve_backdate_iso
 from app.core.fact_service import FactService
 from app.core.habit_service import HabitService
@@ -65,9 +65,21 @@ class ActionAgent:
         )
         try:
             habit_names = [h.name for h in habit_svc._get_all_active()] if habit_svc else []
-            action, params = self._extract_action(task, habit_names=habit_names)
-            return self._dispatch(
-                action, params, task,
+            actions = self._extract_actions(task, habit_names=habit_names)
+
+            # One action → preserve the existing single-action behavior exactly (this keeps the
+            # calorie clarify→confirm flow and every read handler untouched).
+            if len(actions) == 1:
+                action, params = actions[0]
+                return self._dispatch(
+                    action, params, task,
+                    fact_svc=fact_svc, habit_svc=habit_svc, calorie_svc=calorie_svc,
+                    user_id=user_id,
+                )
+
+            # Multiple actions → run reads now, stage each write as its own HITL item.
+            return self._dispatch_many(
+                actions, task,
                 fact_svc=fact_svc, habit_svc=habit_svc, calorie_svc=calorie_svc,
                 user_id=user_id,
             )
@@ -80,6 +92,86 @@ class ActionAgent:
                 error=f"Action failed: {exc}",
             )
 
+    def _dispatch_many(
+        self,
+        actions: List[tuple],
+        task: str,
+        fact_svc: Optional[FactService] = None,
+        habit_svc: Optional[HabitService] = None,
+        calorie_svc: Optional[CalorieService] = None,
+        user_id: Optional[str] = None,
+    ) -> AgentResult:
+        """Handle a compound request: reads execute immediately; each write → one HITL item."""
+        hitl_items: List[dict] = []
+        read_outputs: List[str] = []
+        for action, params in actions:
+            if action == "log_meal":
+                # In a compound request a meal is estimated best-effort (no clarify loop) and
+                # confirmed like any other write, via a log_calorie HITL item.
+                item = self._make_calorie_hitl_item(params, user_id)
+                if item:
+                    hitl_items.append(item)
+            elif action in _WRITE_ACTIONS:
+                item = self._make_hitl_item(action, params, user_id)
+                if item:
+                    hitl_items.append(item)
+            else:
+                res = self._dispatch(
+                    action, params, task,
+                    fact_svc=fact_svc, habit_svc=habit_svc, calorie_svc=calorie_svc,
+                    user_id=user_id, hitl_bypass=True,
+                )
+                if res.output:
+                    read_outputs.append(res.output)
+
+        parts: List[str] = []
+        if hitl_items:
+            parts.append("I'm about to:\n" + "\n".join(f"• {it['summary']}" for it in hitl_items)
+                         + "\n\nConfirm each below.")
+        parts.extend(read_outputs)
+        metadata: dict = {}
+        if hitl_items:
+            metadata = {"hitl_pending": True, "hitl_items": hitl_items, "hitl_id": hitl_items[0]["id"]}
+        return AgentResult(
+            agent="action_agent", task=task,
+            output="\n\n".join(parts) or "Done.", success=True, metadata=metadata,
+        )
+
+    def _make_hitl_item(self, action: str, params: dict, user_id: Optional[str]) -> Optional[dict]:
+        """Create a pending HITL request for a write action; return {id, summary, action_type}."""
+        if not self._registry:
+            return None
+        hitl_id = str(uuid.uuid4())
+        self._registry.create_hitl_request(
+            id=hitl_id, user_id=user_id or "", action_type=action, action_payload=params,
+        )
+        return {"id": hitl_id, "summary": self._describe_action(action, params), "action_type": action}
+
+    def _make_calorie_hitl_item(self, params: dict, user_id: Optional[str]) -> Optional[dict]:
+        """Estimate a meal best-effort and stage it as a log_calorie HITL item."""
+        if not self._registry:
+            return None
+        description = (params.get("description") or params.get("meal") or "").strip()
+        if not description:
+            return None
+        est = estimate_calories(self._provider, description, force=True)
+        payload = {
+            "description": description,
+            "calories": int(est.get("calories") or 0),
+            "items_json": None,
+        }
+        try:
+            import json as _json
+            payload["items_json"] = _json.dumps(est["items"]) if est.get("items") else None
+        except Exception:
+            payload["items_json"] = None
+        hitl_id = str(uuid.uuid4())
+        self._registry.create_hitl_request(
+            id=hitl_id, user_id=user_id or "", action_type="log_calorie", action_payload=payload,
+        )
+        return {"id": hitl_id, "summary": self._describe_action("log_calorie", payload),
+                "action_type": "log_calorie"}
+
     def execute_approved(self, hitl_id: str, user_id: str) -> AgentResult:
         """Execute a previously deferred write action after user approval."""
         if not self._registry:
@@ -91,10 +183,11 @@ class ActionAgent:
                                success=False, error="hitl_not_found")
         fact_svc = FactService(self._registry, user_id=user_id)
         habit_svc = HabitService(self._registry, user_id=user_id)
+        calorie_svc = CalorieService(self._registry, user_id=user_id)
         try:
             return self._dispatch(
                 row["action_type"], row["action_payload"], row["action_type"],
-                fact_svc=fact_svc, habit_svc=habit_svc,
+                fact_svc=fact_svc, habit_svc=habit_svc, calorie_svc=calorie_svc,
                 user_id=user_id,
                 hitl_bypass=True,
             )
@@ -104,7 +197,12 @@ class ActionAgent:
 
     # ------------------------------------------------------------------
 
-    def _extract_action(self, task: str, habit_names: Optional[list] = None) -> tuple[str, dict]:
+    def _extract_actions(self, task: str, habit_names: Optional[list] = None) -> List[tuple]:
+        """Extract one OR MORE actions from the task. Returns a list of (action, params).
+
+        Accepts the list form ``{"actions": [...]}``, a bare array, or the legacy single
+        object ``{"action": ..., "params": ...}`` (normalized to a one-element list).
+        """
         if habit_names:
             habits_context = "Existing habits (use exact name when logging): " + ", ".join(f'"{n}"' for n in habit_names)
         else:
@@ -121,16 +219,31 @@ class ActionAgent:
         response = self._provider.chat(messages=messages)
 
         cleaned = re.sub(r"```(?:json)?", "", response).strip().rstrip("`").strip()
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        match = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
         if not match:
             raise ValueError(f"No JSON found in action response: {response!r}")
-
         data = json.loads(match.group())
-        action = data.get("action", "")
-        params = data.get("params", {})
-        if not action:
-            raise ValueError("No action found in extracted JSON")
-        return action, params
+
+        if isinstance(data, dict) and isinstance(data.get("actions"), list):
+            raw = data["actions"]
+        elif isinstance(data, list):
+            raw = data
+        elif isinstance(data, dict):
+            raw = [data]  # legacy single {action, params}
+        else:
+            raw = []
+
+        out: List[tuple] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            action = item.get("action", "")
+            params = item.get("params", {}) or {}
+            if action:
+                out.append((action, params))
+        if not out:
+            raise ValueError(f"No action found in extracted JSON: {response!r}")
+        return out
 
     def _dispatch(
         self,
@@ -148,20 +261,13 @@ class ActionAgent:
 
         # Gate all write actions behind HITL approval
         if action in _WRITE_ACTIONS and not hitl_bypass and self._registry:
-            hitl_id = str(uuid.uuid4())
-            self._registry.create_hitl_request(
-                id=hitl_id,
-                user_id=user_id or "",
-                action_type=action,
-                action_payload=params,
-            )
-            summary = self._describe_action(action, params)
+            item = self._make_hitl_item(action, params, user_id)
             return AgentResult(
                 agent="action_agent",
                 task=task,
-                output=f"I'm about to {summary}. Please confirm.",
+                output=f"I'm about to {item['summary']}. Please confirm.",
                 success=True,
-                metadata={"hitl_pending": True, "hitl_id": hitl_id},
+                metadata={"hitl_pending": True, "hitl_id": item["id"], "hitl_items": [item]},
             )
 
         handlers = {
@@ -174,6 +280,7 @@ class ActionAgent:
             "list_facts": lambda p, t: self._list_facts(p, t, fact_svc),
             "get_current_datetime": lambda p, t: self._get_current_datetime(p, t, user_id=user_id),
             "log_meal": lambda p, t: self._log_meal(p, t, calorie_svc, user_id),
+            "log_calorie": lambda p, t: self._log_calorie(p, t, calorie_svc),
             "calories_remaining": lambda p, t: self._calories_remaining(p, t, calorie_svc, user_id),
             "set_calorie_budget": lambda p, t: self._set_calorie_budget(p, t, user_id),
             "undo_meal": lambda p, t: self._undo_meal(p, t, calorie_svc, user_id),
@@ -211,6 +318,10 @@ class ActionAgent:
             fact = params.get("fact", "unknown fact")
             category = params.get("category", "personal")
             return f"save {category} fact: {fact}"
+        if action == "log_calorie":
+            desc = params.get("description", "a meal")
+            cals = params.get("calories", 0)
+            return f"log {desc} (~{cals} cal)"
         return f"perform action: {action}"
 
     def _add_todo(self, params: dict, task: str, user_id: Optional[str] = None) -> AgentResult:
@@ -422,6 +533,19 @@ class ActionAgent:
             agent="action_agent", task=task, output=result["reply"],
             success=True, metadata=metadata,
         )
+
+    def _log_calorie(
+        self, params: dict, task: str, calorie_svc: Optional[CalorieService],
+    ) -> AgentResult:
+        """Write a pre-estimated meal (from a compound-request HITL) to the calorie log."""
+        if not calorie_svc:
+            return AgentResult(agent="action_agent", task=task, output="",
+                               success=False, error="no_calorie_service")
+        description = params.get("description", "a meal")
+        calories = int(params.get("calories", 0) or 0)
+        calorie_svc.add_entry(description, calories, items_json=params.get("items_json"))
+        return AgentResult(agent="action_agent", task=task, success=True,
+                           output=f"Logged {description} ({calories} cal).")
 
     def _calories_remaining(
         self, params: dict, task: str,

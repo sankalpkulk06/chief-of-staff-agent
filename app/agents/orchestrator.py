@@ -28,6 +28,10 @@ _CALORIE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Explicit "log ..." intent → the whole message is a personal-data action (possibly several).
+# Route it verbatim to a single action_agent step so it can extract & confirm every action.
+_ACTION_LOG_RE = re.compile(r"\blog (that|my|a|the)\b", re.IGNORECASE)
+
 _PLAN_SYSTEM = load("orchestrator_plan")
 _SYNTHESIS_SYSTEM = load("orchestrator_synthesis")
 
@@ -233,6 +237,9 @@ class OrchestratorAgent:
         lone action_agent step (no conversational synthesis) keeps that text intact and
         avoids an extra LLM call. Tight regex, so it never hijacks general trivia.
         """
-        if not _CALORIE_RE.search(question or ""):
+        q = question or ""
+        if not (_CALORIE_RE.search(q) or _ACTION_LOG_RE.search(q)):
             return steps
-        return [AgentStep(id="calorie", agent="action_agent", task=question, mode="write")]
+        # Whole message → one action_agent step. It extracts one OR MORE actions and stages a
+        # confirmation for each, so compound requests ("log gym and my lunch") aren't split.
+        return [AgentStep(id="action", agent="action_agent", task=question, mode="write")]

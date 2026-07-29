@@ -212,9 +212,11 @@ def test_runner_continues_independent_work_after_hitl_pause():
     result = runner.run("remind me and find tutorials", history=[])
 
     assert "Please confirm" in result.output
+    # Independent read work still runs and is now surfaced immediately in the same reply
+    # (alongside the pending confirmation), rather than deferred as a post-approval continuation.
     assert "official Python tutorial" in result.output
     assert [r.agent for r in result.agent_results] == ["action_agent", "research_agent"]
-    assert registry.contexts["hitl-1"]["continuation_output"] == "Use the official Python tutorial."
+    assert result.agent_results[0].metadata.get("hitl_pending") is True
 
 
 def test_runner_keeps_rag_result_when_chunks_exist_even_with_high_distance():

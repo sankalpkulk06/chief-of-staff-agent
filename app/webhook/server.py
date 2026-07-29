@@ -226,6 +226,32 @@ async def webhook(
     # HITL approval — check before habit nudge so yes/no isn't swallowed by habit logic.
     is_confirm = body_lower in _YES_WORDS
     is_reject = body_lower in _NO_WORDS
+
+    # Multi-item HITL queue: a turn can stage several confirmations; confirm them one at a
+    # time. The queue lives in pending_prompts (type "hitl_queue"), keyed by the session.
+    session_id = _registry.get_or_create_whatsapp_session(phone, user_id=_whatsapp_user_id)
+    queue = _registry.get_pending_prompt(session_id)
+    if queue and queue.get("prompt_type") == "hitl_queue" and (is_confirm or is_reject):
+        state = queue.get("state") or {}
+        items = list(state.get("items") or [])
+        total = int(state.get("total") or len(items))
+        if items:
+            head = items.pop(0)
+            reply = _resolve_hitl_whatsapp(head["id"], approved=is_confirm)
+            if items:
+                _registry.set_pending_prompt(session_id, _whatsapp_user_id or "", "hitl_queue",
+                                             {"items": items, "total": total}, ttl_minutes=10)
+                nxt = items[0]
+                pos = total - len(items) + 1
+                reply = (f"{reply}\n\n({pos} of {total}) {nxt.get('summary', '')}\n"
+                         "Reply *yes* to confirm or *no* to cancel.")
+            else:
+                _registry.clear_pending_prompt(session_id)
+            if _whatsapp_service:
+                _safe_send(phone, reply)
+            _registry.update_whatsapp_last_active(phone)
+            return Response(content="", media_type="application/xml")
+
     pending_hitl_id = _registry.get_whatsapp_hitl_context(phone)
     logger.info("WhatsApp HITL pointer for %s: %s", phone, pending_hitl_id)
 
@@ -263,8 +289,6 @@ async def webhook(
             _registry.update_whatsapp_last_active(phone)
             return Response(content="", media_type="application/xml")
 
-    session_id = _registry.get_or_create_whatsapp_session(phone, user_id=_whatsapp_user_id)
-
     result = _chat_service.answer_in_session(
         session_id=session_id,
         question=Body,
@@ -273,11 +297,20 @@ async def webhook(
     )
     reply = result.answer
 
-    # If the agent raised a HITL request, store it so the next yes/no resolves it
-    if result.hitl_pending and result.hitl_id:
-        _registry.set_whatsapp_hitl_context(phone, result.hitl_id)
-        logger.info("WhatsApp HITL: stored pointer %s -> %s", phone, result.hitl_id)
-        reply = f"{reply}\n\nReply *yes* to confirm or *no* to cancel."
+    # If the agent staged write action(s), queue them and prompt for the first confirmation.
+    hitl_items = getattr(result, "hitl_items", None) or (
+        [{"id": result.hitl_id, "summary": ""}]
+        if (result.hitl_pending and result.hitl_id) else []
+    )
+    if hitl_items:
+        _registry.set_pending_prompt(session_id, _whatsapp_user_id or "", "hitl_queue",
+                                     {"items": hitl_items, "total": len(hitl_items)}, ttl_minutes=10)
+        first = hitl_items[0]
+        prefix = f"(1 of {len(hitl_items)}) " if len(hitl_items) > 1 else ""
+        tail = f"{prefix}{first.get('summary', '')}".strip()
+        reply = (f"{reply}\n\n{tail}\nReply *yes* to confirm or *no* to cancel." if tail
+                 else f"{reply}\n\nReply *yes* to confirm or *no* to cancel.")
+        logger.info("WhatsApp HITL: queued %d item(s) for %s", len(hitl_items), phone)
 
     if _whatsapp_service:
         _safe_send(phone, reply)

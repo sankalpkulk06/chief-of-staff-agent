@@ -953,7 +953,8 @@
   .ev-red   { color: #D85A30; }
 
   /* HITL approve / reject */
-  .hitl-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .hitl-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .hitl-label { flex-basis: 100%; font-size: .9em; opacity: .85; margin-bottom: 2px; }
   .btn-hitl {
     padding: 5px 14px;
     border-radius: 6px;
@@ -3507,14 +3508,19 @@
       bubble.innerHTML = renderMarkdown(data.reply);
       wrap.appendChild(bubble);
 
-      if (data.hitl_pending && data.hitl_id) {
-        const hid = escapeHtml(data.hitl_id);
+      // One approve/reject card per pending item (a turn can stage several).
+      const hitlItems = (data.hitl_items && data.hitl_items.length)
+        ? data.hitl_items
+        : (data.hitl_pending && data.hitl_id ? [{ id: data.hitl_id, summary: '' }] : []);
+      hitlItems.forEach(item => {
+        const hid = escapeHtml(item.id);
         const hitlEl = document.createElement('div');
         hitlEl.className = 'hitl-confirm';
         hitlEl.id = `hitl-${hid}`;
-        hitlEl.innerHTML = `<button class="btn-hitl btn-approve" onclick="resolveHitl('${hid}', true, this)">✓ Approve</button><button class="btn-hitl btn-reject" onclick="resolveHitl('${hid}', false, this)">✗ Reject</button>`;
+        const label = item.summary ? `<span class="hitl-label">${escapeHtml(item.summary)}</span>` : '';
+        hitlEl.innerHTML = `${label}<button class="btn-hitl btn-approve" onclick="resolveHitl('${hid}', true, this)">✓ Approve</button><button class="btn-hitl btn-reject" onclick="resolveHitl('${hid}', false, this)">✗ Reject</button>`;
         wrap.appendChild(hitlEl);
-      }
+      });
 
       const meta = document.createElement('div');
       meta.className = 'msg-meta';

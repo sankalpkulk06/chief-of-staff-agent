@@ -254,8 +254,8 @@ class AgentRunner:
         # 2. Execute dependency batches. Independent read steps in one batch can
         # run concurrently; dependent, write, and synthesis steps run alone.
         agent_results: List[AgentResult] = []
-        pending_hitl: Optional[AgentResult] = None
-        pending_hitl_step_id: Optional[str] = None
+        pending_hitls: List[AgentResult] = []       # every result awaiting approval this turn
+        pending_step_ids: set = set()
         batches = (
             plan.execution_batches(max_parallel=self._max_parallel_workers)
             if self._parallelism_enabled
@@ -263,15 +263,12 @@ class AgentRunner:
         )
         for batch_index, batch in enumerate(batches, 1):
             batch_id = f"batch_{batch_index}"
-            if pending_hitl is not None:
+            if pending_hitls:
                 batch = [
                     step
                     for step in batch
                     if step.mode != "synthesize"
-                    and not (
-                        pending_hitl_step_id is not None
-                        and pending_hitl_step_id in step.depends_on
-                    )
+                    and not (pending_step_ids & set(step.depends_on))
                 ]
                 if not batch:
                     continue
@@ -297,42 +294,30 @@ class AgentRunner:
             )
             agent_results.extend(batch_results)
 
-            hitl_result = next(
-                (result for result in batch_results if result.metadata.get("hitl_pending")),
-                None,
-            )
-            if hitl_result is not None:
-                pending_hitl = hitl_result
-                pending_hitl_step_id = hitl_result.metadata.get("step_id")
-                _trace(hitl_result.agent, "waiting", "Waiting for your approval")
+            # Collect ALL results awaiting approval (a single step may carry several items).
+            new_pending = [r for r in batch_results if r.metadata.get("hitl_pending")]
+            for result in new_pending:
+                pending_hitls.append(result)
+                sid = result.metadata.get("step_id")
+                if sid:
+                    pending_step_ids.add(sid)
+            if new_pending:
+                _trace(new_pending[0].agent, "waiting", "Waiting for your approval")
 
-        if pending_hitl is not None:
-            continuation_results = [
-                result
-                for result in agent_results
-                if result is not pending_hitl
-                and result.success
-                and result.output
-                and not result.metadata.get("hitl_pending")
+        if pending_hitls:
+            # Present the confirmation prompt(s) verbatim; any read outputs that also ran are
+            # concatenated. No continuation synthesis while items are pending (each resolves on
+            # its own, and the surface shows that item's result).
+            pending_ids = {id(r) for r in pending_hitls}
+            pending_outputs = [r.output for r in pending_hitls if r.output]
+            other_outputs = [
+                r.output for r in agent_results
+                if id(r) not in pending_ids and r.success and r.output
+                and not r.metadata.get("hitl_pending")
             ]
-            continuation_output = ""
-            if continuation_results:
-                continuation_output = self._orchestrator.synthesize(
-                    question,
-                    continuation_results,
-                    history,
-                    user_facts=self._user_facts_for(user_id),
-                )
-                self._attach_hitl_context(
-                    pending_hitl.metadata.get("hitl_id"),
-                    continuation_output,
-                )
-            output_parts = [pending_hitl.output]
-            if continuation_output:
-                output_parts.append(continuation_output)
             latency_ms = int((time.monotonic() - t0) * 1000)
             return RunResult(
-                output="\n\n".join(output_parts),
+                output="\n\n".join(pending_outputs + other_outputs),
                 plan=plan,
                 agent_results=agent_results,
                 latency_ms=latency_ms,

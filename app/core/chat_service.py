@@ -265,14 +265,21 @@ class ChatService:
             if c.get("url") and not c.get("snippet")  # web / news citations have URLs
         ]
 
-        # Detect HITL pending state from any action_agent result
-        hitl_pending = False
-        hitl_id = None
+        # Detect HITL pending state — collect items from EVERY pending result (a turn can
+        # stage several confirmations at once).
+        hitl_items: list = []
         for r in run.agent_results:
-            if r.metadata.get("hitl_pending"):
-                hitl_pending = True
-                hitl_id = r.metadata.get("hitl_id")
-                break
+            if not r.metadata.get("hitl_pending"):
+                continue
+            items = r.metadata.get("hitl_items")
+            if items:
+                hitl_items.extend(items)
+            elif r.metadata.get("hitl_id"):
+                hitl_items.append({"id": r.metadata["hitl_id"],
+                                   "summary": r.output or "Confirm this action?",
+                                   "action_type": r.metadata.get("action_type", "")})
+        hitl_pending = bool(hitl_items)
+        hitl_id = hitl_items[0]["id"] if hitl_items else None
 
         # A calorie log-a-meal turn returns a pending clarify/confirm state in metadata.
         # ChatService owns the session, so it persists it; the next turn is picked up by
@@ -320,6 +327,7 @@ class ChatService:
             agent_steps=run.steps_summary,
             hitl_pending=hitl_pending,
             hitl_id=hitl_id,
+            hitl_items=hitl_items,
             ragas_result=ragas_result,
         )
 
@@ -335,6 +343,7 @@ class ChatService:
         agent_steps: Optional[list] = None,
         hitl_pending: bool = False,
         hitl_id: Optional[str] = None,
+        hitl_items: Optional[List[dict]] = None,
         ragas_result=None,
     ) -> QAResult:
         """Persist a user/assistant exchange and return the standard result shape."""
@@ -372,6 +381,7 @@ class ChatService:
             steps=agent_steps or [],
             hitl_pending=hitl_pending,
             hitl_id=hitl_id,
+            hitl_items=hitl_items or [],
             ragas_result=ragas_result,
         )
 
