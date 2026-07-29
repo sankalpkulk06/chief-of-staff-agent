@@ -553,7 +553,8 @@ class ChatService:
         budget = calorie_util.get_calorie_budget(self._registry, user_id or "")
         try:
             result = advance_calorie_flow(
-                self._chat_provider, calorie_svc, budget, state, question
+                self._chat_provider, calorie_svc, budget, state, question,
+                today=calorie_svc._today(),
             )
         except Exception:
             self._registry.clear_pending_prompt(session_id)

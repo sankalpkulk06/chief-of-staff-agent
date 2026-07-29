@@ -65,7 +65,8 @@ class ActionAgent:
         )
         try:
             habit_names = [h.name for h in habit_svc._get_all_active()] if habit_svc else []
-            actions = self._extract_actions(task, habit_names=habit_names)
+            actions = self._extract_actions(task, habit_names=habit_names,
+                                            today=self._local_today(user_id))
 
             # One action → preserve the existing single-action behavior exactly (this keeps the
             # calorie clarify→confirm flow and every read handler untouched).
@@ -145,7 +146,8 @@ class ActionAgent:
         self._registry.create_hitl_request(
             id=hitl_id, user_id=user_id or "", action_type=action, action_payload=params,
         )
-        return {"id": hitl_id, "summary": self._describe_action(action, params), "action_type": action}
+        summary = self._describe_action(action, params, today=self._local_today(user_id))
+        return {"id": hitl_id, "summary": summary, "action_type": action}
 
     def _make_calorie_hitl_item(self, params: dict, user_id: Optional[str]) -> Optional[dict]:
         """Estimate a meal best-effort and stage it as a log_calorie HITL item."""
@@ -154,7 +156,8 @@ class ActionAgent:
         description = (params.get("description") or params.get("meal") or "").strip()
         if not description:
             return None
-        est = estimate_calories(self._provider, description, force=True)
+        est = estimate_calories(self._provider, description, force=True,
+                                today=self._local_today(user_id))
         payload = {
             "description": description,
             "calories": int(est.get("calories") or 0),
@@ -197,7 +200,14 @@ class ActionAgent:
 
     # ------------------------------------------------------------------
 
-    def _extract_actions(self, task: str, habit_names: Optional[list] = None) -> List[tuple]:
+    def _local_today(self, user_id: Optional[str]):
+        """The user's local calendar date (their timezone), or the server date if unavailable."""
+        if not self._registry:
+            return date.today()
+        return tzu.local_today(self._registry, user_id or "", default=get_settings().default_timezone)
+
+    def _extract_actions(self, task: str, habit_names: Optional[list] = None,
+                         today: Optional[Any] = None) -> List[tuple]:
         """Extract one OR MORE actions from the task. Returns a list of (action, params).
 
         Accepts the list form ``{"actions": [...]}``, a bare array, or the legacy single
@@ -210,7 +220,7 @@ class ActionAgent:
         system = (
             _EXTRACT_SYSTEM
             .replace("{habits_context}", habits_context)
-            .replace("{today}", date.today().isoformat())
+            .replace("{today}", (today or date.today()).isoformat())
         )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
@@ -297,7 +307,7 @@ class ActionAgent:
         return handler(params, task)
 
     @staticmethod
-    def _describe_action(action: str, params: dict) -> str:
+    def _describe_action(action: str, params: dict, today=None) -> str:
         """Return a clean human-readable description of a write action for HITL confirmation."""
         if action == "add_todo":
             task = params.get("task", "unknown task")
@@ -312,7 +322,7 @@ class ActionAgent:
             name = params.get("name", "unknown habit")
             status = params.get("status", "done")
             verb = "mark" if status == "done" else "skip"
-            when = friendly_day(resolve_backdate_iso(params.get("logged_on"))) or "today"
+            when = friendly_day(resolve_backdate_iso(params.get("logged_on"), today=today), today) or "today"
             return f"{verb} '{name}' as {status} for {when}"
         if action == "remember_fact":
             fact = params.get("fact", "unknown fact")
@@ -421,15 +431,16 @@ class ActionAgent:
         status = params.get("status", "done")
         if not name:
             return AgentResult(agent="action_agent", task=task, output="", success=False, error="missing habit name")
-        logged_on = resolve_backdate_iso(params.get("logged_on"))
+        today = svc._today() if svc else None
+        logged_on = resolve_backdate_iso(params.get("logged_on"), today=today)
         logged_at = (
-            datetime.combine(date.fromisoformat(logged_on), datetime.now().time())
+            datetime.combine(date.fromisoformat(logged_on), (svc._now() if svc else datetime.now()).time())
             if logged_on else None
         )
         try:
             log = svc.log_habit(name=name, status=status, logged_at=logged_at)
             verb = "skipped" if log.status == "skipped" else "logged as done"
-            when = friendly_day(logged_on) or "today"
+            when = friendly_day(logged_on, today) or "today"
             return AgentResult(
                 agent="action_agent",
                 task=task,
@@ -525,7 +536,8 @@ class ActionAgent:
                 output="What did you eat? Tell me the dish and roughly how much.",
             )
         budget = calorie_util.get_calorie_budget(self._registry, user_id or "")
-        result = advance_calorie_flow(self._provider, calorie_svc, budget, None, description)
+        result = advance_calorie_flow(self._provider, calorie_svc, budget, None, description,
+                                      today=self._local_today(user_id))
         metadata = {}
         if result.get("pending"):
             metadata["calorie_pending"] = result["pending"]

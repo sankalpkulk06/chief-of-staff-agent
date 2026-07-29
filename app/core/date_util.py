@@ -13,10 +13,12 @@ from typing import Optional
 DEFAULT_MAX_BACKDATE_DAYS = 31
 
 
-def resolve_backdate_iso(raw, *, max_days: int = DEFAULT_MAX_BACKDATE_DAYS) -> Optional[str]:
+def resolve_backdate_iso(raw, *, max_days: int = DEFAULT_MAX_BACKDATE_DAYS,
+                         today: Optional[date] = None) -> Optional[str]:
     """Return a validated 'YYYY-MM-DD' for a genuine past date, else None (= today/default).
 
-    Rejects non-dates, today, future dates, and anything older than ``max_days``.
+    Rejects non-dates, today, future dates, and anything older than ``max_days``. ``today``
+    is the user's local date; defaults to the server date.
     """
     if not raw:
         return None
@@ -24,13 +26,13 @@ def resolve_backdate_iso(raw, *, max_days: int = DEFAULT_MAX_BACKDATE_DAYS) -> O
         parsed = date.fromisoformat(str(raw).strip()[:10])
     except (TypeError, ValueError):
         return None
-    today = date.today()
+    today = today or date.today()
     if parsed >= today or parsed < today - timedelta(days=max_days):
         return None
     return parsed.isoformat()
 
 
-def friendly_day(iso: Optional[str]) -> str:
+def friendly_day(iso: Optional[str], today: Optional[date] = None) -> str:
     """'yesterday' / 'Jul 27' label for a backdated day, or '' when it's today/unset."""
     if not iso:
         return ""
@@ -38,6 +40,6 @@ def friendly_day(iso: Optional[str]) -> str:
         d = date.fromisoformat(iso)
     except (TypeError, ValueError):
         return ""
-    if d == date.today() - timedelta(days=1):
+    if d == (today or date.today()) - timedelta(days=1):
         return "yesterday"
     return d.strftime("%b %-d")

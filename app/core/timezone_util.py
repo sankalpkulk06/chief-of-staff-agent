@@ -61,6 +61,21 @@ def now_local(tz: ZoneInfo) -> datetime:
     return datetime.now(tz)
 
 
+def local_now(registry: Any, user_id: str, default: str = "UTC") -> datetime:
+    """Current wall-clock time in the user's timezone, as a NAIVE datetime.
+
+    The rest of the app stores/compares naive local timestamps, so this returns the
+    user's local wall-clock with tzinfo stripped — suitable for stamping ``eaten_at`` /
+    ``logged_at`` and for building day boundaries that line up with the user's calendar day.
+    """
+    return datetime.now(resolve_tz(registry, user_id, default=default)).replace(tzinfo=None)
+
+
+def local_today(registry: Any, user_id: str, default: str = "UTC") -> date:
+    """The user's current calendar date (in their timezone), not the server's."""
+    return datetime.now(resolve_tz(registry, user_id, default=default)).date()
+
+
 def describe_now(registry: Any = None, user_id: str = "", default: str = "UTC") -> str:
     """Human-readable current date, day, and time in the user's timezone.
 
