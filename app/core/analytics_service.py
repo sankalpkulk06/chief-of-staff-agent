@@ -207,15 +207,16 @@ class AnalyticsService:
         out: Dict[str, str] = {}
 
         if habits:
-            top = max(habits, key=lambda h: (h["streak"], h["pct"]))
-            line = f"{top['name']} at {top['pct']}% consistency"
-            prev = top.get("prev_pct")
-            if prev is not None and top["pct"] >= prev + 3:
-                line += f" — up from {prev}%"
-            elif prev is not None and top["pct"] <= prev - 3:
-                line += f" — slipped from {prev}%"
-            if best_streak and best_streak["days"] > max((h["streak"] for h in habits), default=0):
-                line += f". Best ever: {best_streak['days']}d"
+            def _days7(h):
+                return sum((h.get("series") or [])[-7:])
+            top = max(habits, key=lambda h: (h["streak"], _days7(h)))
+            days7 = _days7(top)
+            if top["streak"] > 0:
+                line = f"{top['name']} — 🔥 {top['streak']}-day streak, {days7} of the last 7 days"
+            else:
+                line = f"{top['name']} — {days7} of the last 7 days, no active streak"
+            if best_streak and best_streak["days"] > top["streak"]:
+                line += f" (best ever: {best_streak['days']})"
             out["habits"] = line
 
         if agents:

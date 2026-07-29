@@ -741,7 +741,15 @@
   .an-hname { font-size: 14px; color: var(--text-1); }
   .an-track { height: 8px; background: var(--bg-3); border-radius: 6px; overflow: hidden; }
   .an-fill { height: 100%; background: var(--accent); border-radius: 6px; }
+  .an-dots { display: flex; gap: 7px; align-items: center; }
+  .an-dot { width: 13px; height: 13px; border-radius: 50%; background: transparent; border: 1.5px solid var(--line); box-sizing: border-box; }
+  .an-dot.on { background: var(--accent); border-color: var(--accent); }
+  .an-dot.today { border-color: var(--text-3); }
+  .an-dot.today.on { box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 3.5px var(--accent); }
   .an-hpct { font-family: var(--mono); font-size: 12px; color: var(--text-3); white-space: nowrap; }
+  .an-streak { color: var(--text-1); }
+  .an-streak.off { color: var(--text-3); }
+  .an-hsub { opacity: .6; margin-left: 4px; }
   .an-gaugewrap { display: flex; align-items: flex-start; gap: 16px; }
   .an-flex1 { flex: 1; }
   .an-fbar { display: grid; grid-template-columns: 66px 1fr 40px; align-items: center; gap: 10px; padding: 4px 0; }
@@ -2644,7 +2652,7 @@
       <div class="an-kpis" id="anKpis"></div>
       <div class="an-grid">
         <div class="an-panel an-col7">
-          <div class="an-ptitle"><h2>Habits</h2><span class="an-meta">consistency</span></div>
+          <div class="an-ptitle"><h2>Habits</h2><span class="an-meta">last 7 days</span></div>
           <div id="anHabits"></div>
         </div>
         <div class="an-panel an-col5">
@@ -4205,16 +4213,31 @@
       cards.forEach((c, i) => { if (c.spark && c.spark.some(v => v)) { const s = anSpark(c.spark, { color: c.color }); if (s) document.getElementById('anSpark' + i).append(s); } });
     }
 
-    // Habits
+    // Habits — a row of the last 7 days (filled = done) + current streak. Reads at a glance
+    // and moves every time you log, unlike a slow percentage-over-window.
     const hb = document.getElementById('anHabits');
     if (hb) {
       const habits = data.habits || [];
-      hb.innerHTML = habits.length ? habits.map(h => `
-        <div class="an-hrow">
-          <span class="an-hname">${escapeHtml(h.name)}</span>
-          <span class="an-track"><span class="an-fill" style="width:${h.pct}%"></span></span>
-          <span class="an-hpct">${h.pct}% · ${h.streak > 0 ? `🔥 ${h.streak}` : 'streak 0'}</span>
-        </div>`).join('') : '<div class="an-empty">No habits tracked yet.</div>';
+      const today = new Date();
+      hb.innerHTML = habits.length ? habits.map(h => {
+        const last7 = (h.series || []).slice(-7);
+        while (last7.length < 7) last7.unshift(0);
+        const dots = last7.map((v, i) => {
+          const d = new Date(today); d.setDate(today.getDate() - (6 - i));
+          const cls = 'an-dot' + (v ? ' on' : '') + (i === 6 ? ' today' : '');
+          return `<span class="${cls}" title="${d.toISOString().slice(0, 10)}: ${v ? 'done' : 'missed'}"></span>`;
+        }).join('');
+        const days7 = last7.filter(Boolean).length;
+        const streak = h.streak > 0
+          ? `<span class="an-streak">🔥 ${h.streak}</span>`
+          : `<span class="an-streak off">no streak</span>`;
+        return `
+          <div class="an-hrow">
+            <span class="an-hname">${escapeHtml(h.name)}</span>
+            <span class="an-dots">${dots}</span>
+            <span class="an-hpct">${streak} <span class="an-hsub">${days7}/7</span></span>
+          </div>`;
+      }).join('') : '<div class="an-empty">No habits tracked yet.</div>';
     }
 
     // Todos
