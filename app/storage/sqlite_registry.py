@@ -114,6 +114,14 @@ class SQLiteRegistry:
             self._connection.execute(
                 "ALTER TABLE calorie_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'intake'"
             )
+        for col, definition in [
+            ("dish", "TEXT"),
+            ("protein_g", "REAL DEFAULT 0"),
+            ("carbs_g", "REAL DEFAULT 0"),
+            ("fat_g", "REAL DEFAULT 0"),
+        ]:
+            if col not in _cols("calorie_entries"):
+                self._connection.execute(f"ALTER TABLE calorie_entries ADD COLUMN {col} {definition}")
 
         # user_settings (new table — create if missing)
         self._connection.execute("""

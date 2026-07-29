@@ -145,6 +145,51 @@ def test_flow_forces_estimate_after_max_clarify_rounds(tmp_path):
 
 
 # ----------------------------------------------------------------------
+# Macros + item breakdown
+# ----------------------------------------------------------------------
+
+def test_macros_and_items_stored_and_read(tmp_path):
+    registry = SQLiteRegistry(tmp_path / "r.db")
+    try:
+        svc = CalorieService(registry, user_id="u1")
+        svc.add_entry(
+            "1.5 chicken quesadilla + ranch + fries", 1465,
+            items_json='[{"name":"chicken quesadilla","calories":900},'
+                       '{"name":"ranch","calories":40},{"name":"air-fried fries","calories":525}]',
+            dish="chicken quesadilla + sides", protein_g=80, carbs_g=120, fat_g=55,
+        )
+        assert svc.today_macros() == {"protein": 80, "carbs": 120, "fat": 55}
+        e = svc.list_today()[0]
+        assert e["dish"] == "chicken quesadilla + sides"
+        assert e["protein_g"] == 80 and e["fat_g"] == 55
+        assert [i["name"] for i in e["items"]] == ["chicken quesadilla", "ranch", "air-fried fries"]
+        # Burned entries don't contribute to macros.
+        svc.add_entry("run", 300, kind="burned", protein_g=0, carbs_g=0, fat_g=0)
+        assert svc.today_macros()["protein"] == 80
+    finally:
+        registry.close()
+
+
+def test_meal_flow_carries_macros_to_storage(tmp_path):
+    registry = SQLiteRegistry(tmp_path / "r.db")
+    try:
+        svc = CalorieService(registry, user_id="u1")
+        provider = _Provider(
+            '{"status":"ready","dish":"quesadilla + sides","calories":1465,'
+            '"items":[{"name":"quesadilla","calories":900},{"name":"fries","calories":565}],'
+            '"protein_g":80,"carbs_g":120,"fat_g":55}'
+        )
+        step1 = advance_calorie_flow(provider, svc, 2000, None, "1.5 chicken quesadilla and fries")
+        assert step1["pending"]["protein_g"] == 80
+        advance_calorie_flow(provider, svc, 2000, step1["pending"], "yes")
+        assert svc.today_macros() == {"protein": 80, "carbs": 120, "fat": 55}
+        e = svc.list_today()[0]
+        assert e["dish"] == "quesadilla + sides" and len(e["items"]) == 2
+    finally:
+        registry.close()
+
+
+# ----------------------------------------------------------------------
 # Burned calories (workouts)
 # ----------------------------------------------------------------------
 

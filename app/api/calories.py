@@ -16,11 +16,21 @@ from app.core.calorie_service import CalorieService
 router = APIRouter(prefix="/calories", tags=["calories"])
 
 
+class ItemOut(BaseModel):
+    name: str
+    calories: int = 0
+
+
 class EntryOut(BaseModel):
     id: str
     description: str
+    dish: Optional[str] = None
     calories: int
     kind: str = "intake"
+    protein_g: int = 0
+    carbs_g: int = 0
+    fat_g: int = 0
+    items: List[ItemOut] = []
     eaten_at: Optional[str] = None
 
 
@@ -30,6 +40,7 @@ class TodayOut(BaseModel):
     net: int              # intake - burned
     budget: int
     remaining: int        # budget - net (burning gives you more room)
+    macros: Dict[str, int] = {}   # {protein, carbs, fat} grams eaten today
     entries: List[EntryOut]
 
 
@@ -60,6 +71,7 @@ async def get_today(
         net=net,
         budget=budget,
         remaining=budget - net,
+        macros=svc.today_macros(),
         entries=[EntryOut(**e) for e in svc.list_today()],
     )
 
@@ -93,6 +105,7 @@ async def add_entry(
     net = total - burned
     return TodayOut(
         total=total, burned=burned, net=net, budget=budget, remaining=budget - net,
+        macros=svc.today_macros(),
         entries=[EntryOut(**e) for e in svc.list_today()],
     )
 

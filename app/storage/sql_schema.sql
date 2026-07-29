@@ -129,10 +129,14 @@ CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_id);
 CREATE TABLE IF NOT EXISTS calorie_entries (
     id          TEXT PRIMARY KEY,
     user_id     TEXT NOT NULL DEFAULT 'default',
-    description TEXT NOT NULL,
+    description TEXT NOT NULL,                     -- the user's raw text
+    dish        TEXT,                              -- short display name (e.g. "chicken quesadilla + sides")
     calories    INTEGER NOT NULL,
     kind        TEXT NOT NULL DEFAULT 'intake',   -- 'intake' (eaten) | 'burned' (workout)
-    items_json  TEXT,
+    protein_g   REAL DEFAULT 0,
+    carbs_g     REAL DEFAULT 0,
+    fat_g       REAL DEFAULT 0,
+    items_json  TEXT,                              -- [{name, calories}, ...] component breakdown
     eaten_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );

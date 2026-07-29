@@ -14,11 +14,18 @@ Given a description of a meal, decide ONE of two things:
 
 2. Otherwise, estimate the TOTAL calories for the whole meal. Return:
    {"status": "ready",
-    "dish": "<short human name for the meal>",
+    "dish": "<short human name for the meal, e.g. 'chicken quesadilla + sides'>",
     "calories": <integer total kcal for everything described>,
-    "items": [{"name": "<component>", "calories": <int>}],
+    "items": [{"name": "<component with its amount>", "calories": <int>}],
+    "protein_g": <integer grams of protein for the whole meal>,
+    "carbs_g": <integer grams of carbs for the whole meal>,
+    "fat_g": <integer grams of fat for the whole meal>,
     "eaten_on": "<YYYY-MM-DD, only if the user named a day; otherwise omit>",
     "confidence": "low" | "medium" | "high"}
+
+Break the meal into its natural components in "items" (e.g. the quesadilla, the ranch,
+the fries as separate items with their own calories). "dish" is a SHORT label; the full
+detail lives in items. Always include the three macro gram estimates.
 
 Rules:
 - Only ask a follow-up when the answer would MATERIALLY change the estimate. A dish

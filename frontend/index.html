@@ -4339,15 +4339,28 @@
       </div>
       <div style="font-size:.8em;opacity:.75;margin-top:2px">${total} eaten · <span style="color:#57c08a">${burned} burned</span></div>`;
     if (entries.length) {
-      html += '<div style="margin:.5rem 0;display:flex;flex-direction:column;gap:.25rem">' +
+      html += '<div style="margin:.5rem 0;display:flex;flex-direction:column;gap:.4rem">' +
         entries.map(e => {
           const isBurn = e.kind === 'burned';
-          const label = isBurn ? `🔥 ${escapeHtml(e.description)}` : escapeHtml(e.description);
+          let title = e.dish || e.description || '';
+          if (!e.dish && title.length > 52) title = title.slice(0, 50) + '…';
+          const label = isBurn ? `🔥 ${escapeHtml(title)}` : escapeHtml(title);
           const val = isBurn ? `<span style="color:#57c08a">−${e.calories} cal</span>` : `${e.calories} cal`;
-          return `<div style="display:flex;justify-content:space-between;font-size:.85em;opacity:.85"><span>${label}</span><span>${val}</span></div>`;
+          let block = `<div><div style="display:flex;justify-content:space-between;font-size:.9em"><span>${label}</span><span>${val}</span></div>`;
+          if (!isBurn && e.items && e.items.length > 1) {
+            block += '<div style="margin:.15rem 0 0 .9rem;display:flex;flex-direction:column;gap:.1rem">' +
+              e.items.map(it => `<div style="display:flex;justify-content:space-between;font-size:.8em;opacity:.55"><span>· ${escapeHtml(it.name)}</span><span>${it.calories} cal</span></div>`).join('') +
+              '</div>';
+          }
+          return block + '</div>';
         }).join('') + '</div>';
     } else {
       html += '<div class="an-empty">Nothing logged yet today. Tell Sage "I ate…" or "I burned…" to start.</div>';
+    }
+    const macros = t.macros || {};
+    const macroTotal = (macros.protein || 0) + (macros.carbs || 0) + (macros.fat || 0);
+    if (macroTotal > 0) {
+      html += '<div class="an-meta" style="margin-top:.9rem;display:block">Today\'s macros</div><div id="anMacroDonut"></div>';
     }
     html += '<div class="an-meta" style="margin-top:.9rem;display:block">Last 7 days · <span style="color:var(--accent)">■</span> eaten · <span style="color:#57c08a">■</span> burned</div>';
     html += '<div id="anCalTrend"></div>';
@@ -4359,7 +4372,33 @@
       html += `<div style="margin-top:.7rem;padding-top:.55rem;border-top:1px solid rgba(255,255,255,.06);font-size:.85em;opacity:.8">💡 Avg ${avgIn} eaten/day${avgBurn ? ` · ${avgBurn} burned/day` : ''}</div>`;
     }
     host.innerHTML = html;
+    if (document.getElementById('anMacroDonut')) renderMacroDonut(document.getElementById('anMacroDonut'), macros);
     renderCalTrend(document.getElementById('anCalTrend'), days, budget);
+  }
+
+  function renderMacroDonut(host, macros) {
+    if (!host) return;
+    const segs = [
+      { label: 'Protein', g: macros.protein || 0, col: '#5aa9e0' },
+      { label: 'Carbs', g: macros.carbs || 0, col: '#e0a23c' },
+      { label: 'Fat', g: macros.fat || 0, col: '#e0645a' },
+    ];
+    const total = segs.reduce((a, s) => a + s.g, 0);
+    const R = 42, C = 2 * Math.PI * R, cx = 50, cy = 50, sw = 15;
+    let off = 0;
+    const rings = total > 0 ? segs.filter(s => s.g > 0).map(s => {
+      const len = (s.g / total) * C;
+      const el = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.col}" stroke-width="${sw}" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${cx} ${cy})"/>`;
+      off += len; return el;
+    }).join('') : `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--line)" stroke-width="${sw}"/>`;
+    const svg = `<svg viewBox="0 0 100 100" width="118" height="118">${rings}<text x="50" y="48" text-anchor="middle" font-size="14" fill="var(--text-1)" font-weight="700">${total}g</text><text x="50" y="61" text-anchor="middle" font-size="7" fill="var(--text-3)" letter-spacing=".5">MACROS</text></svg>`;
+    const legend = segs.map(s => {
+      const kcal = s.label === 'Fat' ? s.g * 9 : s.g * 4;
+      const pct = total ? Math.round(s.g / total * 100) : 0;
+      return `<div style="display:flex;align-items:center;gap:8px;font-size:.85em"><span style="width:11px;height:11px;border-radius:3px;background:${s.col};display:inline-block;flex:none"></span><span>${s.label}</span><b style="margin-left:auto">${s.g}g</b><span style="opacity:.5;width:64px;text-align:right">${pct}% · ${kcal}cal</span></div>`;
+    }).join('');
+    host.style.cssText = 'display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:.4rem';
+    host.innerHTML = `<div style="flex:none">${svg}</div><div style="display:flex;flex-direction:column;gap:8px;min-width:200px;flex:1">${legend}</div>`;
   }
 
   async function loadAnalytics(win) {

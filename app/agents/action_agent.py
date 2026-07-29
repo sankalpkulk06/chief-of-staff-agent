@@ -164,7 +164,11 @@ class ActionAgent:
                                 today=self._local_today(user_id))
         payload = {
             "description": description,
+            "dish": est.get("dish"),
             "calories": int(est.get("calories") or 0),
+            "protein_g": est.get("protein_g", 0),
+            "carbs_g": est.get("carbs_g", 0),
+            "fat_g": est.get("fat_g", 0),
             "items_json": None,
         }
         try:
@@ -599,9 +603,14 @@ class ActionAgent:
                                success=False, error="no_calorie_service")
         description = params.get("description", "a meal")
         calories = int(params.get("calories", 0) or 0)
-        calorie_svc.add_entry(description, calories, items_json=params.get("items_json"))
+        calorie_svc.add_entry(
+            description, calories, items_json=params.get("items_json"),
+            dish=params.get("dish"),
+            protein_g=params.get("protein_g", 0), carbs_g=params.get("carbs_g", 0),
+            fat_g=params.get("fat_g", 0),
+        )
         return AgentResult(agent="action_agent", task=task, success=True,
-                           output=f"Logged {description} ({calories} cal).")
+                           output=f"Logged {params.get('dish') or description} ({calories} cal).")
 
     def _calories_remaining(
         self, params: dict, task: str,

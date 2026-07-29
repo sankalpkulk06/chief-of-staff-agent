@@ -97,18 +97,22 @@ class CalorieService:
     def add_entry(
         self, description: str, calories: int, items_json: Optional[str] = None,
         eaten_at: Optional[datetime] = None, kind: str = "intake",
+        dish: Optional[str] = None, protein_g=0, carbs_g=0, fat_g=0,
     ) -> dict:
         entry_id = str(uuid.uuid4())
         ts = (eaten_at or self._now()).isoformat()
         kind = "burned" if kind == "burned" else "intake"
         self._execute(
-            "INSERT INTO calorie_entries (id, user_id, description, calories, kind, items_json, eaten_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (entry_id, self._user_id, description, int(calories), kind, items_json, ts),
+            "INSERT INTO calorie_entries "
+            "(id, user_id, description, dish, calories, kind, protein_g, carbs_g, fat_g, items_json, eaten_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (entry_id, self._user_id, description, dish, int(calories), kind,
+             float(protein_g or 0), float(carbs_g or 0), float(fat_g or 0), items_json, ts),
         )
         self._commit()
-        return {"id": entry_id, "description": description, "calories": int(calories),
-                "kind": kind, "eaten_at": ts}
+        return {"id": entry_id, "description": description, "dish": dish,
+                "calories": int(calories), "kind": kind, "eaten_at": ts,
+                "protein_g": protein_g, "carbs_g": carbs_g, "fat_g": fat_g}
 
     def delete_entry(self, entry_id: str) -> bool:
         cur = self._execute(
@@ -152,25 +156,61 @@ class CalorieService:
         """Calories burned in workouts today."""
         return self.total_for(self._today(), "burned")
 
+    def today_macros(self) -> dict:
+        """Today's total protein/carbs/fat grams from eaten (intake) entries."""
+        today = self._today().isoformat()
+        row = self._execute(
+            "SELECT COALESCE(SUM(protein_g),0) AS p, COALESCE(SUM(carbs_g),0) AS c, "
+            "COALESCE(SUM(fat_g),0) AS f FROM calorie_entries "
+            "WHERE user_id = ? AND DATE(eaten_at) = ? AND kind = 'intake'",
+            (self._user_id, today),
+        ).fetchone()
+        return {"protein": round(float(row["p"] or 0)),
+                "carbs": round(float(row["c"] or 0)),
+                "fat": round(float(row["f"] or 0))}
+
     def remaining(self, budget: int) -> int:
         return int(budget) - self.today_total()
 
     def list_today(self, kind: Optional[str] = None) -> list[dict]:
-        """Today's entries. ``kind`` filters to 'intake' or 'burned'; None returns both."""
+        """Today's entries with dish, item breakdown, and macros. ``kind`` filters to
+        'intake' or 'burned'; None returns both."""
         today = self._today().isoformat()
-        sql = ("SELECT id, description, calories, kind, eaten_at FROM calorie_entries "
-               "WHERE user_id = ? AND DATE(eaten_at) = ?")
+        sql = ("SELECT id, description, dish, calories, kind, protein_g, carbs_g, fat_g, "
+               "items_json, eaten_at FROM calorie_entries WHERE user_id = ? AND DATE(eaten_at) = ?")
         params: tuple = (self._user_id, today)
         if kind in ("intake", "burned"):
             sql += " AND kind = ?"
             params = (self._user_id, today, kind)
         sql += " ORDER BY eaten_at ASC"
         rows = self._execute(sql, params).fetchall()
-        return [
-            {"id": r["id"], "description": r["description"], "calories": int(r["calories"]),
-             "kind": (r["kind"] if "kind" in r.keys() else "intake"), "eaten_at": r["eaten_at"]}
-            for r in rows
-        ]
+
+        def _items(raw):
+            if not raw:
+                return []
+            try:
+                data = json.loads(raw)
+                return [{"name": str(i.get("name", "")), "calories": int(i.get("calories", 0) or 0)}
+                        for i in data if isinstance(i, dict)]
+            except Exception:
+                return []
+
+        out = []
+        for r in rows:
+            keys = r.keys()
+            out.append({
+                "id": r["id"],
+                "description": r["description"],
+                "dish": (r["dish"] if "dish" in keys and r["dish"] else None),
+                "calories": int(r["calories"]),
+                "kind": (r["kind"] if "kind" in keys else "intake"),
+                "protein_g": round(float(r["protein_g"] or 0)) if "protein_g" in keys else 0,
+                "carbs_g": round(float(r["carbs_g"] or 0)) if "carbs_g" in keys else 0,
+                "fat_g": round(float(r["fat_g"] or 0)) if "fat_g" in keys else 0,
+                "items": _items(r["items_json"] if "items_json" in keys else None),
+                "eaten_at": r["eaten_at"],
+            })
+        return out
 
     def daily_totals(self, days: int = 7) -> list[dict]:
         """Per-day intake + burned for the last ``days`` days, oldest first, zero-filled.
@@ -235,7 +275,8 @@ def estimate_calories(provider: Any, description: str, force: bool = False,
         data = json.loads(match.group())
     except Exception:
         return {"status": "ready", "dish": description, "calories": _FALLBACK_CALORIES,
-                "items": None, "eaten_on": None, "confidence": "low"}
+                "items": None, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
+                "eaten_on": None, "confidence": "low"}
 
     status = data.get("status")
     if status == "need_info" and not force and data.get("question"):
@@ -247,9 +288,19 @@ def estimate_calories(provider: Any, description: str, force: bool = False,
         "dish": (data.get("dish") or description).strip(),
         "calories": calories,
         "items": data.get("items") if isinstance(data.get("items"), list) else None,
+        "protein_g": _num(data.get("protein_g")),
+        "carbs_g": _num(data.get("carbs_g")),
+        "fat_g": _num(data.get("fat_g")),
         "eaten_on": _resolve_eaten_on(data.get("eaten_on"), today=today),
         "confidence": data.get("confidence", "medium"),
     }
+
+
+def _num(x) -> int:
+    try:
+        return max(0, int(round(float(x))))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _resolve_eaten_on(raw, today: Optional[date] = None) -> Optional[str]:
@@ -367,6 +418,8 @@ def advance_calorie_flow(
         "reply": _confirm_reply(dish, calories, eaten_on, today),
         "pending": {"stage": "confirming", "description": description, "dish": dish,
                     "calories": int(calories), "items_json": items_json,
+                    "protein_g": est.get("protein_g", 0), "carbs_g": est.get("carbs_g", 0),
+                    "fat_g": est.get("fat_g", 0),
                     "eaten_on": eaten_on, "confirm_attempts": 0},
         "logged": False,
         "entry": None,
@@ -393,6 +446,9 @@ def _handle_confirm(
         entry = calorie_service.add_entry(
             state.get("description", dish), calories,
             items_json=state.get("items_json"), eaten_at=eaten_at,
+            dish=state.get("dish"),
+            protein_g=state.get("protein_g", 0), carbs_g=state.get("carbs_g", 0),
+            fat_g=state.get("fat_g", 0),
         )
         day = eaten_at.date() if eaten_at else (today or date.today())
         total = calorie_service.total_for(day)
