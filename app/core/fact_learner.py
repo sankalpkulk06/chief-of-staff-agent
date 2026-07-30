@@ -89,10 +89,18 @@ class FactLearnerService:
         trust = "low" if external else "high"
         key = content_key(subject or content)
 
-        # Dedup / supersede against active facts sharing the same subject key.
+        # Dedup / supersede / promote against active facts sharing the same subject key.
         existing = self._facts.find_by_key(key)
         norm = content_key(content)
-        if any(content_key(e["content"]) == norm for e in existing):
+        dup = next((e for e in existing if content_key(e["content"]) == norm), None)
+        if dup is not None:
+            # Seen again on a later turn = corroboration → promote tentative to confirmed.
+            # If this sighting is higher-trust (user said it), also upgrade low→high trust.
+            if dup.get("status") == "tentative":
+                upgraded = "high" if (trust == "high" or dup.get("trust") == "high") else "low"
+                self._facts.promote(dup["fact_id"], trust=upgraded)
+                logger.info("fact-learner: promoted to confirmed (corroborated, trust=%s) %r",
+                            upgraded, content)
             return None  # already known — don't pile up duplicates
 
         new_fact = self._facts.remember(

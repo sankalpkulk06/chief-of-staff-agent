@@ -64,6 +64,10 @@ class FactService:
     def supersede(self, old_fact_id: str, new_fact_id: str) -> None:
         self._registry.supersede_fact(old_fact_id, new_fact_id, user_id=self._user_id)
 
+    def promote(self, fact_id: str, trust: Optional[str] = None) -> None:
+        """Confirm a tentative fact (corroborated); optionally upgrade its trust tier."""
+        self._registry.promote_fact(fact_id, user_id=self._user_id, trust=trust)
+
     def list_facts(self, category: Optional[str] = None) -> List[Fact]:
         rows = self._registry.list_facts(category=category, user_id=self._user_id)
         return [Fact(**row) for row in rows]

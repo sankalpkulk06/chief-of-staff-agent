@@ -413,6 +413,20 @@ class PostgresRegistry:
             )
         self._commit()
 
+    def promote_fact(self, fact_id: str, *, user_id: str, trust: Optional[str] = None) -> None:
+        with self._cursor() as cur:
+            if trust is not None:
+                cur.execute(
+                    "UPDATE learned_facts SET status = 'confirmed', trust = %s WHERE fact_id = %s AND user_id = %s",
+                    (trust, fact_id, user_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE learned_facts SET status = 'confirmed' WHERE fact_id = %s AND user_id = %s",
+                    (fact_id, user_id),
+                )
+        self._commit()
+
     def delete_document(self, document_id: str, user_id: str) -> None:
         with self._cursor() as cur:
             cur.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
