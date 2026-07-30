@@ -1,5 +1,7 @@
 """AgentRunner — executes the orchestrator's plan and collects results."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -19,6 +21,8 @@ from app.retrieval.retriever import Retriever
 from app.services.news_service import NewsService
 from app.services.web_search_service import WebSearchService
 from app.storage.sqlite_registry import SQLiteRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class RunResult:
@@ -355,6 +359,7 @@ class AgentRunner:
                 )
             _trace("complete", "complete", "Done")
             latency_ms = int((time.monotonic() - t0) * 1000)
+            self._maybe_learn(question, agent_results, user_id)
             return RunResult(
                 output=final_output,
                 plan=plan,
@@ -379,6 +384,7 @@ class AgentRunner:
         _trace("complete", "complete", "Done")
 
         latency_ms = int((time.monotonic() - t0) * 1000)
+        self._maybe_learn(question, agent_results, user_id)
         return RunResult(
             output=final_output,
             plan=plan,
@@ -402,17 +408,65 @@ class AgentRunner:
         return None
 
     def _user_facts_for(self, user_id: Optional[str]) -> Optional[str]:
-        user_facts: Optional[str] = None
+        facts = None
         if self._registry and user_id:
-            per_request_facts = FactService(self._registry, user_id=user_id)
-            facts = per_request_facts.list_facts()
-            if facts:
-                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
+            facts = FactService(self._registry, user_id=user_id).list_facts()
         elif self._fact_service:
             facts = self._fact_service.list_facts()
-            if facts:
-                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
-        return user_facts
+        if not facts:
+            return None
+        return "\n".join(self._format_fact(f) for f in facts)
+
+    @staticmethod
+    def _format_fact(f: Any) -> str:
+        """Label passively-learned facts so the model treats them as softer than user-stated ones:
+        low-trust/tentative facts are attributed ("from an email") and never asserted as certain."""
+        tags = [f.category]
+        if getattr(f, "status", "confirmed") == "tentative":
+            tags.append("tentative, from an email/document" if getattr(f, "trust", "high") == "low"
+                        else "tentative")
+        return f"- {f.content} ({', '.join(tags)})"
+
+    def _maybe_learn(self, question: str, agent_results: List[AgentResult], user_id: Optional[str]) -> None:
+        """Fire the passive fact-learner off the response path (fire-and-forget thread)."""
+        try:
+            from app.config.settings import get_settings
+            settings = get_settings()
+            if not settings.passive_learning_enabled or self._registry is None:
+                return
+            context = "\n\n".join(
+                f"[{r.agent}] {r.output}" for r in agent_results if r.success and r.output
+            )
+            if not context:
+                return
+            external = any(r.agent in ("email_agent", "rag_agent") for r in agent_results)
+            provider = self._agent_chat_providers.get("action_agent") or self._default_chat_provider
+            threading.Thread(
+                target=self._run_learner,
+                args=(question, context, external, user_id or "", settings, provider),
+                daemon=True,
+            ).start()
+        except Exception:
+            logger.debug("passive learning: failed to start", exc_info=True)
+
+    def _run_learner(self, question, context, external, user_id, settings, provider) -> None:
+        # Own registry/connection — never share the request thread's SQLite handle.
+        from app.core.fact_learner import FactLearnerService
+        from app.storage.factory import create_registry
+        registry = None
+        try:
+            paths = settings.resolve_paths()
+            registry = create_registry(settings.database_url, paths.sqlite_db_path)
+            FactLearnerService(registry, provider, settings, user_id=user_id).learn(
+                question, context, external=external)
+        except Exception:
+            logger.debug("passive learning: learner run failed", exc_info=True)
+        finally:
+            if registry is not None:
+                try:
+                    registry.close()
+                except Exception:
+                    pass
 
     def _attach_hitl_context(self, hitl_id: Optional[str], continuation_output: str) -> None:
         if not hitl_id or not continuation_output or not self._registry:
