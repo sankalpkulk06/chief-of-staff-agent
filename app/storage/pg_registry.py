@@ -357,19 +357,26 @@ class PostgresRegistry:
     # Facts
     # ------------------------------------------------------------------
 
-    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user", confidence_score: float = 1.0, *, user_id: str) -> None:
+    _FACT_COLS = "fact_id, content, category, source, confidence_score, created_at, usage_count, trust, status"
+
+    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user",
+                    confidence_score: float = 1.0, *, user_id: str,
+                    trust: str = "high", status: str = "confirmed", content_key: Optional[str] = None) -> None:
         with self._cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO learned_facts (fact_id, user_id, content, category, source, confidence_score)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO learned_facts (fact_id, user_id, content, category, source, confidence_score, trust, status, content_key)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (fact_id) DO UPDATE SET
                     content          = EXCLUDED.content,
                     category         = EXCLUDED.category,
                     source           = EXCLUDED.source,
-                    confidence_score = EXCLUDED.confidence_score
+                    confidence_score = EXCLUDED.confidence_score,
+                    trust            = EXCLUDED.trust,
+                    status           = EXCLUDED.status,
+                    content_key      = EXCLUDED.content_key
                 """,
-                (fact_id, user_id, content, category, source, confidence_score),
+                (fact_id, user_id, content, category, source, confidence_score, trust, status, content_key),
             )
         self._commit()
 
@@ -377,15 +384,34 @@ class PostgresRegistry:
         with self._cursor() as cur:
             if category:
                 cur.execute(
-                    "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE user_id = %s AND category = %s ORDER BY created_at DESC",
+                    f"SELECT {self._FACT_COLS} FROM learned_facts WHERE user_id = %s AND category = %s "
+                    "AND status != 'superseded' ORDER BY created_at DESC",
                     (user_id, category),
                 )
             else:
                 cur.execute(
-                    "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE user_id = %s ORDER BY created_at DESC",
+                    f"SELECT {self._FACT_COLS} FROM learned_facts WHERE user_id = %s "
+                    "AND status != 'superseded' ORDER BY created_at DESC",
                     (user_id,),
                 )
             return [dict(r) for r in cur.fetchall()]
+
+    def find_facts_by_content_key(self, content_key: str, *, user_id: str) -> List[Dict[str, object]]:
+        with self._cursor() as cur:
+            cur.execute(
+                f"SELECT {self._FACT_COLS}, content_key FROM learned_facts "
+                "WHERE user_id = %s AND content_key = %s AND status != 'superseded'",
+                (user_id, content_key),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def supersede_fact(self, fact_id: str, superseded_by: str, *, user_id: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE learned_facts SET status = 'superseded', superseded_by = %s WHERE fact_id = %s AND user_id = %s",
+                (superseded_by, fact_id, user_id),
+            )
+        self._commit()
 
     def delete_document(self, document_id: str, user_id: str) -> None:
         with self._cursor() as cur:
@@ -401,7 +427,7 @@ class PostgresRegistry:
     def get_fact(self, fact_id: str) -> Optional[Dict[str, object]]:
         with self._cursor() as cur:
             cur.execute(
-                "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE fact_id = %s",
+                f"SELECT {self._FACT_COLS} FROM learned_facts WHERE fact_id = %s",
                 (fact_id,),
             )
             row = cur.fetchone()

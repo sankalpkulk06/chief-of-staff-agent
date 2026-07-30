@@ -66,8 +66,18 @@ class SQLiteRegistry:
             self._connection.execute("ALTER TABLE chat_sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
 
         # learned_facts
-        if "user_id" not in _cols("learned_facts"):
+        fact_cols = _cols("learned_facts")
+        if "user_id" not in fact_cols:
             self._connection.execute("ALTER TABLE learned_facts ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
+        # Passive fact-learning: provenance/trust tiers + dedup/supersede bookkeeping.
+        for col, definition in [
+            ("trust", "TEXT NOT NULL DEFAULT 'high'"),
+            ("status", "TEXT NOT NULL DEFAULT 'confirmed'"),
+            ("content_key", "TEXT"),
+            ("superseded_by", "TEXT"),
+        ]:
+            if col not in fact_cols:
+                self._connection.execute(f"ALTER TABLE learned_facts ADD COLUMN {col} {definition}")
 
         # todos
         if "user_id" not in _cols("todos"):
@@ -521,25 +531,50 @@ class SQLiteRegistry:
     # Facts
     # ------------------------------------------------------------------
 
-    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user", confidence_score: float = 1.0, *, user_id: str) -> None:
+    _FACT_COLS = "fact_id, content, category, source, confidence_score, created_at, usage_count, trust, status"
+
+    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user",
+                    confidence_score: float = 1.0, *, user_id: str,
+                    trust: str = "high", status: str = "confirmed", content_key: Optional[str] = None) -> None:
         self._connection.execute(
-            "INSERT OR REPLACE INTO learned_facts (fact_id, user_id, content, category, source, confidence_score) VALUES (?, ?, ?, ?, ?, ?)",
-            (fact_id, user_id, content, category, source, confidence_score),
+            "INSERT OR REPLACE INTO learned_facts "
+            "(fact_id, user_id, content, category, source, confidence_score, trust, status, content_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (fact_id, user_id, content, category, source, confidence_score, trust, status, content_key),
         )
         self._connection.commit()
 
     def list_facts(self, category: Optional[str] = None, *, user_id: str) -> List[Dict[str, object]]:
+        # Superseded facts are logically replaced — never surface them (synthesis or UI).
         if category:
             rows = self._connection.execute(
-                "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE user_id = ? AND category = ? ORDER BY created_at DESC",
+                f"SELECT {self._FACT_COLS} FROM learned_facts WHERE user_id = ? AND category = ? "
+                "AND status != 'superseded' ORDER BY created_at DESC",
                 (user_id, category),
             ).fetchall()
         else:
             rows = self._connection.execute(
-                "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE user_id = ? ORDER BY created_at DESC",
+                f"SELECT {self._FACT_COLS} FROM learned_facts WHERE user_id = ? "
+                "AND status != 'superseded' ORDER BY created_at DESC",
                 (user_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def find_facts_by_content_key(self, content_key: str, *, user_id: str) -> List[Dict[str, object]]:
+        """Active (non-superseded) facts sharing a normalized content key — for dedup/supersede."""
+        rows = self._connection.execute(
+            f"SELECT {self._FACT_COLS}, content_key FROM learned_facts "
+            "WHERE user_id = ? AND content_key = ? AND status != 'superseded'",
+            (user_id, content_key),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def supersede_fact(self, fact_id: str, superseded_by: str, *, user_id: str) -> None:
+        self._connection.execute(
+            "UPDATE learned_facts SET status = 'superseded', superseded_by = ? WHERE fact_id = ? AND user_id = ?",
+            (superseded_by, fact_id, user_id),
+        )
+        self._connection.commit()
 
     def delete_document(self, document_id: str, user_id: str) -> None:
         self._connection.execute(
@@ -558,7 +593,7 @@ class SQLiteRegistry:
 
     def get_fact(self, fact_id: str) -> Optional[Dict[str, object]]:
         row = self._connection.execute(
-            "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE fact_id = ?",
+            f"SELECT {self._FACT_COLS} FROM learned_facts WHERE fact_id = ?",
             (fact_id,),
         ).fetchone()
         return dict(row) if row else None

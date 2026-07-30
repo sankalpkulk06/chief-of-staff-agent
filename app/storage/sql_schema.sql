@@ -76,7 +76,11 @@ CREATE TABLE IF NOT EXISTS learned_facts (
     confidence_score REAL NOT NULL DEFAULT 1.0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_used_at TEXT,
-    usage_count INTEGER NOT NULL DEFAULT 0
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    trust TEXT NOT NULL DEFAULT 'high',
+    status TEXT NOT NULL DEFAULT 'confirmed',
+    content_key TEXT,
+    superseded_by TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_learned_facts_category ON learned_facts (category);
