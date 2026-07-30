@@ -61,7 +61,8 @@ def test_log_habit_backdates_to_named_day(tmp_path):
     try:
         hs = HabitService(registry, user_id="u1")
         hs.add_habit("going to the gym")
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        # Relative to the service's clock (tz-deterministic), matching the agent's resolution.
+        yesterday = (hs._today() - timedelta(days=1)).isoformat()
         agent = ActionAgent(
             chat_provider=_Provider(
                 f'{{"action":"log_habit","params":{{"name":"going to the gym",'

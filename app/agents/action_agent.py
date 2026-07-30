@@ -216,11 +216,39 @@ class ActionAgent:
 
     def _extract_actions(self, task: str, habit_names: Optional[list] = None,
                          today: Optional[Any] = None) -> List[tuple]:
-        """Extract one OR MORE actions from the task. Returns a list of (action, params).
+        """Extract one OR MORE actions as (action, params) tuples.
 
-        Accepts the list form ``{"actions": [...]}``, a bare array, or the legacy single
-        object ``{"action": ..., "params": ...}`` (normalized to a one-element list).
+        Prefers native tool-calling (the model calls the action tools directly, possibly
+        several in one turn); falls back to the legacy prompt-for-JSON parser when tool-calling
+        is disabled or the provider doesn't support it (e.g. Ollama).
         """
+        from app.agents.action_tools import ACTION_TOOLS, action_system
+        from app.providers.tool_types import supports_tools
+
+        habits_context = (
+            "Existing habits (use the exact name when logging): "
+            + ", ".join(f'"{n}"' for n in habit_names)
+        ) if habit_names else ""
+
+        if get_settings().tool_calling_enabled and supports_tools(self._provider):
+            try:
+                messages = [
+                    {"role": "system", "content": action_system(habits_context, today or date.today())},
+                    {"role": "user", "content": f"Task: {task}"},
+                ]
+                result = self._provider.chat_tools(messages, ACTION_TOOLS, tool_choice="auto")
+                calls = [(tc.name, dict(tc.arguments or {})) for tc in result.tool_calls if tc.name]
+                if calls:
+                    return calls
+            except Exception:
+                pass  # fall back to prompt-for-JSON
+
+        return self._extract_actions_legacy(task, habit_names, today)
+
+    def _extract_actions_legacy(self, task: str, habit_names: Optional[list] = None,
+                                today: Optional[Any] = None) -> List[tuple]:
+        """Prompt-for-JSON fallback: parse ``{"actions":[...]}`` / a bare array / a legacy
+        single ``{"action","params"}`` object into a list of (action, params)."""
         if habit_names:
             habits_context = "Existing habits (use exact name when logging): " + ", ".join(f'"{n}"' for n in habit_names)
         else:

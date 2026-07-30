@@ -7,11 +7,28 @@ from typing import Any, Dict, List, Optional
 from app.agents.base import AgentResult
 from app.agents.prompts import load
 from app.providers.ollama_chat import OllamaChatProvider
+from app.providers.tool_types import Tool, extract_one
 from app.retrieval.retriever import Retriever
 
 log = logging.getLogger(__name__)
 
 _SYSTEM = load("rag")
+
+_FILTER_TOOL = Tool(
+    name="search_documents",
+    description="Search the user's saved documents. Extract the cleaned semantic query and an "
+                "optional exact filename filter from the request.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string",
+                      "description": "the cleaned semantic search query, without filler or filename refs"},
+            "file_name": {"type": "string",
+                          "description": "exact filename if the user named a specific file, e.g. README.md; omit otherwise"},
+        },
+        "required": ["query"],
+    },
+)
 
 _FILTER_EXTRACT_SYSTEM = """\
 You extract metadata filters from a document search task.
@@ -42,7 +59,27 @@ task: "search_documents: title of the README file"
 
 
 def _extract_filters(task: str, provider: OllamaChatProvider) -> Dict[str, Any]:
-    """Ask the LLM to pull a semantic query and optional file_name filter from the task."""
+    """Pull a semantic query + optional file_name filter from the task.
+
+    Uses native tool-calling when the provider supports it; otherwise falls back to the
+    legacy prompt-for-JSON path below.
+    """
+    from app.config.settings import get_settings
+
+    messages = [
+        {"role": "system", "content": _FILTER_EXTRACT_SYSTEM},
+        {"role": "user", "content": f"task: \"{task}\""},
+    ]
+    args = extract_one(
+        provider, messages, _FILTER_TOOL,
+        fallback_fn=lambda: _extract_filters_legacy(task, provider),
+        enabled=get_settings().tool_calling_enabled,
+    )
+    return {"query": args.get("query") or task, "file_name": args.get("file_name") or None}
+
+
+def _extract_filters_legacy(task: str, provider: OllamaChatProvider) -> Dict[str, Any]:
+    """Prompt-for-JSON fallback (used when tool-calling is off/unavailable)."""
     try:
         response = provider.chat([
             {"role": "system", "content": _FILTER_EXTRACT_SYSTEM},
