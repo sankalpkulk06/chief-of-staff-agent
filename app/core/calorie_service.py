@@ -246,12 +246,72 @@ class CalorieService:
 
 def estimate_calories(provider: Any, description: str, force: bool = False,
                       today: Optional[date] = None) -> dict:
-    """Ask the model to estimate calories from a meal description.
+    """Estimate calories + macros for a meal. Prefers native tool-calling (a forced
+    ``record_meal`` structured call — no parse failures); falls back to prompt-for-JSON."""
+    from app.config.settings import get_settings
+    from app.providers.tool_types import supports_tools
+    today = today or date.today()
+    if get_settings().tool_calling_enabled and supports_tools(provider):
+        try:
+            return _estimate_calories_tools(provider, description, force, today)
+        except Exception:
+            pass
+    return _estimate_calories_legacy(provider, description, force, today)
 
-    Returns a dict with ``status`` == ``"need_info"`` (+ ``question``) or ``"ready"``
-    (+ ``dish``, ``calories``, ``items``, ``confidence``). On any parse failure returns
-    a best-effort ``ready`` dict so the flow never hard-crashes on the user.
-    """
+
+def _estimate_calories_tools(provider: Any, description: str, force: bool, today: date) -> dict:
+    from app.providers.tool_types import Tool
+    record = Tool(
+        name="record_meal",
+        description="Record the calorie + macro estimate for the meal, broken into items.",
+        parameters={"type": "object", "properties": {
+            "dish": {"type": "string", "description": "short human name for the meal"},
+            "calories": {"type": "integer", "description": "total kcal for everything described"},
+            "items": {"type": "array", "description": "component breakdown",
+                      "items": {"type": "object", "properties": {
+                          "name": {"type": "string"}, "calories": {"type": "integer"}}}},
+            "protein_g": {"type": "integer"}, "carbs_g": {"type": "integer"}, "fat_g": {"type": "integer"},
+            "eaten_on": {"type": "string", "description": "YYYY-MM-DD only if the user named a past day"},
+        }, "required": ["dish", "calories"]},
+    )
+    tools = [record]
+    if not force:
+        tools.append(Tool(
+            name="ask_followup",
+            description="Ask ONE short follow-up when the meal is too vague to estimate.",
+            parameters={"type": "object", "properties": {"question": {"type": "string"}},
+                        "required": ["question"]}))
+    system = (
+        f"You estimate calories and macros for a meal. Today is {today.isoformat()}. "
+        "Resolve any named day (yesterday / on Jul 27) into eaten_on as YYYY-MM-DD. Break the meal "
+        "into items. If it is too vague to estimate and you may ask, call ask_followup; otherwise "
+        "call record_meal with your best estimate.")
+    result = provider.chat_tools(
+        [{"role": "system", "content": system}, {"role": "user", "content": f"Meal: {description}"}],
+        tools, tool_choice="required")
+    if not result.tool_calls:
+        raise ValueError("no tool call")
+    tc = result.tool_calls[0]
+    if tc.name == "ask_followup" and not force:
+        q = (tc.arguments or {}).get("question")
+        if q:
+            return {"status": "need_info", "question": str(q).strip()}
+        raise ValueError("empty follow-up question")
+    a = tc.arguments or {}
+    return {
+        "status": "ready",
+        "dish": (a.get("dish") or description).strip(),
+        "calories": _coerce_calories(a),
+        "items": a.get("items") if isinstance(a.get("items"), list) else None,
+        "protein_g": _num(a.get("protein_g")), "carbs_g": _num(a.get("carbs_g")), "fat_g": _num(a.get("fat_g")),
+        "eaten_on": _resolve_eaten_on(a.get("eaten_on"), today=today),
+        "confidence": "medium",
+    }
+
+
+def _estimate_calories_legacy(provider: Any, description: str, force: bool = False,
+                              today: Optional[date] = None) -> dict:
+    """Prompt-for-JSON fallback for calorie/macro estimation."""
     force_clause = (
         "IMPORTANT: You have already gathered enough detail. You MUST return "
         '"status": "ready" with your best-effort estimate now — do NOT ask another question.'
@@ -329,7 +389,34 @@ _BURN_ESTIMATE_SYSTEM = (
 
 
 def estimate_burn(provider: Any, description: str) -> dict:
-    """Estimate calories burned from a workout description. Returns {calories, activity}."""
+    """Estimate calories burned from a workout description. Returns {calories, activity}.
+    Prefers a forced ``record_burn`` tool call; falls back to prompt-for-JSON."""
+    from app.config.settings import get_settings
+    from app.providers.tool_types import Tool, supports_tools
+    if get_settings().tool_calling_enabled and supports_tools(provider):
+        try:
+            tool = Tool(
+                name="record_burn",
+                description="Record the calories burned in the described activity.",
+                parameters={"type": "object", "properties": {
+                    "calories": {"type": "integer", "description": "kcal burned"},
+                    "activity": {"type": "string", "description": "short activity name"}},
+                    "required": ["calories"]})
+            result = provider.chat_tools(
+                [{"role": "system", "content": _BURN_ESTIMATE_SYSTEM},
+                 {"role": "user", "content": f"Activity: {description}"}],
+                [tool], tool_choice="required")
+            if result.tool_calls:
+                a = result.tool_calls[0].arguments or {}
+                cals = _num(a.get("calories"))
+                return {"calories": cals if cals > 0 else 200,
+                        "activity": (a.get("activity") or description).strip()}
+        except Exception:
+            pass
+    return _estimate_burn_legacy(provider, description)
+
+
+def _estimate_burn_legacy(provider: Any, description: str) -> dict:
     messages = [
         {"role": "system", "content": _BURN_ESTIMATE_SYSTEM},
         {"role": "user", "content": f"Activity: {description}"},
@@ -450,7 +537,9 @@ def _handle_confirm(
             protein_g=state.get("protein_g", 0), carbs_g=state.get("carbs_g", 0),
             fat_g=state.get("fat_g", 0),
         )
-        day = eaten_at.date() if eaten_at else (today or date.today())
+        # Fallback day must match the service's timezone (add_entry stamps in the user's tz).
+        default_day = today or (calorie_service._today() if calorie_service else date.today())
+        day = eaten_at.date() if eaten_at else default_day
         total = calorie_service.total_for(day)
         remaining = int(budget) - total
         return {"reply": _logged_reply(dish, calories, total, budget, remaining, eaten_on, today),

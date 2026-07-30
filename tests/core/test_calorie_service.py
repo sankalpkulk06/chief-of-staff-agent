@@ -41,7 +41,8 @@ def test_only_todays_entries_count(tmp_path):
     registry = SQLiteRegistry(tmp_path / "r.db")
     try:
         svc = CalorieService(registry, user_id="u1")
-        svc.add_entry("yesterday dinner", 800, eaten_at=datetime.now() - timedelta(days=1))
+        # Use the service's own clock so the test is timezone-deterministic.
+        svc.add_entry("yesterday dinner", 800, eaten_at=svc._now() - timedelta(days=1))
         svc.add_entry("today snack", 200)
         assert svc.today_total() == 200
         totals = svc.daily_totals(days=2)
