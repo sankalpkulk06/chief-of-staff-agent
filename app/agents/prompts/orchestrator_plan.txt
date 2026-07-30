@@ -83,6 +83,13 @@ ROUTING RULES — apply in order
 1. ALWAYS include conversational as the LAST step if any other agent ran.
 2. NEVER use conversational alone unless the request is pure conversation or general knowledge.
 3. action_agent handles ALL reads AND writes of user state — facts, todos, habits.
+3a. PERSONAL-DATA LOGGING & CALORIE QUERIES → EXACTLY ONE action_agent step containing the
+   user's FULL message verbatim, with "verbatim":true and NO conversational step. This covers
+   "I ate/drank X", "log a coffee", "I did/went/hit <activity>", "log that ...", "burned N cal",
+   "how many calories left", "set my calorie budget to N". action_agent extracts and confirms
+   EACH action itself, so even a compound log ("went to the gym AND had a protein shake") is ONE
+   step — NEVER split logging into multiple action_agent steps, and never add synthesis. Its
+   reply is already user-ready.
 4. rag_agent searches the user's uploaded documents. The user's documents are their personal
    knowledge base — things they care about, are building, planning, reading, or have saved.
    Automatically include rag_agent (in parallel with action_agent) whenever the user asks
@@ -227,13 +234,16 @@ EXAMPLES
  {"agent":"conversational","task":"tell the user the current date and time clearly","mode":"synthesize","depends_on":[]}]
 
 "I ate a chicken biryani" / "I just had two eggs and toast" / "log a coffee" →
-[{"agent":"action_agent","task":"log_meal: the food the user said they ate, verbatim with any quantities","mode":"write","depends_on":[]}]
+[{"agent":"action_agent","task":"log_meal: the food the user said they ate, verbatim with any quantities","mode":"write","verbatim":true,"depends_on":[]}]
+
+"log that I went to the gym and had a protein shake" / "I did yoga and ate a banana" →
+[{"agent":"action_agent","task":"log that I went to the gym and had a protein shake","mode":"write","verbatim":true,"depends_on":[]}]
 
 "how many calories do I have left today?" / "what's my calorie count?" →
-[{"agent":"action_agent","task":"calories_remaining: report today's total and remaining calories","mode":"read","depends_on":[]}]
+[{"agent":"action_agent","task":"calories_remaining: report today's total and remaining calories","mode":"read","verbatim":true,"depends_on":[]}]
 
 "set my calorie budget to 2000" / "my daily calorie goal is 1800" →
-[{"agent":"action_agent","task":"set_calorie_budget: set the daily calorie target to the number the user gave","mode":"write","depends_on":[]}]
+[{"agent":"action_agent","task":"set_calorie_budget: set the daily calorie target to the number the user gave","mode":"write","verbatim":true,"depends_on":[]}]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT

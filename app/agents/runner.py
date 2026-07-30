@@ -324,6 +324,28 @@ class AgentRunner:
                 security_flags=_security_flags,
             )
 
+        # Verbatim steps (e.g. calorie logging/queries) return their output exactly as-is with
+        # no synthesis rewording — even if the planner also emitted a conversational step.
+        verbatim_ids = {s.id for s in plan.steps if getattr(s, "verbatim", False)}
+        verbatim_outputs = [
+            r.output for r in agent_results
+            if r.success and r.output and r.metadata.get("step_id") in verbatim_ids
+        ]
+        if verbatim_outputs:
+            final_output = "\n\n".join(verbatim_outputs)
+            if self._security_agent is not None:
+                _trace("output_check", "running", "Scrubbing output")
+                final_output = self._security_agent.check_output(final_output, user_id=user_id or "")
+            _trace("complete", "complete", "Done")
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            return RunResult(
+                output=final_output,
+                plan=plan,
+                agent_results=agent_results,
+                latency_ms=latency_ms,
+                security_flags=_security_flags,
+            )
+
         if len(agent_results) == 1 and agent_results[0].agent in {"research_agent", "rag_agent"}:
             final_output = agent_results[0].output
             if self._security_agent is not None:

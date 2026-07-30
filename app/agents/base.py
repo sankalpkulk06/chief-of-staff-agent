@@ -12,6 +12,7 @@ class AgentStep:
     depends_on: list[str] = field(default_factory=list)
     parallel_group: Optional[str] = None
     mode: str = "read"  # "read" | "write" | "synthesize"
+    verbatim: bool = False  # return this step's output as-is; never reword via synthesis
 
 
 @dataclass
