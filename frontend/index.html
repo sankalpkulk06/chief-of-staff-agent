@@ -1747,6 +1747,16 @@
     font-family: var(--mono); font-size: 11px; color: var(--text-4);
   }
   .facts-list { padding: 4px 0; }
+  .fact-badge {
+    display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+    font-size: 11px; line-height: 1.5; vertical-align: middle; white-space: nowrap;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--text-2); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  .fact-badge.ext {
+    background: color-mix(in srgb, var(--thought) 16%, transparent);
+    border-color: color-mix(in srgb, var(--thought) 30%, transparent);
+  }
   .fact {
     padding: 10px 16px;
     display: flex;
@@ -4040,16 +4050,22 @@
             <span class="count">${items.length} facts</span>
           </div>
           <div class="facts-list">
-            ${items.map(f => `
+            ${items.map(f => {
+              const tentative = f.status === 'tentative';
+              const badge = tentative
+                ? `<span class="fact-badge ${f.trust === 'low' ? 'ext' : ''}">${f.trust === 'low' ? '📩 from email · tentative' : '✨ learned · tentative'}</span>`
+                : '';
+              return `
               <div class="fact" data-id="${escapeHtml(f.id)}">
-                <div class="text">${escapeHtml(f.content)}</div>
+                <div class="text">${escapeHtml(f.content)}${badge}</div>
                 <div class="meta">
                   <span class="id">${escapeHtml(f.id)}</span>
                   <span>·</span>
                   <span>${formatShortDate(f.created_at)}</span>
                 </div>
                 <button class="forget">forget</button>
-              </div>`).join('')}
+              </div>`;
+            }).join('')}
             ${items.length === 0 ? '<div style="padding:14px 16px;color:var(--text-4);font-size:13px;">No facts yet</div>' : ''}
           </div>
           <div class="fact-add-form" data-category="${isWork ? 'work' : 'personal'}">

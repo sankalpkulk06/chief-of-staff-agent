@@ -830,8 +830,20 @@ class ChatService:
         else:
             lines = [f"Learned Facts - {label}:"]
         for i, fact in enumerate(facts[:20], 1):
-            lines.append(f"{i}. {fact.content} ({fact.category})")
+            lines.append(f"{i}. {fact.content} ({fact.category}){self._fact_tag(fact)}")
+        if any(getattr(f, "status", "confirmed") == "tentative" for f in facts[:20]):
+            lines.append("")
+            lines.append("↳ tentative = learned automatically; reply to correct or use /forget to remove.")
         return "\n".join(lines)
+
+    @staticmethod
+    def _fact_tag(fact) -> str:
+        """Suffix marking how a fact was learned: confirmed (blank), or tentative + provenance."""
+        if getattr(fact, "status", "confirmed") != "tentative":
+            return ""
+        if getattr(fact, "trust", "high") == "low":
+            return " · 📩 tentative, from an email/doc"
+        return " · ✨ tentative, learned"
 
     @staticmethod
     def _parse_habit_reminder_time(args: str) -> tuple[str, str]:
