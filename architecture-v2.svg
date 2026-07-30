@@ -212,11 +212,11 @@
   <text class="s" x="52" y="686">Sub-agents  →  Groq Llama 3.3 70B</text>
   <text class="s" x="52" y="706">Fallback chain  →  Gemini → Groq (→ Ollama)</text>
   <text class="s" x="52" y="726">Embeddings  →  sentence-transformers (in-process)</text>
-  <text class="s" x="52" y="746">RAG-eval judge  →  same provider · No native tool-calling (prompt-for-JSON)</text>
+  <text class="s" x="52" y="746">Structured calls  →  native tool-calling (Gemini/Groq) · prompt→JSON fallback (Ollama)</text>
 
   <text class="head" x="360" y="642">CROSS-CUTTING</text>
   <text class="s" x="360" y="666">• per-user timezone-aware dates</text>
-  <text class="s" x="360" y="686">• structured output = prompt→JSON→parse</text>
+  <text class="s" x="360" y="686">• structured output = native tools (fallback: prompt→JSON)</text>
   <text class="s" x="360" y="706">• compute-on-read analytics</text>
   <text class="s" x="360" y="726">• single-tenant auth (shared passphrase)</text>
 
