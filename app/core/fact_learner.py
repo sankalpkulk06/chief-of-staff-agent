@@ -57,6 +57,11 @@ class FactLearnerService:
             fact = self._consider(c, min_conf, external)
             if fact is not None:
                 written.append(fact)
+        # One summary line per turn (INFO) so decisions are watchable in `docker compose logs -f sage`.
+        if candidates:
+            stored = ", ".join(f"{w['content']!r} ({w['trust']})" for w in written) or "nothing"
+            logger.info("fact-learner: %d candidate(s) → kept %d, dropped %d | stored: %s",
+                        len(candidates), len(written), len(candidates) - len(written), stored)
         return written
 
     # ------------------------------------------------------------------
