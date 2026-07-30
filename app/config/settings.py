@@ -15,6 +15,9 @@ class Settings(BaseModel):
     assistant_name: str = "Sage"
     # IANA timezone used when a user has not set their own (via user_settings "timezone").
     default_timezone: str = "UTC"
+    # Use native LLM tool-calling for structured extraction (Gemini/Groq). When off, or for
+    # providers without tool support (Ollama), the legacy prompt-for-JSON path is used.
+    tool_calling_enabled: bool = True
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_chat_model: str = "llama3.2:3b"
