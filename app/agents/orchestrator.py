@@ -4,11 +4,39 @@ import re
 from typing import Any, List, Optional
 
 from app.agents.base import AgentResult, AgentStep, OrchestratorPlan
+from app.agents.orchestrator_tools import CREATE_PLAN
 from app.agents.prompts import load
+from app.config.settings import get_settings
 from app.providers.factory import ChatProvider
+from app.providers.tool_types import supports_tools
 
 # Valid agent names — used to filter/validate the parsed plan.
 VALID_AGENTS = frozenset({"action_agent", "rag_agent", "research_agent", "conversational", "email_agent", "planner_agent"})
+
+# Clear email nouns → a deterministic guard forces email_agent even if the LLM planner
+# dropped it (routing is otherwise non-deterministic). Tight on purpose: no bare "mail".
+_EMAIL_RE = re.compile(r"\b(e-?mails?|inbox|gmail)\b", re.IGNORECASE)
+
+# Clear calorie-logging / calorie-query intent → route straight to action_agent as a
+# single verbatim step. Tight on purpose: matches "I ate X", personal calorie questions,
+# and budget-setting, but NOT general trivia like "how many calories in a banana".
+_CALORIE_RE = re.compile(
+    r"\bi (just )?ate\b"
+    r"|\bfor (breakfast|lunch|dinner|brunch|supper|a snack)\b"
+    r"|\bcalorie budget\b"
+    r"|\bcalories? (left|remaining|today|so far)\b"
+    r"|\bhow many calories (do|have|are|left)\b"
+    r"|\bmy calorie(s)?\b"
+    r"|\bset\b[^.?!]*\bcalorie"
+    r"|\bburn(ed|t)\b[^.?!]{0,25}cal"          # "burned 400 cal", "burnt ... calories"
+    r"|\bcal(orie)?s?\b[^.?!]{0,15}\bburn(ed|t)\b"   # "300 calories burned"
+    r"|\bburn(ed|t)\b[^.?!]{0,20}\b(workout|gym|run|cardio|exercise)\b",
+    re.IGNORECASE,
+)
+
+# Explicit "log ..." intent → the whole message is a personal-data action (possibly several).
+# Route it verbatim to a single action_agent step so it can extract & confirm every action.
+_ACTION_LOG_RE = re.compile(r"\blog (that|my|a|the)\b", re.IGNORECASE)
 
 _PLAN_SYSTEM = load("orchestrator_plan")
 _SYNTHESIS_SYSTEM = load("orchestrator_synthesis")
@@ -32,19 +60,53 @@ class OrchestratorAgent:
         self._assistant_name = assistant_name
 
     def plan(self, question: str, history: List[dict[str, Any]]) -> OrchestratorPlan:
-        """Decompose the user question into a sequence of agent steps."""
+        """Decompose the user question into a sequence of agent steps.
+
+        Prefers native structured tool-calling — the model calls ``create_plan`` and the
+        provider guarantees a schema-valid plan (agent/mode are enums), so there is no JSON
+        text to mis-parse. Falls back to the legacy prompt-for-JSON path when tool-calling is
+        disabled or the provider doesn't support it (e.g. Ollama).
+        """
         messages: list[dict[str, Any]] = [{"role": "system", "content": _PLAN_SYSTEM}]
         messages.extend(history[-4:])
         messages.append({"role": "user", "content": question})
 
+        result: Optional[OrchestratorPlan] = None
+        if get_settings().tool_calling_enabled and supports_tools(self._provider):
+            try:
+                tool_res = self._provider.chat_tools(messages, [CREATE_PLAN], tool_choice="required")
+                for call in tool_res.tool_calls:
+                    if call.name == "create_plan":
+                        result = self._plan_from_args(dict(call.arguments or {}), question)
+                        break
+            except Exception:
+                result = None  # fall back to prompt-for-JSON
+
+        if result is None:
+            result = self._plan_legacy(messages, question)
+        return result
+
+    def _plan_legacy(self, messages: list[dict[str, Any]], question: str) -> OrchestratorPlan:
+        """Prompt-for-JSON planning (fallback for providers without tool-calling, e.g. Ollama).
+
+        Native tool-calling routes reliably enough to run WITHOUT the deterministic regex
+        guards (verified across the routing golden set). The prompt-for-JSON path is weaker at
+        routing, so it keeps the guards as its safety net — scoping them here means the trusted
+        tool path is guard-free while local/Ollama dev stays protected.
+        """
         try:
             response = self._provider.chat(messages=messages)
-            return self._parse_plan(response, question)
+            result = self._parse_plan(response, question)
         except Exception:
-            return OrchestratorPlan(
+            result = OrchestratorPlan(
                 steps=[AgentStep(agent="conversational", task=question)],
                 reasoning="planning failed — falling back to conversational",
             )
+        # A clear email request must reach email_agent.
+        result.steps = self._ensure_email_agent(question, result.steps)
+        # A clear calorie/log request goes straight to action_agent as a single verbatim step.
+        result.steps = self._ensure_calorie_action(question, result.steps)
+        return result
 
     def synthesize(
         self,
@@ -92,34 +154,21 @@ class OrchestratorAgent:
             raise ValueError("No JSON object found in orchestrator response")
 
         data = json.loads(match.group())
-        raw_steps = data.get("steps", [])
+        return OrchestratorAgent._plan_from_args(data, fallback_question)
 
-        steps: list[AgentStep] = []
-        for i, s in enumerate(raw_steps, 1):
-            agent = s.get("agent", "conversational")
-            if agent not in VALID_AGENTS:
-                agent = "conversational"
-            task = s.get("task", fallback_question)
-            step_id = str(s.get("id") or f"step_{i}")
-            depends_on = s.get("depends_on") or []
-            if isinstance(depends_on, str):
-                depends_on = [depends_on]
-            if not isinstance(depends_on, list):
-                depends_on = []
-            parallel_group = s.get("parallel_group")
-            mode = s.get("mode") or OrchestratorAgent._infer_step_mode(agent, task)
-            if mode not in {"read", "write", "synthesize"}:
-                mode = OrchestratorAgent._infer_step_mode(agent, task)
-            steps.append(
-                AgentStep(
-                    id=step_id,
-                    agent=agent,
-                    task=task,
-                    depends_on=[str(dep) for dep in depends_on],
-                    parallel_group=str(parallel_group) if parallel_group else None,
-                    mode=mode,
-                )
-            )
+    @staticmethod
+    def _plan_from_args(data: dict[str, Any], fallback_question: str) -> OrchestratorPlan:
+        """Build a validated OrchestratorPlan from a plan dict — shared by the native
+        tool-call path (``create_plan`` arguments) and the legacy JSON parser."""
+        raw_steps = data.get("steps") or []
+        if not isinstance(raw_steps, list):
+            raw_steps = []
+
+        steps = [
+            OrchestratorAgent._step_from_raw(s, i, fallback_question)
+            for i, s in enumerate(raw_steps, 1)
+            if isinstance(s, dict)
+        ]
 
         if not steps:
             steps = [
@@ -132,8 +181,33 @@ class OrchestratorAgent:
             ]
 
         steps = OrchestratorAgent._normalize_step_dependencies(steps)
+        return OrchestratorPlan(steps=steps, reasoning=str(data.get("reasoning", "")))
 
-        return OrchestratorPlan(steps=steps, reasoning=data.get("reasoning", ""))
+    @staticmethod
+    def _step_from_raw(s: dict[str, Any], i: int, fallback_question: str) -> AgentStep:
+        agent = s.get("agent", "conversational")
+        if agent not in VALID_AGENTS:
+            agent = "conversational"
+        task = s.get("task", fallback_question)
+        step_id = str(s.get("id") or f"step_{i}")
+        depends_on = s.get("depends_on") or []
+        if isinstance(depends_on, str):
+            depends_on = [depends_on]
+        if not isinstance(depends_on, list):
+            depends_on = []
+        parallel_group = s.get("parallel_group")
+        mode = s.get("mode") or OrchestratorAgent._infer_step_mode(agent, task)
+        if mode not in {"read", "write", "synthesize"}:
+            mode = OrchestratorAgent._infer_step_mode(agent, task)
+        return AgentStep(
+            id=step_id,
+            agent=agent,
+            task=task,
+            depends_on=[str(dep) for dep in depends_on],
+            parallel_group=str(parallel_group) if parallel_group else None,
+            mode=mode,
+            verbatim=bool(s.get("verbatim", False)),
+        )
 
     @staticmethod
     def _infer_step_mode(agent: str, task: str) -> str:
@@ -176,3 +250,44 @@ class OrchestratorAgent:
                     if prior.mode != "synthesize"
                 ]
         return steps
+
+    @staticmethod
+    def _ensure_email_agent(question: str, steps: list[AgentStep]) -> list[AgentStep]:
+        """Legacy prompt-for-JSON safety net (the tool path routes email reliably without it).
+        If the message is clearly about email but the plan omitted email_agent, inject it.
+
+        Guards against LLM routing non-determinism (e.g. an email request answered by
+        conversational). Only fires for explicit email nouns, so unrelated messages are
+        untouched. email_agent still does its own instruction-aware summary of the request.
+        """
+        if not _EMAIL_RE.search(question or ""):
+            return steps
+        if any(step.agent == "email_agent" for step in steps):
+            return steps
+
+        kept = [step for step in steps if step.agent != "conversational"]
+        kept.append(AgentStep(id="email_forced", agent="email_agent", task=question, mode="read"))
+        kept.append(AgentStep(
+            id="synth_forced",
+            agent="conversational",
+            task="Present the email results warmly and directly answer the user's request.",
+            mode="synthesize",
+        ))
+        return OrchestratorAgent._normalize_step_dependencies(kept)
+
+    @staticmethod
+    def _ensure_calorie_action(question: str, steps: list[AgentStep]) -> list[AgentStep]:
+        """Legacy prompt-for-JSON safety net (the tool path emits the verbatim step itself).
+        Force a clear calorie request to action_agent as a single verbatim step.
+
+        The calorie flow returns crisp, already-formatted clarify/confirm text plus a
+        ``calorie_pending`` metadata payload that ChatService persists. Routing it as a
+        lone action_agent step (no conversational synthesis) keeps that text intact and
+        avoids an extra LLM call. Tight regex, so it never hijacks general trivia.
+        """
+        q = question or ""
+        if not (_CALORIE_RE.search(q) or _ACTION_LOG_RE.search(q)):
+            return steps
+        # Whole message → one action_agent step. It extracts one OR MORE actions and stages a
+        # confirmation for each, so compound requests ("log gym and my lunch") aren't split.
+        return [AgentStep(id="action", agent="action_agent", task=question, mode="write", verbatim=True)]

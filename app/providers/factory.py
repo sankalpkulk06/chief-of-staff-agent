@@ -41,6 +41,12 @@ class FallbackChatProvider:
         except OllamaProviderError:
             return self._fallback.chat(messages)
 
+    def chat_tools(self, messages: list[dict], tools, tool_choice: str = "auto"):
+        try:
+            return self._primary.chat_tools(messages, tools, tool_choice)
+        except OllamaProviderError:
+            return self._fallback.chat_tools(messages, tools, tool_choice)
+
 
 @dataclass(frozen=True)
 class ModelSpec:

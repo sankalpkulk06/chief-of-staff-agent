@@ -15,6 +15,15 @@ class Settings(BaseModel):
     assistant_name: str = "Sage"
     # IANA timezone used when a user has not set their own (via user_settings "timezone").
     default_timezone: str = "UTC"
+    # Use native LLM tool-calling for structured extraction (Gemini/Groq). When off, or for
+    # providers without tool support (Ollama), the legacy prompt-for-JSON path is used.
+    tool_calling_enabled: bool = True
+
+    # Passive fact-learning: after a turn, silently learn durable user-facts (kept tentative +
+    # provenance-tagged + reversible). Off → only the explicit remember_fact action stores facts.
+    passive_learning_enabled: bool = True
+    passive_learning_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    passive_learning_max_per_turn: int = Field(default=3, ge=1)
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_chat_model: str = "llama3.2:3b"

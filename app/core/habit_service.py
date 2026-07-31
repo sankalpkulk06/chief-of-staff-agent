@@ -50,9 +50,22 @@ def _parse_reminder_time(raw: str) -> str:
 
 class HabitService:
     def __init__(self, registry: SQLiteRegistry, user_id: str = ""):
+        self._registry = registry
         self._db = getattr(registry, "_connection", None) or getattr(registry, "_conn")
         self._is_postgres = hasattr(registry, "_conn")
         self._user_id = user_id
+
+    def _today(self) -> date:
+        """The user's current calendar date (their timezone), not the server's."""
+        from app.core import timezone_util as tzu
+        from app.config.settings import get_settings
+        return tzu.local_today(self._registry, self._user_id, default=get_settings().default_timezone)
+
+    def _now(self) -> datetime:
+        """Current wall-clock time in the user's timezone (naive, for storage)."""
+        from app.core import timezone_util as tzu
+        from app.config.settings import get_settings
+        return tzu.local_now(self._registry, self._user_id, default=get_settings().default_timezone)
 
     def _execute(self, sql: str, params: tuple = ()):
         if self._is_postgres:
@@ -134,31 +147,33 @@ class HabitService:
         self._commit()
         return Habit(id=habit_id, name=name, reminder_time=rt, active=True)
 
-    def log_habit(self, name: str, status: str = "done", note: str = "") -> HabitLog:
+    def log_habit(self, name: str, status: str = "done", note: str = "",
+                  logged_at: Optional[datetime] = None) -> HabitLog:
         habit = self._get_habit_by_name(name)
         if habit is None:
             raise ValueError(f"Habit '{name}' not found. Add it first with /habit add {name}")
-        return self.log_habit_by_id(habit.id, status=status, note=note)
+        return self.log_habit_by_id(habit.id, status=status, note=note, logged_at=logged_at)
 
-    def log_habit_by_id(self, habit_id: str, status: str = "done", note: str = "") -> HabitLog:
+    def log_habit_by_id(self, habit_id: str, status: str = "done", note: str = "",
+                        logged_at: Optional[datetime] = None) -> HabitLog:
         habit = self.get_habit_by_id(habit_id)
         if habit is None:
             raise ValueError(f"Habit '{habit_id}' not found.")
         log_id = str(uuid.uuid4())
-        now = datetime.now()
+        when = logged_at or self._now()
         self._execute(
             "INSERT INTO habit_logs (id, habit_id, logged_at, status, note) VALUES (?, ?, ?, ?, ?)",
-            (log_id, habit_id, now.isoformat(), status, note),
+            (log_id, habit_id, when.isoformat(), status, note),
         )
         self._commit()
-        return HabitLog(id=log_id, habit_id=habit_id, logged_at=now, status=status, note=note)
+        return HabitLog(id=log_id, habit_id=habit_id, logged_at=when, status=status, note=note)
 
     def unlog_habit(self, name: str) -> int:
         """Delete all log entries for today for the given habit. Returns rows deleted."""
         habit = self._get_habit_by_name(name)
         if habit is None:
             raise ValueError(f"Habit '{name}' not found.")
-        today = date.today().isoformat()
+        today = self._today().isoformat()
         cursor = self._execute(
             "DELETE FROM habit_logs WHERE habit_id = ? AND DATE(logged_at) = ?",
             (habit.id, today),
@@ -196,7 +211,7 @@ class HabitService:
                 done_days.add(self._date_from_db(row["day"]))
 
         streak = 0
-        check = date.today()
+        check = self._today()
         while check in done_days:
             streak += 1
             check -= timedelta(days=1)
@@ -204,7 +219,7 @@ class HabitService:
 
     def get_weekly_summary(self) -> list[HabitSummary]:
         habits = self._get_all_active()
-        today = date.today()
+        today = self._today()
         week_ago = today - timedelta(days=6)
         summaries: list[HabitSummary] = []
 
@@ -248,7 +263,7 @@ class HabitService:
         return [{"day": self._date_from_db(row["day"]).isoformat(), "status": row["status"]} for row in rows]
 
     def get_unlogged_today(self) -> list[Habit]:
-        today = date.today().isoformat()
+        today = self._today().isoformat()
         rows = self._execute(
             """
             SELECT h.id FROM habits h

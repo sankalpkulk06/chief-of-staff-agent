@@ -120,6 +120,32 @@ def _service(registry):
     )
 
 
+def test_stats_command_and_natural_language(registry, monkeypatch):
+    from app.core.analytics_service import AnalyticsService
+    from app.core.chat_service import _STATS_RE
+    # Keep the digest offline — don't hit the LLM insights path.
+    monkeypatch.setattr(AnalyticsService, "insights", lambda self, uid, window_days=30: "Keep it up.")
+
+    hs = HabitService(registry, user_id="")
+    hs.add_habit("gym")
+    hs.log_habit("gym")
+    svc = _service(registry)
+
+    slash = svc._answer_direct_command("/stats")
+    assert slash and "Your last 30 days" in slash and "Sessions" in slash
+
+    nl = svc._answer_direct_command("show my stats")
+    assert nl and "Your last 30 days" in nl
+
+    windowed = svc._answer_direct_command("/stats 7")
+    assert "Your last 7 days" in windowed
+
+    # NL intent detection: fires on stats asks, not on unrelated chatter.
+    assert _STATS_RE.search("how am i doing")
+    assert _STATS_RE.search("show me my analytics")
+    assert not _STATS_RE.search("what's the weather tomorrow")
+
+
 class _NewsChatProvider:
     def chat(self, messages):
         raise AssertionError("news queries should not rely on chat tool selection")

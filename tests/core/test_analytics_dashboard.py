@@ -22,11 +22,15 @@ def _user(reg, name="alice"):
 def test_dashboard_shape_and_empty_user(reg):
     u = _user(reg)
     d = AnalyticsService(reg).get_dashboard(u, window_days=30)
-    assert set(d) == {"window_days", "kpis", "habits", "todos", "usage", "agents", "topics"}
+    assert set(d) == {"window_days", "kpis", "deltas", "habits", "todos", "usage", "agents", "topics", "takeaways"}
     assert d["window_days"] == 30
     assert d["habits"] == [] and d["agents"] == []
     assert d["todos"]["total"] == 0 and d["todos"]["pct"] == 0
     assert len(d["usage"]["heatmap"]) == 7 and len(d["usage"]["heatmap"][0]) == 24
+    # Empty user: deltas present and zeroed, best-ever streak absent, todos takeaway is the nudge.
+    assert d["deltas"]["sessions"] == 0 and d["deltas"]["todos_done"] == 0
+    assert d["kpis"]["best_streak"] is None
+    assert "momentum" in d["takeaways"]["todos"]
 
 
 def test_agents_and_chat_source(reg):

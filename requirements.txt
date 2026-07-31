@@ -26,3 +26,6 @@ apscheduler
 beautifulsoup4>=4.12
 tenacity>=8.2
 sentence-transformers
+
+# Bundled IANA timezone data so ZoneInfo works on slim images / Cloud Run
+tzdata

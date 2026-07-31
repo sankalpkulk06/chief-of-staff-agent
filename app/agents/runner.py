@@ -1,5 +1,7 @@
 """AgentRunner — executes the orchestrator's plan and collects results."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -19,6 +21,8 @@ from app.retrieval.retriever import Retriever
 from app.services.news_service import NewsService
 from app.services.web_search_service import WebSearchService
 from app.storage.sqlite_registry import SQLiteRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class RunResult:
@@ -254,8 +258,8 @@ class AgentRunner:
         # 2. Execute dependency batches. Independent read steps in one batch can
         # run concurrently; dependent, write, and synthesis steps run alone.
         agent_results: List[AgentResult] = []
-        pending_hitl: Optional[AgentResult] = None
-        pending_hitl_step_id: Optional[str] = None
+        pending_hitls: List[AgentResult] = []       # every result awaiting approval this turn
+        pending_step_ids: set = set()
         batches = (
             plan.execution_batches(max_parallel=self._max_parallel_workers)
             if self._parallelism_enabled
@@ -263,15 +267,12 @@ class AgentRunner:
         )
         for batch_index, batch in enumerate(batches, 1):
             batch_id = f"batch_{batch_index}"
-            if pending_hitl is not None:
+            if pending_hitls:
                 batch = [
                     step
                     for step in batch
                     if step.mode != "synthesize"
-                    and not (
-                        pending_hitl_step_id is not None
-                        and pending_hitl_step_id in step.depends_on
-                    )
+                    and not (pending_step_ids & set(step.depends_on))
                 ]
                 if not batch:
                     continue
@@ -297,42 +298,52 @@ class AgentRunner:
             )
             agent_results.extend(batch_results)
 
-            hitl_result = next(
-                (result for result in batch_results if result.metadata.get("hitl_pending")),
-                None,
-            )
-            if hitl_result is not None:
-                pending_hitl = hitl_result
-                pending_hitl_step_id = hitl_result.metadata.get("step_id")
-                _trace(hitl_result.agent, "waiting", "Waiting for your approval")
+            # Collect ALL results awaiting approval (a single step may carry several items).
+            new_pending = [r for r in batch_results if r.metadata.get("hitl_pending")]
+            for result in new_pending:
+                pending_hitls.append(result)
+                sid = result.metadata.get("step_id")
+                if sid:
+                    pending_step_ids.add(sid)
+            if new_pending:
+                _trace(new_pending[0].agent, "waiting", "Waiting for your approval")
 
-        if pending_hitl is not None:
-            continuation_results = [
-                result
-                for result in agent_results
-                if result is not pending_hitl
-                and result.success
-                and result.output
-                and not result.metadata.get("hitl_pending")
+        if pending_hitls:
+            # Present the confirmation prompt(s) verbatim; any read outputs that also ran are
+            # concatenated. No continuation synthesis while items are pending (each resolves on
+            # its own, and the surface shows that item's result).
+            pending_ids = {id(r) for r in pending_hitls}
+            pending_outputs = [r.output for r in pending_hitls if r.output]
+            other_outputs = [
+                r.output for r in agent_results
+                if id(r) not in pending_ids and r.success and r.output
+                and not r.metadata.get("hitl_pending")
             ]
-            continuation_output = ""
-            if continuation_results:
-                continuation_output = self._orchestrator.synthesize(
-                    question,
-                    continuation_results,
-                    history,
-                    user_facts=self._user_facts_for(user_id),
-                )
-                self._attach_hitl_context(
-                    pending_hitl.metadata.get("hitl_id"),
-                    continuation_output,
-                )
-            output_parts = [pending_hitl.output]
-            if continuation_output:
-                output_parts.append(continuation_output)
             latency_ms = int((time.monotonic() - t0) * 1000)
             return RunResult(
-                output="\n\n".join(output_parts),
+                output="\n\n".join(pending_outputs + other_outputs),
+                plan=plan,
+                agent_results=agent_results,
+                latency_ms=latency_ms,
+                security_flags=_security_flags,
+            )
+
+        # Verbatim steps (e.g. calorie logging/queries) return their output exactly as-is with
+        # no synthesis rewording — even if the planner also emitted a conversational step.
+        verbatim_ids = {s.id for s in plan.steps if getattr(s, "verbatim", False)}
+        verbatim_outputs = [
+            r.output for r in agent_results
+            if r.success and r.output and r.metadata.get("step_id") in verbatim_ids
+        ]
+        if verbatim_outputs:
+            final_output = "\n\n".join(verbatim_outputs)
+            if self._security_agent is not None:
+                _trace("output_check", "running", "Scrubbing output")
+                final_output = self._security_agent.check_output(final_output, user_id=user_id or "")
+            _trace("complete", "complete", "Done")
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            return RunResult(
+                output=final_output,
                 plan=plan,
                 agent_results=agent_results,
                 latency_ms=latency_ms,
@@ -348,6 +359,7 @@ class AgentRunner:
                 )
             _trace("complete", "complete", "Done")
             latency_ms = int((time.monotonic() - t0) * 1000)
+            self._maybe_learn(question, agent_results, user_id)
             return RunResult(
                 output=final_output,
                 plan=plan,
@@ -372,6 +384,7 @@ class AgentRunner:
         _trace("complete", "complete", "Done")
 
         latency_ms = int((time.monotonic() - t0) * 1000)
+        self._maybe_learn(question, agent_results, user_id)
         return RunResult(
             output=final_output,
             plan=plan,
@@ -395,17 +408,65 @@ class AgentRunner:
         return None
 
     def _user_facts_for(self, user_id: Optional[str]) -> Optional[str]:
-        user_facts: Optional[str] = None
+        facts = None
         if self._registry and user_id:
-            per_request_facts = FactService(self._registry, user_id=user_id)
-            facts = per_request_facts.list_facts()
-            if facts:
-                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
+            facts = FactService(self._registry, user_id=user_id).list_facts()
         elif self._fact_service:
             facts = self._fact_service.list_facts()
-            if facts:
-                user_facts = "\n".join(f"- {f.content} ({f.category})" for f in facts)
-        return user_facts
+        if not facts:
+            return None
+        return "\n".join(self._format_fact(f) for f in facts)
+
+    @staticmethod
+    def _format_fact(f: Any) -> str:
+        """Label passively-learned facts so the model treats them as softer than user-stated ones:
+        low-trust/tentative facts are attributed ("from an email") and never asserted as certain."""
+        tags = [f.category]
+        if getattr(f, "status", "confirmed") == "tentative":
+            tags.append("tentative, from an email/document" if getattr(f, "trust", "high") == "low"
+                        else "tentative")
+        return f"- {f.content} ({', '.join(tags)})"
+
+    def _maybe_learn(self, question: str, agent_results: List[AgentResult], user_id: Optional[str]) -> None:
+        """Fire the passive fact-learner off the response path (fire-and-forget thread)."""
+        try:
+            from app.config.settings import get_settings
+            settings = get_settings()
+            if not settings.passive_learning_enabled or self._registry is None:
+                return
+            context = "\n\n".join(
+                f"[{r.agent}] {r.output}" for r in agent_results if r.success and r.output
+            )
+            if not context:
+                return
+            external = any(r.agent in ("email_agent", "rag_agent") for r in agent_results)
+            provider = self._agent_chat_providers.get("action_agent") or self._default_chat_provider
+            threading.Thread(
+                target=self._run_learner,
+                args=(question, context, external, user_id or "", settings, provider),
+                daemon=True,
+            ).start()
+        except Exception:
+            logger.debug("passive learning: failed to start", exc_info=True)
+
+    def _run_learner(self, question, context, external, user_id, settings, provider) -> None:
+        # Own registry/connection — never share the request thread's SQLite handle.
+        from app.core.fact_learner import FactLearnerService
+        from app.storage.factory import create_registry
+        registry = None
+        try:
+            paths = settings.resolve_paths()
+            registry = create_registry(settings.database_url, paths.sqlite_db_path)
+            FactLearnerService(registry, provider, settings, user_id=user_id).learn(
+                question, context, external=external)
+        except Exception:
+            logger.debug("passive learning: learner run failed", exc_info=True)
+        finally:
+            if registry is not None:
+                try:
+                    registry.close()
+                except Exception:
+                    pass
 
     def _attach_hitl_context(self, hitl_id: Optional[str], continuation_output: str) -> None:
         if not hitl_id or not continuation_output or not self._registry:

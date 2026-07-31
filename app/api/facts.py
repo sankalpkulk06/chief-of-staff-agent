@@ -15,6 +15,8 @@ class FactOut(BaseModel):
     category: str
     content: str
     created_at: str
+    trust: str = "high"          # "high" = user-stated, "low" = learned from email/doc
+    status: str = "confirmed"    # "confirmed" | "tentative"
 
 
 class FactIn(BaseModel):
@@ -35,6 +37,8 @@ async def list_facts(
             category=r["category"],
             content=r["content"],
             created_at=str(r["created_at"]),
+            trust=r.get("trust", "high"),
+            status=r.get("status", "confirmed"),
         )
         for r in rows
     ]

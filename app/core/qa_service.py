@@ -19,6 +19,7 @@ class QAResult(BaseModel):
     steps: List[dict] = Field(default_factory=list)  # agent execution steps
     hitl_pending: bool = False
     hitl_id: Optional[str] = None
+    hitl_items: List[dict] = Field(default_factory=list)  # [{id, summary, action_type}, ...]
     ragas_result: Optional[Any] = None  # RagasResult dataclass, set for RAG turns only
 
 

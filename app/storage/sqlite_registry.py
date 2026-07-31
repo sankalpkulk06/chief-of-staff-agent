@@ -66,8 +66,18 @@ class SQLiteRegistry:
             self._connection.execute("ALTER TABLE chat_sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
 
         # learned_facts
-        if "user_id" not in _cols("learned_facts"):
+        fact_cols = _cols("learned_facts")
+        if "user_id" not in fact_cols:
             self._connection.execute("ALTER TABLE learned_facts ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
+        # Passive fact-learning: provenance/trust tiers + dedup/supersede bookkeeping.
+        for col, definition in [
+            ("trust", "TEXT NOT NULL DEFAULT 'high'"),
+            ("status", "TEXT NOT NULL DEFAULT 'confirmed'"),
+            ("content_key", "TEXT"),
+            ("superseded_by", "TEXT"),
+        ]:
+            if col not in fact_cols:
+                self._connection.execute(f"ALTER TABLE learned_facts ADD COLUMN {col} {definition}")
 
         # todos
         if "user_id" not in _cols("todos"):
@@ -91,6 +101,37 @@ class SQLiteRegistry:
         self._connection.execute(
             "UPDATE chat_turns SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
         )
+
+        # calorie_entries (new table — create if missing on existing local DBs)
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS calorie_entries (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL DEFAULT 'default',
+                description TEXT NOT NULL,
+                calories    INTEGER NOT NULL,
+                items_json  TEXT,
+                eaten_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_calorie_entries_user_id ON calorie_entries(user_id)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_calorie_entries_eaten_at ON calorie_entries(eaten_at)"
+        )
+        if "kind" not in _cols("calorie_entries"):
+            self._connection.execute(
+                "ALTER TABLE calorie_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'intake'"
+            )
+        for col, definition in [
+            ("dish", "TEXT"),
+            ("protein_g", "REAL DEFAULT 0"),
+            ("carbs_g", "REAL DEFAULT 0"),
+            ("fat_g", "REAL DEFAULT 0"),
+        ]:
+            if col not in _cols("calorie_entries"):
+                self._connection.execute(f"ALTER TABLE calorie_entries ADD COLUMN {col} {definition}")
 
         # user_settings (new table — create if missing)
         self._connection.execute("""
@@ -490,25 +531,64 @@ class SQLiteRegistry:
     # Facts
     # ------------------------------------------------------------------
 
-    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user", confidence_score: float = 1.0, *, user_id: str) -> None:
+    _FACT_COLS = "fact_id, content, category, source, confidence_score, created_at, usage_count, trust, status"
+
+    def insert_fact(self, fact_id: str, content: str, category: str, source: str = "user",
+                    confidence_score: float = 1.0, *, user_id: str,
+                    trust: str = "high", status: str = "confirmed", content_key: Optional[str] = None) -> None:
         self._connection.execute(
-            "INSERT OR REPLACE INTO learned_facts (fact_id, user_id, content, category, source, confidence_score) VALUES (?, ?, ?, ?, ?, ?)",
-            (fact_id, user_id, content, category, source, confidence_score),
+            "INSERT OR REPLACE INTO learned_facts "
+            "(fact_id, user_id, content, category, source, confidence_score, trust, status, content_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (fact_id, user_id, content, category, source, confidence_score, trust, status, content_key),
         )
         self._connection.commit()
 
     def list_facts(self, category: Optional[str] = None, *, user_id: str) -> List[Dict[str, object]]:
+        # Superseded facts are logically replaced — never surface them (synthesis or UI).
         if category:
             rows = self._connection.execute(
-                "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE user_id = ? AND category = ? ORDER BY created_at DESC",
+                f"SELECT {self._FACT_COLS} FROM learned_facts WHERE user_id = ? AND category = ? "
+                "AND status != 'superseded' ORDER BY created_at DESC",
                 (user_id, category),
             ).fetchall()
         else:
             rows = self._connection.execute(
-                "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE user_id = ? ORDER BY created_at DESC",
+                f"SELECT {self._FACT_COLS} FROM learned_facts WHERE user_id = ? "
+                "AND status != 'superseded' ORDER BY created_at DESC",
                 (user_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def find_facts_by_content_key(self, content_key: str, *, user_id: str) -> List[Dict[str, object]]:
+        """Active (non-superseded) facts sharing a normalized content key — for dedup/supersede."""
+        rows = self._connection.execute(
+            f"SELECT {self._FACT_COLS}, content_key FROM learned_facts "
+            "WHERE user_id = ? AND content_key = ? AND status != 'superseded'",
+            (user_id, content_key),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def supersede_fact(self, fact_id: str, superseded_by: str, *, user_id: str) -> None:
+        self._connection.execute(
+            "UPDATE learned_facts SET status = 'superseded', superseded_by = ? WHERE fact_id = ? AND user_id = ?",
+            (superseded_by, fact_id, user_id),
+        )
+        self._connection.commit()
+
+    def promote_fact(self, fact_id: str, *, user_id: str, trust: Optional[str] = None) -> None:
+        """Promote a tentative fact to confirmed (optionally upgrading its trust tier)."""
+        if trust is not None:
+            self._connection.execute(
+                "UPDATE learned_facts SET status = 'confirmed', trust = ? WHERE fact_id = ? AND user_id = ?",
+                (trust, fact_id, user_id),
+            )
+        else:
+            self._connection.execute(
+                "UPDATE learned_facts SET status = 'confirmed' WHERE fact_id = ? AND user_id = ?",
+                (fact_id, user_id),
+            )
+        self._connection.commit()
 
     def delete_document(self, document_id: str, user_id: str) -> None:
         self._connection.execute(
@@ -527,7 +607,7 @@ class SQLiteRegistry:
 
     def get_fact(self, fact_id: str) -> Optional[Dict[str, object]]:
         row = self._connection.execute(
-            "SELECT fact_id, content, category, source, confidence_score, created_at, usage_count FROM learned_facts WHERE fact_id = ?",
+            f"SELECT {self._FACT_COLS} FROM learned_facts WHERE fact_id = ?",
             (fact_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -1111,6 +1191,18 @@ class SQLiteRegistry:
             except ValueError:
                 data["expires_at"] = None
         return data
+
+    def get_latest_pending_hitl(self, user_id: str) -> Optional[Dict[str, object]]:
+        """Most recent unexpired pending HITL for the user (parsed), or None."""
+        row = self._connection.execute(
+            """
+            SELECT id FROM hitl_requests
+            WHERE user_id = ? AND status = 'pending' AND expires_at > CURRENT_TIMESTAMP
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+        return self.get_hitl_request(row["id"]) if row else None
 
     def attach_hitl_context(self, id: str, context: Dict[str, object]) -> None:
         row = self.get_hitl_request(id)

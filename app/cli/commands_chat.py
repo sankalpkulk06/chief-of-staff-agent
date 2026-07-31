@@ -385,7 +385,7 @@ def _print_help() -> None:
         ("/topk <n>", "Set retrieval depth (default: 5)"),
         ("/session", "Show current session ID"),
         ("/sessions", "List recent chat sessions"),
-        ("/analytics", "View usage statistics and patterns"),
+        ("/analytics, /stats", "View usage statistics and patterns"),
         ("/remember-personal <fact>", "Remember a personal fact"),
         ("/remember-work <fact>", "Remember a work fact"),
         ("/facts [category]", "List facts (personal|work)"),
@@ -511,7 +511,7 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
             else:
                 console.print("\n[dim]No sessions found.[/dim]\n")
             continue
-        if lowered == "/analytics" or lowered.startswith("/analytics "):
+        if lowered in ("/analytics", "/stats") or lowered.startswith("/analytics ") or lowered.startswith("/stats "):
             from app.cli.commands_stats import render_dashboard
             parts = lowered.split()
             win = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
@@ -776,15 +776,21 @@ def chat_command(top_k: Optional[int] = None, session_id: Optional[str] = None) 
         _print_response(console, result.answer)
         console.print()
 
-        # Human-in-the-loop: the agent is asking for approval before a write action.
-        if result.hitl_pending and result.hitl_id:
-            approved = _prompt_yes_no(console)
-            reply = _resolve_hitl(registry, result.hitl_id, user_id, approved)
-            console.print()
-            console.print("[bold cyan]╭─ Sage ─╮[/bold cyan]")
-            console.print()
-            _print_response(console, reply)
-            console.print()
+        # Human-in-the-loop: the agent may be asking for approval before write action(s).
+        # A single turn can stage several items — confirm each with its own [y/n].
+        hitl_items = getattr(result, "hitl_items", None) or (
+            [{"id": result.hitl_id, "summary": "this action"}]
+            if (result.hitl_pending and result.hitl_id) else []
+        )
+        if hitl_items:
+            for it in hitl_items:
+                approved = _prompt_yes_no(console, question=f"Confirm — {it.get('summary', 'this action')}?")
+                reply = _resolve_hitl(registry, it["id"], user_id, approved)
+                console.print()
+                console.print("[bold cyan]╭─ Sage ─╮[/bold cyan]")
+                console.print()
+                _print_response(console, reply)
+                console.print()
             continue
 
         if result.web_sources or result.news_sources or (result.sources_used and result.sources):

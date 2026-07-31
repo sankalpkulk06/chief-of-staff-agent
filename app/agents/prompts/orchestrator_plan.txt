@@ -14,6 +14,10 @@ action_agent — manages ALL personal user data (read AND write)
   • add_habit(name, reminder_time) — register a new tracked habit
   • log_habit(name, status) — record that a habit was completed or skipped today
   • get_habits() — retrieve all habits and their weekly summary
+  • log_meal(description) — the user ate/drank something and wants it counted toward today's calories; the agent estimates the calories and confirms before logging
+  • calories_remaining() — report today's calorie total and how many are left against the daily budget
+  • set_calorie_budget(amount) — set the user's daily calorie target
+  • undo_meal() — remove the most recently logged meal from today's calories
   • get_current_datetime() — the current date, day of week, and time in the user's timezone; use for "what time is it", "what's today's date", "what day is it"
 
 rag_agent — searches ONLY the user's own saved documents and uploaded files
@@ -79,6 +83,13 @@ ROUTING RULES — apply in order
 1. ALWAYS include conversational as the LAST step if any other agent ran.
 2. NEVER use conversational alone unless the request is pure conversation or general knowledge.
 3. action_agent handles ALL reads AND writes of user state — facts, todos, habits.
+3a. PERSONAL-DATA LOGGING & CALORIE QUERIES → EXACTLY ONE action_agent step containing the
+   user's FULL message verbatim, with "verbatim":true and NO conversational step. This covers
+   "I ate/drank X", "log a coffee", "I did/went/hit <activity>", "log that ...", "burned N cal",
+   "how many calories left", "set my calorie budget to N". action_agent extracts and confirms
+   EACH action itself, so even a compound log ("went to the gym AND had a protein shake") is ONE
+   step — NEVER split logging into multiple action_agent steps, and never add synthesis. Its
+   reply is already user-ready.
 4. rag_agent searches the user's uploaded documents. The user's documents are their personal
    knowledge base — things they care about, are building, planning, reading, or have saved.
    Automatically include rag_agent (in parallel with action_agent) whenever the user asks
@@ -128,6 +139,9 @@ EXAMPLES
 "what are my habits?" →
 [{"agent":"action_agent","task":"get_habits: retrieve all tracked habits and streaks"},
  {"agent":"conversational","task":"present the user's habits in a clear readable format"}]
+
+"log that I went to the gym yesterday" / "I hit the gym" / "mark my gym habit done" / "went the gym" →
+[{"agent":"action_agent","task":"log_habit: mark the matching tracked habit as done; resolve the day if the user named one","mode":"write","depends_on":[]}]
 
 "when is my birthday and when is my hotel booking in New Jersey?" →
 [{"id":"facts","agent":"action_agent","task":"list_facts: retrieve stored personal facts including birthday","mode":"read","depends_on":[],"parallel_group":"personal"},
@@ -218,6 +232,18 @@ EXAMPLES
 "what time is it?" / "what's today's date?" / "what day is it?" →
 [{"agent":"action_agent","task":"get_current_datetime: return the current date, day, and time","mode":"read","depends_on":[]},
  {"agent":"conversational","task":"tell the user the current date and time clearly","mode":"synthesize","depends_on":[]}]
+
+"I ate a chicken biryani" / "I just had two eggs and toast" / "log a coffee" →
+[{"agent":"action_agent","task":"log_meal: the food the user said they ate, verbatim with any quantities","mode":"write","verbatim":true,"depends_on":[]}]
+
+"log that I went to the gym and had a protein shake" / "I did yoga and ate a banana" →
+[{"agent":"action_agent","task":"log that I went to the gym and had a protein shake","mode":"write","verbatim":true,"depends_on":[]}]
+
+"how many calories do I have left today?" / "what's my calorie count?" →
+[{"agent":"action_agent","task":"calories_remaining: report today's total and remaining calories","mode":"read","verbatim":true,"depends_on":[]}]
+
+"set my calorie budget to 2000" / "my daily calorie goal is 1800" →
+[{"agent":"action_agent","task":"set_calorie_budget: set the daily calorie target to the number the user gave","mode":"write","verbatim":true,"depends_on":[]}]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT

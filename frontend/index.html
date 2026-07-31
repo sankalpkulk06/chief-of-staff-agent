@@ -741,7 +741,17 @@
   .an-hname { font-size: 14px; color: var(--text-1); }
   .an-track { height: 8px; background: var(--bg-3); border-radius: 6px; overflow: hidden; }
   .an-fill { height: 100%; background: var(--accent); border-radius: 6px; }
+  .an-dots { display: flex; gap: 7px; align-items: center; }
+  .an-dot { width: 13px; height: 13px; border-radius: 50%; background: transparent; border: 1.5px solid var(--line); box-sizing: border-box; }
+  .an-dot.on { background: var(--accent); border-color: var(--accent); }
+  .an-dot.today { border-color: var(--text-3); }
+  .an-dot.today.on { box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 3.5px var(--accent); }
   .an-hpct { font-family: var(--mono); font-size: 12px; color: var(--text-3); white-space: nowrap; }
+  .cal-del { cursor: pointer; opacity: .28; font-size: .8em; margin-left: 9px; }
+  .cal-del:hover { opacity: .85; }
+  .an-streak { color: var(--text-1); }
+  .an-streak.off { color: var(--text-3); }
+  .an-hsub { opacity: .6; margin-left: 4px; }
   .an-gaugewrap { display: flex; align-items: flex-start; gap: 16px; }
   .an-flex1 { flex: 1; }
   .an-fbar { display: grid; grid-template-columns: 66px 1fr 40px; align-items: center; gap: 10px; padding: 4px 0; }
@@ -751,7 +761,7 @@
   .an-fbar .v { font-family: var(--mono); font-size: 12px; color: var(--text-3); text-align: right; }
   .an-tstats { display: flex; flex-direction: column; gap: 10px; }
   .an-tstats > div { display: flex; flex-direction: column; }
-  .an-tstats b { font-size: 20px; color: var(--text-1); } .an-tstats b.crit { color: #e0645a; }
+  .an-tstats b { font-size: 20px; color: var(--text-1); } .an-tstats b.crit { color: #e0645a; } .an-tstats b.ok { color: #57c08a; }
   .an-tstats span { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
   .an-thr { margin-top: 14px; }
   .an-hmwrap { overflow-x: auto; }
@@ -953,7 +963,8 @@
   .ev-red   { color: #D85A30; }
 
   /* HITL approve / reject */
-  .hitl-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .hitl-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .hitl-label { flex-basis: 100%; font-size: .9em; opacity: .85; margin-bottom: 2px; }
   .btn-hitl {
     padding: 5px 14px;
     border-radius: 6px;
@@ -1736,6 +1747,16 @@
     font-family: var(--mono); font-size: 11px; color: var(--text-4);
   }
   .facts-list { padding: 4px 0; }
+  .fact-badge {
+    display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+    font-size: 11px; line-height: 1.5; vertical-align: middle; white-space: nowrap;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--text-2); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  .fact-badge.ext {
+    background: color-mix(in srgb, var(--thought) 16%, transparent);
+    border-color: color-mix(in srgb, var(--thought) 30%, transparent);
+  }
   .fact {
     padding: 10px 16px;
     display: flex;
@@ -2475,6 +2496,7 @@
         </div>
       </div>
       <div class="right">
+        <button class="btn-sm" id="profAnalytics" title="Analytics">Analytics</button>
         <button class="btn-sm danger" id="profDelete" title="Delete profile">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M6 4V2.5h4V4M5 6v7M8 6v7M11 6v7M4 4l.5 10h7L12 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Delete
@@ -2630,6 +2652,7 @@
         <span class="crumb"><span class="glyph">~</span><span>sage</span><span class="sep">/</span><span class="here">analytics</span></span>
       </div>
       <div class="right">
+        <button class="btn-sm" id="anProfile" title="Profile">Profile</button>
         <div class="an-seg" id="anWindow" role="group" aria-label="Time window">
           <button type="button" data-w="7">7d</button>
           <button type="button" data-w="30" class="on">30d</button>
@@ -2641,7 +2664,7 @@
       <div class="an-kpis" id="anKpis"></div>
       <div class="an-grid">
         <div class="an-panel an-col7">
-          <div class="an-ptitle"><h2>Habits</h2><span class="an-meta">consistency</span></div>
+          <div class="an-ptitle"><h2>Habits</h2><span class="an-meta">last 7 days</span></div>
           <div id="anHabits"></div>
         </div>
         <div class="an-panel an-col5">
@@ -2655,6 +2678,10 @@
         <div class="an-panel an-col7">
           <div class="an-ptitle"><h2>Activity</h2><span class="an-meta" id="anActivityMeta"></span></div>
           <div class="an-hmwrap" id="anActivity"></div>
+        </div>
+        <div class="an-panel an-col12">
+          <div class="an-ptitle"><h2>Calories</h2><span class="an-meta" id="anCalMeta">today vs budget</span></div>
+          <div id="anCalories"></div>
         </div>
         <div class="an-panel an-col12 an-insights">
           <div class="an-ptitle"><h2>💡 Insights</h2><span class="an-meta">generated from your stats</span></div>
@@ -3501,14 +3528,19 @@
       bubble.innerHTML = renderMarkdown(data.reply);
       wrap.appendChild(bubble);
 
-      if (data.hitl_pending && data.hitl_id) {
-        const hid = escapeHtml(data.hitl_id);
+      // One approve/reject card per pending item (a turn can stage several).
+      const hitlItems = (data.hitl_items && data.hitl_items.length)
+        ? data.hitl_items
+        : (data.hitl_pending && data.hitl_id ? [{ id: data.hitl_id, summary: '' }] : []);
+      hitlItems.forEach(item => {
+        const hid = escapeHtml(item.id);
         const hitlEl = document.createElement('div');
         hitlEl.className = 'hitl-confirm';
         hitlEl.id = `hitl-${hid}`;
-        hitlEl.innerHTML = `<button class="btn-hitl btn-approve" onclick="resolveHitl('${hid}', true, this)">✓ Approve</button><button class="btn-hitl btn-reject" onclick="resolveHitl('${hid}', false, this)">✗ Reject</button>`;
+        const label = item.summary ? `<span class="hitl-label">${escapeHtml(item.summary)}</span>` : '';
+        hitlEl.innerHTML = `${label}<button class="btn-hitl btn-approve" onclick="resolveHitl('${hid}', true, this)">✓ Approve</button><button class="btn-hitl btn-reject" onclick="resolveHitl('${hid}', false, this)">✗ Reject</button>`;
         wrap.appendChild(hitlEl);
-      }
+      });
 
       const meta = document.createElement('div');
       meta.className = 'msg-meta';
@@ -3587,6 +3619,7 @@
     setTimeout(() => {
       document.getElementById('chat').hidden = true;
       document.getElementById('login').hidden = true;
+      document.getElementById('analytics').hidden = true;
       document.getElementById('profile').scrollTop = 0;
     }, 520);
     loadProfile();
@@ -3602,6 +3635,7 @@
     openProfile();
   });
   document.getElementById('profBack')?.addEventListener('click', backToChat);
+  document.getElementById('profAnalytics')?.addEventListener('click', openAnalytics);
   document.getElementById('profExport')?.addEventListener('click', (e) => {
     const btn = e.currentTarget;
     const orig = btn.innerHTML;
@@ -4016,16 +4050,22 @@
             <span class="count">${items.length} facts</span>
           </div>
           <div class="facts-list">
-            ${items.map(f => `
+            ${items.map(f => {
+              const tentative = f.status === 'tentative';
+              const badge = tentative
+                ? `<span class="fact-badge ${f.trust === 'low' ? 'ext' : ''}">${f.trust === 'low' ? '📩 from email · tentative' : '✨ learned · tentative'}</span>`
+                : '';
+              return `
               <div class="fact" data-id="${escapeHtml(f.id)}">
-                <div class="text">${escapeHtml(f.content)}</div>
+                <div class="text">${escapeHtml(f.content)}${badge}</div>
                 <div class="meta">
                   <span class="id">${escapeHtml(f.id)}</span>
                   <span>·</span>
                   <span>${formatShortDate(f.created_at)}</span>
                 </div>
                 <button class="forget">forget</button>
-              </div>`).join('')}
+              </div>`;
+            }).join('')}
             ${items.length === 0 ? '<div style="padding:14px 16px;color:var(--text-4);font-size:13px;">No facts yet</div>' : ''}
           </div>
           <div class="fact-add-form" data-category="${isWork ? 'work' : 'personal'}">
@@ -4163,12 +4203,22 @@
     const k = data.kpis || {};
     // KPI cards
     const kp = document.getElementById('anKpis');
+    const dl = data.deltas || {};
+    const period = (data.window_days <= 7) ? 'week' : (data.window_days <= 30 ? 'month' : 'quarter');
+    const deltaLine = (n) => {
+      if (n > 0) return `<span style="color:#57c08a">↑ +${n}</span> <span style="opacity:.55">vs last ${period}</span>`;
+      if (n < 0) return `<span style="color:#e0603c">↓ ${Math.abs(n)}</span> <span style="opacity:.55">vs last ${period}</span>`;
+      return `<span style="opacity:.45">level vs last ${period}</span>`;
+    };
+    const bestStreak = k.best_streak;
+    const streakDelta = (bestStreak && (!k.top_streak || bestStreak.days > (k.top_streak.days || 0)))
+      ? `<span style="opacity:.55">best ever: ${bestStreak.days}d</span>` : '';
     if (kp) {
       const cards = [
-        { lab: 'Sessions', big: k.sessions ?? 0, spark: k.sessions_spark, color: 'var(--accent)', foot: `${k.days_active ?? 0} days active` },
-        { lab: 'Top streak', big: (k.top_streak ? k.top_streak.days : 0), unit: 'd', spark: null, color: '#e0a23c', foot: k.top_streak ? `${escapeHtml(k.top_streak.name)} 🔥` : 'no streak yet' },
-        { lab: 'Todos done', big: k.todos_pct ?? 0, unit: '%', spark: null, color: '#57c08a', foot: `${k.todos_done ?? 0}/${k.todos_total ?? 0} · ${k.overdue ?? 0} overdue` },
-        { lab: 'Memory', big: k.facts_total ?? 0, spark: k.facts_spark, color: 'var(--accent)', foot: `${k.facts_personal ?? 0} personal · ${k.facts_work ?? 0} work` },
+        { lab: 'Sessions', big: k.sessions ?? 0, spark: k.sessions_spark, color: 'var(--accent)', foot: `${k.days_active ?? 0} days active`, delta: deltaLine(dl.sessions ?? 0) },
+        { lab: 'Top streak', big: (k.top_streak ? k.top_streak.days : 0), unit: 'd', spark: null, color: '#e0a23c', foot: k.top_streak ? `${escapeHtml(k.top_streak.name)} 🔥` : 'no active streak', delta: streakDelta },
+        { lab: 'Todos done', big: k.todos_pct ?? 0, unit: '%', spark: null, color: '#57c08a', foot: `${k.todos_done ?? 0}/${k.todos_total ?? 0} · ${k.overdue ?? 0} overdue`, delta: deltaLine(dl.todos_done ?? 0) },
+        { lab: 'Memory', big: k.facts_total ?? 0, spark: k.facts_spark, color: 'var(--accent)', foot: `${k.facts_personal ?? 0} personal · ${k.facts_work ?? 0} work`, delta: (dl.facts_added > 0) ? `<span style="color:#57c08a">+${dl.facts_added}</span> <span style="opacity:.55">this ${period}</span>` : '' },
       ];
       kp.innerHTML = cards.map((c, i) => `
         <div class="an-panel an-kpi">
@@ -4176,20 +4226,36 @@
           <div class="an-big">${c.big}${c.unit ? `<span class="an-unit">${c.unit}</span>` : ''}</div>
           <div class="an-spark" id="anSpark${i}"></div>
           <div class="an-foot">${c.foot}</div>
+          ${c.delta ? `<div class="an-foot" style="margin-top:3px">${c.delta}</div>` : ''}
         </div>`).join('');
       cards.forEach((c, i) => { if (c.spark && c.spark.some(v => v)) { const s = anSpark(c.spark, { color: c.color }); if (s) document.getElementById('anSpark' + i).append(s); } });
     }
 
-    // Habits
+    // Habits — a row of the last 7 days (filled = done) + current streak. Reads at a glance
+    // and moves every time you log, unlike a slow percentage-over-window.
     const hb = document.getElementById('anHabits');
     if (hb) {
       const habits = data.habits || [];
-      hb.innerHTML = habits.length ? habits.map(h => `
-        <div class="an-hrow">
-          <span class="an-hname">${escapeHtml(h.name)}</span>
-          <span class="an-track"><span class="an-fill" style="width:${h.pct}%"></span></span>
-          <span class="an-hpct">${h.pct}% · ${h.streak > 0 ? `🔥 ${h.streak}` : 'streak 0'}</span>
-        </div>`).join('') : '<div class="an-empty">No habits tracked yet.</div>';
+      const today = new Date();
+      hb.innerHTML = habits.length ? habits.map(h => {
+        const last7 = (h.series || []).slice(-7);
+        while (last7.length < 7) last7.unshift(0);
+        const dots = last7.map((v, i) => {
+          const d = new Date(today); d.setDate(today.getDate() - (6 - i));
+          const cls = 'an-dot' + (v ? ' on' : '') + (i === 6 ? ' today' : '');
+          return `<span class="${cls}" title="${d.toISOString().slice(0, 10)}: ${v ? 'done' : 'missed'}"></span>`;
+        }).join('');
+        const days7 = last7.filter(Boolean).length;
+        const streak = h.streak > 0
+          ? `<span class="an-streak">🔥 ${h.streak}</span>`
+          : `<span class="an-streak off">no streak</span>`;
+        return `
+          <div class="an-hrow">
+            <span class="an-hname">${escapeHtml(h.name)}</span>
+            <span class="an-dots">${dots}</span>
+            <span class="an-hpct">${streak} <span class="an-hsub">${days7}/7</span></span>
+          </div>`;
+      }).join('') : '<div class="an-empty">No habits tracked yet.</div>';
     }
 
     // Todos
@@ -4201,7 +4267,7 @@
         const wrap = document.createElement('div'); wrap.className = 'an-gaugewrap';
         wrap.append(anGauge(t.pct, `${t.done}/${t.total}`));
         const stats = document.createElement('div'); stats.className = 'an-tstats';
-        stats.innerHTML = `<div><b class="crit">${t.overdue}</b><span>overdue</span></div>
+        stats.innerHTML = `<div><b class="${t.overdue > 0 ? 'crit' : 'ok'}">${t.overdue}</b><span>overdue</span></div>
           <div><b>${t.avg_days != null ? t.avg_days + 'd' : '—'}</b><span>avg to done</span></div>`;
         wrap.append(stats); td.append(wrap);
         const tp = document.createElement('div'); tp.className = 'an-thr'; td.append(tp);
@@ -4231,6 +4297,142 @@
       if (u.heatmap && u.heatmap.flat().some(v => v)) ac.append(anDayHour(u.heatmap));
       else ac.innerHTML = '<div class="an-empty">No chat activity in this window yet.</div>';
     }
+
+    // Panel takeaways — one data-driven line per panel.
+    const tk = data.takeaways || {};
+    const addTake = (hostId, text) => {
+      if (!text) return;
+      const h = document.getElementById(hostId);
+      if (!h) return;
+      const el = document.createElement('div');
+      el.style.cssText = 'margin-top:.7rem;padding-top:.55rem;border-top:1px solid rgba(255,255,255,.06);font-size:.85em;opacity:.8';
+      el.textContent = '💡 ' + text;
+      h.append(el);
+    };
+    addTake('anHabits', tk.habits);
+    addTake('anFeatures', tk.features);
+    addTake('anActivity', tk.activity);
+    if (data.todos && data.todos.total) addTake('anTodos', tk.todos);  // skip when empty (dup of empty state)
+  }
+
+  function renderCalTrend(host, days, budget) {
+    if (!host) return;
+    const inOf = d => (d.intake != null ? d.intake : (d.total || 0));
+    const max = Math.max(budget || 0, ...days.flatMap(d => [inOf(d), d.burned || 0]), 1);
+    const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const todayKey = days.length ? days[days.length - 1].day : null;
+    host.style.cssText = 'display:flex;align-items:flex-end;gap:8px;height:118px;margin-top:.35rem';
+    host.innerHTML = days.map(d => {
+      const dt = new Date(d.day + 'T00:00:00');
+      const intake = inOf(d), burned = d.burned || 0;
+      const hi = Math.round((intake / max) * 82), hb = Math.round((burned / max) * 82);
+      const isToday = d.day === todayKey;
+      const inCol = isToday ? 'var(--accent)' : 'var(--fg, #8a9098)';
+      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">
+        <div style="display:flex;align-items:flex-end;gap:2px;height:90px">
+          <div title="${d.day} — eaten ${intake}" style="width:9px;height:${Math.max(hi, intake ? 2 : 0)}px;background:${inCol};border-radius:2px 2px 0 0;opacity:${intake ? 1 : .25}"></div>
+          <div title="${d.day} — burned ${burned}" style="width:9px;height:${Math.max(hb, burned ? 2 : 0)}px;background:#57c08a;border-radius:2px 2px 0 0;opacity:${burned ? 1 : .25}"></div>
+        </div>
+        <span style="font-size:.7em;opacity:${isToday ? 1 : .5};margin-top:5px;font-weight:${isToday ? 700 : 400}">${dow[dt.getDay()]}</span>
+      </div>`;
+    }).join('');
+  }
+
+  async function reloadCalories() {
+    try {
+      const [today, history] = await Promise.all([
+        apiFetch('GET', '/calories/today'),
+        apiFetch('GET', '/calories/history?days=7'),
+      ]);
+      renderCalories(today, history);
+    } catch (e) { /* leave empty state */ }
+  }
+
+  async function deleteCalorieEntry(id) {
+    try { await apiFetch('DELETE', '/calories/' + id); } catch (e) { /* ignore */ }
+    reloadCalories();
+  }
+
+  function renderCalories(today, history) {
+    const host = document.getElementById('anCalories');
+    if (!host) return;
+    const t = today || {}, days = (history && history.days) || [];
+    const total = t.total || 0, burned = t.burned || 0, budget = t.budget || 0;
+    const net = (t.net != null) ? t.net : (total - burned);
+    const remaining = (t.remaining != null) ? t.remaining : (budget - net);
+    const meta = document.getElementById('anCalMeta');
+    if (meta) meta.textContent = `${total} in · ${burned} burned · net ${net} · ${remaining >= 0 ? remaining + ' left' : Math.abs(remaining) + ' over'}`;
+    const pct = budget > 0 ? Math.min(100, Math.max(0, Math.round(net / budget * 100))) : 0;
+    const entries = t.entries || [];
+    let html = `
+      <div class="an-hrow">
+        <span class="an-hname">Today</span>
+        <span class="an-track"><span class="an-fill" style="width:${pct}%"></span></span>
+        <span class="an-hpct">net ${net}/${budget}${remaining < 0 ? ' ⚠️' : ''}</span>
+      </div>
+      <div style="font-size:.8em;opacity:.75;margin-top:2px">${total} eaten · <span style="color:#57c08a">${burned} burned</span></div>`;
+    if (entries.length) {
+      html += '<div style="margin:.5rem 0;display:flex;flex-direction:column;gap:.4rem">' +
+        entries.map(e => {
+          const isBurn = e.kind === 'burned';
+          let title = e.dish || e.description || '';
+          if (!e.dish && title.length > 52) title = title.slice(0, 50) + '…';
+          const label = isBurn ? `🔥 ${escapeHtml(title)}` : escapeHtml(title);
+          const val = isBurn ? `<span style="color:#57c08a">−${e.calories} cal</span>` : `${e.calories} cal`;
+          const del = `<span class="cal-del" title="Delete" onclick="deleteCalorieEntry('${e.id}')">🗑</span>`;
+          let block = `<div><div style="display:flex;justify-content:space-between;align-items:baseline;font-size:.9em"><span>${label}</span><span style="white-space:nowrap">${val}${del}</span></div>`;
+          if (!isBurn && e.items && e.items.length > 1) {
+            block += '<div style="margin:.15rem 0 0 .9rem;display:flex;flex-direction:column;gap:.1rem">' +
+              e.items.map(it => `<div style="display:flex;justify-content:space-between;font-size:.8em;opacity:.55"><span>· ${escapeHtml(it.name)}</span><span>${it.calories} cal</span></div>`).join('') +
+              '</div>';
+          }
+          return block + '</div>';
+        }).join('') + '</div>';
+    } else {
+      html += '<div class="an-empty">Nothing logged yet today. Tell Sage "I ate…" or "I burned…" to start.</div>';
+    }
+    const macros = t.macros || {};
+    const macroTotal = (macros.protein || 0) + (macros.carbs || 0) + (macros.fat || 0);
+    if (macroTotal > 0) {
+      html += '<div class="an-meta" style="margin-top:.9rem;display:block">Today\'s macros</div><div id="anMacroDonut"></div>';
+    }
+    html += '<div class="an-meta" style="margin-top:.9rem;display:block">Last 7 days · <span style="color:var(--accent)">■</span> eaten · <span style="color:#57c08a">■</span> burned</div>';
+    html += '<div id="anCalTrend"></div>';
+    const loggedIn = days.filter(d => (d.intake != null ? d.intake : (d.total || 0)) > 0);
+    const loggedBurn = days.filter(d => (d.burned || 0) > 0);
+    if (loggedIn.length || loggedBurn.length) {
+      const avgIn = loggedIn.length ? Math.round(loggedIn.reduce((a, d) => a + (d.intake != null ? d.intake : (d.total || 0)), 0) / loggedIn.length) : 0;
+      const avgBurn = loggedBurn.length ? Math.round(loggedBurn.reduce((a, d) => a + (d.burned || 0), 0) / loggedBurn.length) : 0;
+      html += `<div style="margin-top:.7rem;padding-top:.55rem;border-top:1px solid rgba(255,255,255,.06);font-size:.85em;opacity:.8">💡 Avg ${avgIn} eaten/day${avgBurn ? ` · ${avgBurn} burned/day` : ''}</div>`;
+    }
+    host.innerHTML = html;
+    if (document.getElementById('anMacroDonut')) renderMacroDonut(document.getElementById('anMacroDonut'), macros);
+    renderCalTrend(document.getElementById('anCalTrend'), days, budget);
+  }
+
+  function renderMacroDonut(host, macros) {
+    if (!host) return;
+    const segs = [
+      { label: 'Protein', g: macros.protein || 0, col: '#5aa9e0' },
+      { label: 'Carbs', g: macros.carbs || 0, col: '#e0a23c' },
+      { label: 'Fat', g: macros.fat || 0, col: '#e0645a' },
+    ];
+    const total = segs.reduce((a, s) => a + s.g, 0);
+    const R = 42, C = 2 * Math.PI * R, cx = 50, cy = 50, sw = 15;
+    let off = 0;
+    const rings = total > 0 ? segs.filter(s => s.g > 0).map(s => {
+      const len = (s.g / total) * C;
+      const el = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.col}" stroke-width="${sw}" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${cx} ${cy})"/>`;
+      off += len; return el;
+    }).join('') : `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--line)" stroke-width="${sw}"/>`;
+    const svg = `<svg viewBox="0 0 100 100" width="118" height="118">${rings}<text x="50" y="48" text-anchor="middle" font-size="14" fill="var(--text-1)" font-weight="700">${total}g</text><text x="50" y="61" text-anchor="middle" font-size="7" fill="var(--text-3)" letter-spacing=".5">MACROS</text></svg>`;
+    const legend = segs.map(s => {
+      const kcal = s.label === 'Fat' ? s.g * 9 : s.g * 4;
+      const pct = total ? Math.round(s.g / total * 100) : 0;
+      return `<div style="display:flex;align-items:center;gap:8px;font-size:.85em"><span style="width:11px;height:11px;border-radius:3px;background:${s.col};display:inline-block;flex:none"></span><span>${s.label}</span><b style="margin-left:auto">${s.g}g</b><span style="opacity:.5;width:64px;text-align:right">${pct}% · ${kcal}cal</span></div>`;
+    }).join('');
+    host.style.cssText = 'display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:.4rem';
+    host.innerHTML = `<div style="flex:none">${svg}</div><div style="display:flex;flex-direction:column;gap:8px;min-width:200px;flex:1">${legend}</div>`;
   }
 
   async function loadAnalytics(win) {
@@ -4239,6 +4441,7 @@
       const data = await apiFetch('GET', '/analytics?window=' + win);
       renderAnalyticsPage(data);
     } catch (e) { /* leave empty states */ }
+    await reloadCalories();
     if (insEl) {
       insEl.textContent = 'Thinking…';
       try { const r = await apiFetch('GET', '/analytics/insights?window=' + win); insEl.textContent = r.insights || ''; }
@@ -4259,6 +4462,7 @@
     loadAnalytics(anWindow);
   }
   document.getElementById('topAnalytics')?.addEventListener('click', openAnalytics);
+  document.getElementById('anProfile')?.addEventListener('click', openProfile);
   document.getElementById('anBack')?.addEventListener('click', () => {
     document.getElementById('chat').hidden = false;
     document.body.dataset.screen = 'chat';
